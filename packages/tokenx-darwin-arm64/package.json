@@ -1,0 +1,29 @@
+{
+  "name": "@juya-ai/tokenx-darwin-arm64",
+  "version": "0.0.0",
+  "description": "Tokenx native binary for macOS on Apple silicon.",
+  "license": "MIT",
+  "type": "module",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "bin/tokenx",
+  "files": [
+    "bin",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.html"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/makoMakoGo/tokenx.git",
+    "directory": "packages/tokenx-darwin-arm64"
+  }
+}

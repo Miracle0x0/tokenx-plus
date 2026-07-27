@@ -1,0 +1,7 @@
+Tokenx
+
+Tokenx originated from Tokscale (https://github.com/junhoyeo/tokscale),
+Copyright (c) 2025 Junho Yeo, and retains Tokscale's MIT license terms.
+
+Each native platform package includes THIRD_PARTY_LICENSES.html with the Rust
+components distributed in its Tokenx binary and their license terms.

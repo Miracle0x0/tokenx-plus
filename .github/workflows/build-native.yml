@@ -1,0 +1,121 @@
+name: Build Native (Test Only)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/build-native.yml"
+      - ".github/workflows/publish.yml"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "packages/tokenx/package.json"
+      - "packages/tokenx-*/package.json"
+      - "scripts/check-release-workflow-safety.py"
+
+concurrency:
+  group: build-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: "10.13"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Build - ${{ matrix.settings.target }}
+    runs-on: ${{ matrix.settings.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            build: cargo build --locked --release -p tokenx --target aarch64-apple-darwin
+            strip: strip -x target/aarch64-apple-darwin/release/tokenx
+            bin_name: tokenx
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build: cargo zigbuild --locked --release -p tokenx --target x86_64-unknown-linux-gnu
+            strip: strip target/x86_64-unknown-linux-gnu/release/tokenx
+            bin_name: tokenx
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            build: cargo build --locked --release -p tokenx --target x86_64-pc-windows-msvc
+            strip: ""
+            bin_name: tokenx.exe
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Check release workflow safety
+        run: python3 scripts/check-release-workflow-safety.py
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: tokenx-${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}-${{ hashFiles('Cargo.lock') }}
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        if: ${{ contains(matrix.settings.target, 'linux') }}
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2
+        if: ${{ contains(matrix.settings.target, 'linux') }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          tool: cargo-zigbuild@0.23.0
+
+      - name: Build native binary
+        shell: bash
+        env:
+          BUILD_COMMAND: ${{ matrix.settings.build }}
+        run: $BUILD_COMMAND
+
+      - name: Strip native binary
+        if: ${{ matrix.settings.strip != '' }}
+        shell: bash
+        env:
+          STRIP_COMMAND: ${{ matrix.settings.strip }}
+        run: $STRIP_COMMAND
+
+      - name: Smoke native binary
+        shell: bash
+        env:
+          TOKENX_BINARY: target/${{ matrix.settings.target }}/release/${{ matrix.settings.bin_name }}
+        run: |
+          "$TOKENX_BINARY" --version
+          smoke_home="$(mktemp -d)"
+          export TOKENX_CONFIG_DIR="$smoke_home/.tokenx"
+          "$TOKENX_BINARY" models \
+            --home "$smoke_home" \
+            --client amp \
+            --json \
+            --no-spinner >/dev/null
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: tokenx-binary-${{ matrix.settings.target }}
+          path: target/${{ matrix.settings.target }}/release/${{ matrix.settings.bin_name }}
+          if-no-files-found: error

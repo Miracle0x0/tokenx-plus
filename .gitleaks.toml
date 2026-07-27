@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Canonical Kimi model IDs used by pricing matcher tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^crates/tokenx-engine/src/pricing/mod\.rs$''']
+regexTarget = "secret"
+regexes = ['''^kimi-k2p6-turbo$''']

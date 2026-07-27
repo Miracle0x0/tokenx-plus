@@ -1,0 +1,126 @@
+# Pricing semantics
+
+Tokenx pricing estimates what parsed token buckets would cost under the
+configured pricing catalog. It is not an invoice reconciler.
+
+## Local usage cost
+
+For local usage, parsers emit token usage. App or vendor fields such as
+`cost`, `credits`, `cost_usd`, `dollar_float`, `spendCents`,
+`estimated_cost_usd`, `actual_cost_usd`, and `usage.cost.total` are ignored.
+
+`AttributedUsageRecord.cost` is derived by applying Tokenx pricing to these token
+buckets:
+
+- input tokens
+- output tokens
+- cache read tokens
+- cache write or cache creation tokens
+- reasoning tokens
+
+Rows without positive token buckets are not usage rows. Cost-only or
+credits-only records are dropped instead of being converted into local token
+cost.
+
+Total-only usage records with accepted client attribution use the fixed bucket
+allocation from [ADR 0004](adr/0004-period-views-derive-from-daily.md). Their
+derived cost is approximate because the recorded total is projected into buckets
+before pricing.
+
+See [ADR 0004](adr/0004-period-views-derive-from-daily.md).
+
+## Pricing Source authority
+
+Exact custom overrides from `custom-pricing.json` are checked first. Otherwise,
+Tokenx searches LiteLLM, OpenRouter, and models.dev in that order. A forced
+`--pricing-source` limits lookup to one catalog. Public lookup receives the
+canonical model component without a provider or route prefix and considers only
+catalog rows with that exact component.
+
+A non-empty observed provider, or otherwise shared deterministic model-family
+inference, defines provider scope. Exact rows for a known provider are selected
+before exact unscoped rows across all catalogs; catalog order breaks ties inside
+each class. With unknown provider scope, only an exact unscoped row is eligible.
+Prefix, substring, fuzzy/edit-distance, arbitrary separator, and private alias
+matching are not pricing strategies.
+
+Global private aliases are not a substitute for input parsing. Client-specific
+model decoding may happen in the parser, but local usage finalization,
+grouping, and pricing all use the core `canonicalize_model_id` path before
+pricing lookup.
+
+### Model identity before pricing
+
+Tokenx canonicalizes parsed model ids before pricing lookup. Parsers may
+clean obvious observed model labels early, but the usage finalization path still
+normalizes every `AttributedUsageRecord.model_id` through the core model canonicalizer
+before aggregation and `PricingService::calculate_cost_with_provider`.
+
+The pricing resolver is therefore not a route cleanup layer. It receives the
+final canonical usage model id and matches that id against custom overrides
+and public catalog rows.
+
+If no pricing match exists, derived cost stays `$0.00`. The unresolved model id
+should remain visible so the missing catalog entry can be fixed explicitly.
+
+See [ADR 0004](adr/0004-period-views-derive-from-daily.md).
+
+## Custom pricing overrides
+
+Create `custom-pricing.json` in the Tokenx config directory:
+
+```json
+{
+  "models": {
+    "kimi-k2.6": {
+      "input_cost_per_million_tokens": 2.0,
+      "output_cost_per_million_tokens": 8.0,
+      "cache_read_input_token_cost_per_million_tokens": 0.3,
+      "pricingSource": "https://docs.fireworks.ai/serverless/pricing",
+      "notes": "Kimi K2.6 local usage override"
+    }
+  }
+}
+```
+
+Per-million-token fields are the recommended user-facing form. At least one of
+`input_cost_per_million_tokens` or `output_cost_per_million_tokens` must be
+present and positive. Cache-read and cache-creation prices are optional.
+
+Overrides are exact-only and case-insensitive:
+
+- Local usage matches the canonical model id after model canonicalization, not
+  necessarily the raw observed label emitted by a client or parser.
+- Key each local usage override by that final canonical id.
+- `tokenx pricing lookup <model>` matches the command argument as a catalog query.
+
+Restart the command after editing the file because overrides are loaded at
+startup.
+
+## Cache files
+
+Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:
+
+- `pricing-litellm.json`
+- `pricing-openrouter.json`
+- `pricing-models-dev.json`
+
+Deleting these files forces Tokenx to fetch pricing data again on the next
+lookup or usage load that needs pricing.
+
+## Standalone lookup
+
+```bash
+tokenx pricing lookup claude-sonnet-4-5 --no-spinner
+tokenx pricing lookup grok-code --pricing-source openrouter --no-spinner
+tokenx pricing overrides --json
+```
+
+Standalone lookup does not infer arbitrary observed-model prefixes, route
+prefixes, private aliases, or reasoning-tier suffixes. It is a pricing catalog
+query over the exact canonical model component, not a parser repair path.
+
+## Subscription usage is separate
+
+The TUI Subscription tab calls provider-specific quota endpoints and shows what the
+provider reports. Those numbers are not mixed into normal local token reports.

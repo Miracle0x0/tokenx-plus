@@ -1,0 +1,762 @@
+use std::borrow::Cow;
+
+pub(crate) const COMMANDCODE_UNKNOWN_MODEL_ID: &str = "commandcode-model-unknown";
+pub(crate) const DEEPSEEK_V4_PRO_BETA_ALIAS: &str = "model1";
+pub(crate) const DEEPSEEK_V4_FLASH_BETA_ALIAS: &str = "model2";
+
+const CLAUDE_FAMILIES: &[&str] = &["opus", "sonnet", "haiku", "fable"];
+const OPENAI_REASONING_TIERS: &[&str] =
+    &["minimal", "low", "medium", "high", "xhigh", "auto", "none"];
+
+pub(crate) fn is_explicitly_unpriced_model_id(model: &str) -> bool {
+    model == COMMANDCODE_UNKNOWN_MODEL_ID
+}
+
+pub(crate) fn is_deepseek_v4_beta_alias(model: &str) -> bool {
+    let lower = model.trim().to_lowercase();
+    let model_part = lower
+        .trim_end_matches('/')
+        .rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(&lower);
+
+    matches!(
+        model_part,
+        DEEPSEEK_V4_PRO_BETA_ALIAS | DEEPSEEK_V4_FLASH_BETA_ALIAS
+    )
+}
+
+/// Canonical model-id authority for usage grouping, finalization, and pricing.
+pub(crate) fn canonicalize_model_id(model_id: &str) -> String {
+    let normalized = normalized_terminal_model_id(model_id);
+    let normalized_id = normalized.as_ref();
+    if normalized_id.is_empty() || !normalized_id.is_ascii() {
+        return normalized.into_owned();
+    }
+
+    let lexically_normalized = strip_global_suffixes_to_stable(normalized);
+    canonicalize_known_model_alias(&lexically_normalized)
+        .unwrap_or_else(|| lexically_normalized.into_owned())
+}
+
+/// Parser convenience shim; not the authoritative model identity boundary.
+///
+/// Returns `Some` only when canonicalization changes the normalized terminal id.
+pub(crate) fn canonicalize_observed_model_id(model: &str) -> Option<String> {
+    let normalized = normalized_terminal_model_id(model);
+    let canonical = canonicalize_model_id(model);
+    if canonical == normalized.as_ref() {
+        None
+    } else {
+        Some(canonical)
+    }
+}
+
+fn normalized_terminal_model_id(model_id: &str) -> Cow<'_, str> {
+    let trimmed = model_id.trim();
+    let without_custom = strip_custom_model_prefix(trimmed);
+    let segment = canonical_model_segment(without_custom);
+    let segment = strip_custom_model_prefix(segment);
+    if segment.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        let lower = segment.to_ascii_lowercase();
+        Cow::Owned(strip_custom_model_prefix(&lower).to_string())
+    } else {
+        Cow::Borrowed(strip_custom_model_prefix(segment))
+    }
+}
+
+fn strip_custom_model_prefix(model_id: &str) -> &str {
+    model_id.strip_prefix("custom:").unwrap_or(model_id)
+}
+
+fn canonicalize_known_model_alias(model: &str) -> Option<String> {
+    if let Some(display_slug) = normalized_human_display_model_slug(model) {
+        if display_slug != model {
+            if let Some(canonical) = canonicalize_known_model_alias(&display_slug) {
+                return Some(canonical);
+            }
+            if is_openai_gpt_observed_base_model(&display_slug) {
+                return Some(display_slug);
+            }
+        }
+    }
+
+    if is_claude_observed_candidate(model) {
+        if let Some(canonical) = canonicalize_modern_claude_observed_model(model) {
+            return Some(canonical);
+        }
+    }
+    if model.starts_with("gpt-") {
+        return canonicalize_openai_observed_model(model);
+    }
+    if model.starts_with("glm-") {
+        if let Some(canonical) = canonicalize_glm_observed_model(model) {
+            return Some(canonical.to_string());
+        }
+    }
+    if model.starts_with("qwen") {
+        if let Some(canonical) = canonicalize_qwen_observed_model(model) {
+            return Some(canonical);
+        }
+    }
+    if model.starts_with("kimi") || model.starts_with("k2") {
+        if let Some(canonical) = canonicalize_kimi_observed_model(model) {
+            return Some(canonical);
+        }
+    }
+    if model.starts_with("grok") {
+        if let Some(canonical) = canonicalize_grok_observed_model(model) {
+            return Some(canonical);
+        }
+    }
+    if model.starts_with("mimo-") {
+        if let Some(canonical) = canonicalize_mimo_observed_model(model) {
+            return Some(canonical);
+        }
+    }
+    if model.starts_with("deepseek-") {
+        if let Some(canonical) = canonicalize_deepseek_observed_model(model) {
+            return Some(canonical);
+        }
+    }
+    if model.starts_with("longcat-") {
+        if let Some(canonical) = canonicalize_longcat_observed_model(model) {
+            return Some(canonical.to_string());
+        }
+    }
+    None
+}
+
+fn normalized_human_display_model_slug(model: &str) -> Option<String> {
+    if !model
+        .chars()
+        .any(|ch| ch.is_ascii_whitespace() || matches!(ch, '(' | ')'))
+    {
+        return None;
+    }
+
+    let normalized = model
+        .replace("extra high reasoning", "xhigh")
+        .replace("high reasoning", "high")
+        .replace("medium reasoning", "medium")
+        .replace("low reasoning", "low")
+        .replace("minimal reasoning", "minimal");
+    let mut slug = String::new();
+    let mut previous_was_separator = true;
+
+    for ch in normalized.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '.' {
+            slug.push(ch);
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            slug.push('-');
+            previous_was_separator = true;
+        }
+    }
+
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() {
+        None
+    } else {
+        Some(slug.to_string())
+    }
+}
+
+fn strip_global_suffixes_to_stable(mut model: Cow<'_, str>) -> Cow<'_, str> {
+    loop {
+        let strip = strip_release_suffix(&model)
+            .map(|base| GlobalSuffixStrip::Truncate(base.len()))
+            .or_else(|| strip_free_channel_tag(&model));
+        let Some(strip) = strip else {
+            return model;
+        };
+        model = apply_global_suffix_strip(model, strip);
+    }
+}
+
+enum GlobalSuffixStrip {
+    Truncate(usize),
+    Replace(String),
+}
+
+fn apply_global_suffix_strip<'a>(model: Cow<'a, str>, strip: GlobalSuffixStrip) -> Cow<'a, str> {
+    match strip {
+        GlobalSuffixStrip::Truncate(len) => match model {
+            Cow::Borrowed(model) => Cow::Borrowed(&model[..len]),
+            Cow::Owned(mut model) => {
+                model.truncate(len);
+                Cow::Owned(model)
+            }
+        },
+        GlobalSuffixStrip::Replace(stripped) => Cow::Owned(stripped),
+    }
+}
+
+fn strip_free_channel_tag(model: &str) -> Option<GlobalSuffixStrip> {
+    if let Some(base) = model.strip_suffix("-free") {
+        return Some(GlobalSuffixStrip::Truncate(base.len()));
+    }
+    if let Some(base) = model.strip_suffix(":free") {
+        return Some(GlobalSuffixStrip::Truncate(base.len()));
+    }
+    if let Some(base) = model.strip_suffix(" (free)") {
+        return Some(GlobalSuffixStrip::Truncate(base.len()));
+    }
+    if let Some((head, tail)) = model.split_once("-free-") {
+        return Some(GlobalSuffixStrip::Replace(format!("{head}-{tail}")));
+    }
+    if let Some((head, tail)) = model.split_once(":free-") {
+        return Some(GlobalSuffixStrip::Replace(format!("{head}-{tail}")));
+    }
+    if let Some((head, tail)) = model.split_once(" (free)-") {
+        return Some(GlobalSuffixStrip::Replace(format!("{head}-{tail}")));
+    }
+    None
+}
+
+fn stripped_free_channel_tag(model: &str, strip: GlobalSuffixStrip) -> String {
+    match strip {
+        GlobalSuffixStrip::Truncate(len) => model[..len].to_string(),
+        GlobalSuffixStrip::Replace(stripped) => stripped,
+    }
+}
+
+fn is_claude_observed_candidate(model: &str) -> bool {
+    model.contains("claude") || CLAUDE_FAMILIES.iter().any(|family| model.contains(family))
+}
+
+fn canonical_model_segment(model: &str) -> &str {
+    model
+        .trim_end_matches('/')
+        .rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(model)
+}
+
+fn canonicalize_openai_observed_model(model: &str) -> Option<String> {
+    let model = canonical_model_segment(model);
+
+    if let Some(canonical) = canonical_gpt_5_6_base(model) {
+        return (canonical != model).then(|| canonical.to_string());
+    }
+    if model == "gpt-4.1"
+        || is_openai_gpt_4o_observed_base_model(model)
+        || is_openai_gpt_observed_base_model(model)
+    {
+        return None;
+    }
+
+    if let Some(base) = strip_full_release_date_suffix(model) {
+        let canonical_base = canonical_gpt_5_6_base(base).unwrap_or(base);
+        if canonical_base == "gpt-4.1"
+            || is_openai_gpt_4o_observed_base_model(canonical_base)
+            || is_openai_gpt_observed_base_model(canonical_base)
+        {
+            return Some(canonical_base.to_string());
+        }
+    }
+
+    if let Some(base) = strip_parenthesized_openai_reasoning_tier(model) {
+        return Some(base.to_string());
+    }
+
+    if let Some((base, tier)) = model.rsplit_once('-') {
+        let stripped_base;
+        let base = if let Some(strip) = strip_free_channel_tag(base) {
+            stripped_base = stripped_free_channel_tag(base, strip);
+            stripped_base.as_str()
+        } else {
+            base
+        };
+        let canonical_base = canonical_gpt_5_6_base(base).unwrap_or(base);
+        if (tier == "fast" || is_openai_reasoning_effort_for_model(canonical_base, tier))
+            && is_openai_gpt_observed_base_model(canonical_base)
+        {
+            return Some(canonical_base.to_string());
+        }
+    }
+
+    None
+}
+
+fn strip_parenthesized_openai_reasoning_tier(model: &str) -> Option<&str> {
+    let (base, tier) = model.rsplit_once('(')?;
+    let tier = tier.strip_suffix(')')?;
+    let base =
+        base.trim_end_matches(|ch: char| ch.is_ascii_whitespace() || matches!(ch, '-' | '_'));
+    let canonical_base = canonical_gpt_5_6_base(base).unwrap_or(base);
+    if is_openai_reasoning_effort_for_model(canonical_base, tier)
+        && is_openai_gpt_observed_base_model(canonical_base)
+    {
+        Some(canonical_base)
+    } else {
+        None
+    }
+}
+
+fn is_openai_reasoning_effort_for_model(model: &str, effort: &str) -> bool {
+    OPENAI_REASONING_TIERS.contains(&effort)
+        || (effort == "max" && canonical_gpt_5_6_base(model).is_some())
+}
+
+fn canonical_gpt_5_6_base(model: &str) -> Option<&'static str> {
+    match model {
+        "gpt-5.6" | "gpt-5.6-sol" => Some("gpt-5.6-sol"),
+        "gpt-5.6-terra" => Some("gpt-5.6-terra"),
+        "gpt-5.6-luna" => Some("gpt-5.6-luna"),
+        _ => None,
+    }
+}
+
+fn is_openai_gpt_4o_observed_base_model(model: &str) -> bool {
+    matches!(model, "gpt-4o" | "gpt-4o-mini")
+}
+
+fn is_openai_gpt_observed_base_model(model: &str) -> bool {
+    if canonical_gpt_5_6_base(model).is_some() {
+        return true;
+    }
+
+    let rest = match model.strip_prefix("gpt-") {
+        Some(rest) => rest,
+        None => return false,
+    };
+
+    let (version, suffix) = match rest.split_once('-') {
+        Some((version, suffix)) => (version, Some(suffix)),
+        None => (rest, None),
+    };
+    if !is_openai_gpt_version(version) {
+        return false;
+    }
+
+    match suffix {
+        None => true,
+        Some("nano" | "mini" | "pro" | "codex" | "codex-max" | "codex-spark") => true,
+        Some(_) => false,
+    }
+}
+
+fn is_openai_gpt_version(value: &str) -> bool {
+    if value == "5" {
+        return true;
+    }
+
+    matches!(
+        value.split_once('.'),
+        Some((major, minor))
+            if major == "5"
+                && !minor.is_empty()
+                && minor.bytes().all(|byte| byte.is_ascii_digit())
+    )
+}
+
+fn canonicalize_glm_observed_model(model: &str) -> Option<&'static str> {
+    let model = canonical_model_segment(model);
+    if matches!(model, "glm-4.7-free" | "glm-4.7:free" | "glm-4.7 (free)") {
+        return Some("glm-4.7");
+    }
+
+    let base = model
+        .strip_suffix("-high")
+        .or_else(|| model.strip_suffix("-medium"))
+        .or_else(|| model.strip_suffix("-fast"))
+        .or_else(|| model.strip_suffix("-sub2api-pro"))
+        .unwrap_or(model);
+
+    if base != model
+        && matches!(
+            base,
+            "glm-4.7" | "glm-4.7-free" | "glm-4.7:free" | "glm-4.7 (free)"
+        )
+    {
+        Some("glm-4.7")
+    } else {
+        None
+    }
+}
+
+fn canonicalize_qwen_observed_model(model: &str) -> Option<String> {
+    let model = canonical_model_segment(model);
+    if !model.starts_with("qwen") {
+        return None;
+    }
+
+    strip_release_suffix(model).map(str::to_string)
+}
+
+fn canonicalize_kimi_observed_model(model: &str) -> Option<String> {
+    let model = canonical_model_segment(model);
+    if let Some(base) = strip_release_suffix(model)
+        .filter(|base| *base == "kimi-k2" || base.starts_with("kimi-k2-"))
+    {
+        return Some(base.to_string());
+    }
+
+    match canonical_model_segment(model) {
+        "k2p5" | "k2-p5" | "kimi-for-coding/k2p5" | "kimi-for-coding/k2-p5" => {
+            Some("kimi-k2.5".to_string())
+        }
+        "k2p6" | "k2-p6" | "kimi-k2p6" | "kimi-for-coding/k2p6" | "kimi-for-coding/k2-p6" => {
+            Some("kimi-k2.6".to_string())
+        }
+        "kimi-k2.5-thinking" => Some("kimi-k2-thinking".to_string()),
+        "kimi-for-coding" => Some("kimi-k2.5".to_string()),
+        "kimi-k2.5-nvfp4" => Some("kimi-k2.5".to_string()),
+        _ => None,
+    }
+}
+
+fn canonicalize_grok_observed_model(model: &str) -> Option<String> {
+    let model = canonical_model_segment(model);
+    if let Some(base) = strip_release_suffix(model) {
+        if base == "grok-code-fast-1" {
+            return Some(base.to_string());
+        }
+    }
+
+    match model {
+        "grok-composer-2.5" => Some("composer-2.5".to_string()),
+        "grok-composer-2.5-fast" => Some("composer-2.5-fast".to_string()),
+        _ => None,
+    }
+}
+
+fn canonicalize_mimo_observed_model(model: &str) -> Option<String> {
+    let model = canonical_model_segment(model);
+    if !model.starts_with("mimo-") {
+        return None;
+    }
+
+    strip_release_suffix(model).map(str::to_string)
+}
+
+fn canonicalize_deepseek_observed_model(model: &str) -> Option<String> {
+    let model = canonical_model_segment(model);
+    if !model.starts_with("deepseek-") {
+        return None;
+    }
+
+    if let Some(rest) = model.strip_prefix("deepseek-r1-") {
+        if let Some((release, suffix)) = rest.split_once('-') {
+            if is_short_compact_release(release) {
+                return Some(format!("deepseek-r1-{suffix}"));
+            }
+        }
+    }
+
+    strip_release_suffix(model).map(str::to_string)
+}
+
+pub(crate) fn canonicalize_longcat_observed_model(model: &str) -> Option<&'static str> {
+    let model = canonical_model_segment(model);
+    if model == "longcat-flash-3b" {
+        return Some("longcat-flash-3b");
+    }
+
+    model
+        .strip_prefix("longcat-flash-3b-all-quant-")
+        .filter(|suffix| !suffix.is_empty())
+        .map(|_| "longcat-flash-3b")
+}
+
+fn canonicalize_modern_claude_observed_model(model: &str) -> Option<String> {
+    let model = canonical_model_segment(model);
+    let model = model.strip_suffix("-thinking").unwrap_or(model);
+    let parts: Vec<&str> = model
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect();
+
+    for window in parts.windows(3) {
+        if CLAUDE_FAMILIES.contains(&window[0])
+            && is_modern_claude_major(window[1])
+            && is_single_digit_minor(window[2])
+        {
+            return Some(format!("claude-{}-{}.{}", window[0], window[1], window[2]));
+        }
+        if is_modern_claude_major(window[0])
+            && is_single_digit_minor(window[1])
+            && CLAUDE_FAMILIES.contains(&window[2])
+        {
+            return Some(format!("claude-{}-{}.{}", window[2], window[0], window[1]));
+        }
+    }
+
+    for (idx, part) in parts.iter().enumerate() {
+        if !CLAUDE_FAMILIES.contains(part) {
+            continue;
+        }
+        if let Some(major) = parts
+            .get(idx + 1)
+            .copied()
+            .filter(|part| is_modern_claude_major(part))
+        {
+            let next_part = parts.get(idx + 2).copied();
+            if next_part.is_none_or(|part| is_compact_date(part) || is_claude_tier_qualifier(part))
+            {
+                return Some(format!("claude-{part}-{major}"));
+            }
+        }
+        if idx >= 1
+            && is_modern_claude_major(parts[idx - 1])
+            && (idx < 2 || !parts[idx - 2].bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            return Some(format!("claude-{part}-{}", parts[idx - 1]));
+        }
+    }
+
+    None
+}
+
+fn is_modern_claude_major(value: &str) -> bool {
+    value.len() == 1 && value.as_bytes()[0].is_ascii_digit() && value.as_bytes()[0] >= b'4'
+}
+
+fn is_single_digit_minor(value: &str) -> bool {
+    value.len() == 1 && value.as_bytes()[0].is_ascii_digit() && value.as_bytes()[0] != b'0'
+}
+
+fn is_compact_date(value: &str) -> bool {
+    value.len() == 8 && value.starts_with("20") && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn is_claude_tier_qualifier(value: &str) -> bool {
+    matches!(value, "max")
+}
+
+fn strip_release_suffix(model: &str) -> Option<&str> {
+    strip_full_release_date_suffix(model).or_else(|| strip_short_release_date_suffix(model))
+}
+
+fn strip_full_release_date_suffix(model: &str) -> Option<&str> {
+    if model.len() > 11 {
+        let potential_date = &model[model.len() - 10..];
+        let bytes = potential_date.as_bytes();
+        if potential_date.starts_with("20")
+            && bytes[4] == b'-'
+            && bytes[7] == b'-'
+            && potential_date
+                .bytes()
+                .enumerate()
+                .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
+            && model.as_bytes()[model.len() - 11] == b'-'
+        {
+            return Some(&model[..model.len() - 11]);
+        }
+    }
+
+    if model.len() > 9 {
+        let potential_date = &model[model.len() - 8..];
+        if is_compact_date(potential_date) && model.as_bytes()[model.len() - 9] == b'-' {
+            return Some(&model[..model.len() - 9]);
+        }
+    }
+
+    None
+}
+
+fn strip_short_release_date_suffix(model: &str) -> Option<&str> {
+    if model.len() > 6 {
+        let potential_date = &model[model.len() - 5..];
+        let bytes = potential_date.as_bytes();
+        if bytes[2] == b'-'
+            && potential_date
+                .bytes()
+                .enumerate()
+                .all(|(index, byte)| index == 2 || byte.is_ascii_digit())
+            && model.as_bytes()[model.len() - 6] == b'-'
+        {
+            return Some(&model[..model.len() - 6]);
+        }
+    }
+
+    if model.len() > 5 {
+        let potential_date = &model[model.len() - 4..];
+        if is_short_compact_release(potential_date) && model.as_bytes()[model.len() - 5] == b'-' {
+            return Some(&model[..model.len() - 5]);
+        }
+    }
+
+    None
+}
+
+fn is_short_compact_release(value: &str) -> bool {
+    value.len() == 4 && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalizes_modern_claude_observed_models_to_dotted_ids() {
+        let cases = [
+            ("claude-opus-4-6", Some("claude-opus-4.6")),
+            ("claude-opus-4.6", None),
+            ("claude-opus-4-6-thinking", Some("claude-opus-4.6")),
+            ("anthropic/claude-4-6-sonnet", Some("claude-sonnet-4.6")),
+            ("anthropic/claude-4-5-haiku", Some("claude-haiku-4.5")),
+            (
+                "openrouter/anthropic/claude-4-6-opus",
+                Some("claude-opus-4.6"),
+            ),
+            ("claude-sonnet-4-20250514", Some("claude-sonnet-4")),
+            ("claude-fable-5", None),
+            ("anthropic/claude-5-fable", Some("claude-fable-5")),
+        ];
+
+        for (raw, expected) in cases {
+            assert_eq!(canonicalize_observed_model_id(raw).as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn canonicalizes_human_display_model_names() {
+        assert_eq!(
+            canonicalize_model_id("Claude Opus 4.6 (max)"),
+            "claude-opus-4.6"
+        );
+        assert_eq!(
+            canonicalize_model_id("Claude Fable 5 (max)"),
+            "claude-fable-5"
+        );
+        assert_eq!(canonicalize_model_id("GPT-5 Nano"), "gpt-5-nano");
+        assert_eq!(
+            canonicalize_model_id("GPT-5.4 (extra high reasoning)"),
+            "gpt-5.4"
+        );
+    }
+
+    #[test]
+    fn does_not_canonicalize_legacy_claude_three_line() {
+        assert_eq!(canonicalize_observed_model_id("claude-3-5-sonnet"), None);
+        assert_eq!(
+            canonicalize_observed_model_id("claude-3-5-sonnet-20241022").as_deref(),
+            Some("claude-3-5-sonnet")
+        );
+    }
+
+    #[test]
+    fn canonicalizes_parser_shim_aliases_and_global_cleanup() {
+        assert_eq!(
+            canonicalize_observed_model_id("k2p5").as_deref(),
+            Some("kimi-k2.5")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("k2p6").as_deref(),
+            Some("kimi-k2.6")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("kimi-for-coding/k2p6").as_deref(),
+            Some("kimi-k2.6")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("kimi-k2-instruct-0905").as_deref(),
+            Some("kimi-k2-instruct")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("kimi-k2-0711").as_deref(),
+            Some("kimi-k2")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("moonshotai/kimi-k2-0711").as_deref(),
+            Some("kimi-k2")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("kimi-k20-0711").as_deref(),
+            Some("kimi-k20")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("grok-composer-2.5-fast").as_deref(),
+            Some("composer-2.5-fast")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("grok-code-fast-1-0825").as_deref(),
+            Some("grok-code-fast-1")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("grok-code-fast-1-0901").as_deref(),
+            Some("grok-code-fast-1")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("mimo-v2-pro-20260318").as_deref(),
+            Some("mimo-v2-pro")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("gpt-4o-mini-2024-07-18").as_deref(),
+            Some("gpt-4o-mini")
+        );
+        assert_eq!(
+            canonicalize_observed_model_id("nemotron-3-ultra-free").as_deref(),
+            Some("nemotron-3-ultra")
+        );
+    }
+
+    #[test]
+    fn canonicalizes_parser_shim_release_tiers_and_free_tags() {
+        let cases = [
+            ("gpt-4.1-2025-04-14", "gpt-4.1"),
+            ("gpt-5.5-fast", "gpt-5.5"),
+            ("openai/gpt-5.5-fast", "gpt-5.5"),
+            ("gpt-5.5(high)", "gpt-5.5"),
+            ("gpt-5.5 (high)", "gpt-5.5"),
+            ("gpt-5.5-(high)", "gpt-5.5"),
+            ("gpt-5.5_(high)", "gpt-5.5"),
+            ("openai/gpt-5.5(xhigh)", "gpt-5.5"),
+            ("openai/gpt-5.5 (xhigh)", "gpt-5.5"),
+            ("gpt-5.5-high", "gpt-5.5"),
+            ("gpt-5.5-xhigh", "gpt-5.5"),
+            ("gpt-5.5-free-high", "gpt-5.5"),
+            ("openai/gpt-5.5:free-xhigh", "gpt-5.5"),
+            ("gpt-5.4-mini-xhigh", "gpt-5.4-mini"),
+            ("gpt-5.4-mini(high)", "gpt-5.4-mini"),
+            ("gpt-5.4-nano-xhigh", "gpt-5.4-nano"),
+            ("gpt-5.4-pro(high)", "gpt-5.4-pro"),
+            ("gpt-5.3-codex-xhigh", "gpt-5.3-codex"),
+            ("gpt-5.3-codex-spark-high", "gpt-5.3-codex-spark"),
+            ("gpt-5.1-codex-max-xhigh", "gpt-5.1-codex-max"),
+            ("glm-4.7-free", "glm-4.7"),
+            ("glm-4.7:free-fast", "glm-4.7"),
+            ("glm-4.7 (free)-medium", "glm-4.7"),
+            ("opencode/glm-4.7-free-sub2api-pro", "glm-4.7"),
+            ("qwen3.7-max-2026-05-20", "qwen3.7-max"),
+            ("qwen/qwen3.7-max-20260520", "qwen3.7-max"),
+            ("qwen3.7-max-2605", "qwen3.7-max"),
+            ("qwen3.7-max-05-20", "qwen3.7-max"),
+            ("mimo-v2-20260318", "mimo-v2"),
+            ("xiaomi/mimo-v2-20260318", "mimo-v2"),
+            ("mimo-v2.5-pro-20260318", "mimo-v2.5-pro"),
+            ("deepseek-v3-0324", "deepseek-v3"),
+            (
+                "deepseek-r1-0528-distill-qwen3-8b",
+                "deepseek-r1-distill-qwen3-8b",
+            ),
+            ("longcat-flash-3b-all-quant-0203-eagle3", "longcat-flash-3b"),
+            (
+                "meituan/longcat-flash-3b-all-quant-0203-eagle3",
+                "longcat-flash-3b",
+            ),
+            ("自定义/qwen3.7-max-2605", "qwen3.7-max"),
+        ];
+
+        for (raw, expected) in cases {
+            assert_eq!(
+                canonicalize_observed_model_id(raw).as_deref(),
+                Some(expected)
+            );
+        }
+
+        assert_eq!(canonicalize_observed_model_id("gpt-5.3-codex-spark"), None);
+        assert_eq!(canonicalize_observed_model_id("gpt-4o-high"), None);
+        assert_eq!(
+            canonicalize_observed_model_id("mistral-small-2603").as_deref(),
+            Some("mistral-small")
+        );
+        assert_eq!(canonicalize_observed_model_id("qwen-模型abcdef"), None);
+        assert_eq!(
+            canonicalize_observed_model_id("gpt-5.3-codex-spark-lite"),
+            None
+        );
+    }
+}

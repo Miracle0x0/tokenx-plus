@@ -1,0 +1,23 @@
+.DS_Store
+
+# Local secrets and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# Rust, Python, and JavaScript build output
+/target/
+node_modules/
+__pycache__/
+*.py[cod]
+dist/
+/coverage/
+*.tgz
+
+# Generated only inside native npm publish staging directories
+/packages/tokenx-*/THIRD_PARTY_LICENSES.html
+
+# Generated benchmark data
+/packages/benchmarks/results/
+/packages/benchmarks/synthetic-data/
