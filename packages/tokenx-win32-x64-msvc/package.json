@@ -1,6 +1,6 @@
 {
   "name": "@juya-ai/tokenx-win32-x64-msvc",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Tokenx native binary for Windows x64.",
   "license": "MIT",
   "type": "module",

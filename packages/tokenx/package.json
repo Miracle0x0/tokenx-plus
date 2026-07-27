@@ -1,6 +1,6 @@
 {
   "name": "@juya-ai/tokenx",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Local AI coding usage reports for CLI and TUI workflows.",
   "license": "MIT",
   "type": "module",
@@ -35,9 +35,9 @@
   },
   "dependencies": {},
   "optionalDependencies": {
-    "@juya-ai/tokenx-darwin-arm64": "0.0.0",
-    "@juya-ai/tokenx-linux-x64-gnu": "0.0.0",
-    "@juya-ai/tokenx-win32-x64-msvc": "0.0.0"
+    "@juya-ai/tokenx-darwin-arm64": "0.1.0",
+    "@juya-ai/tokenx-linux-x64-gnu": "0.1.0",
+    "@juya-ai/tokenx-win32-x64-msvc": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

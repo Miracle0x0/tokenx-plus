@@ -15,7 +15,7 @@
     },
     "packages/tokenx": {
       "name": "@juya-ai/tokenx",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "bin": {
         "tokenx": "./bin.js",
       },
@@ -24,22 +24,22 @@
         "typescript": "^5.0.0",
       },
       "optionalDependencies": {
-        "@juya-ai/tokenx-darwin-arm64": "0.0.0",
-        "@juya-ai/tokenx-linux-x64-gnu": "0.0.0",
-        "@juya-ai/tokenx-win32-x64-msvc": "0.0.0",
+        "@juya-ai/tokenx-darwin-arm64": "0.1.0",
+        "@juya-ai/tokenx-linux-x64-gnu": "0.1.0",
+        "@juya-ai/tokenx-win32-x64-msvc": "0.1.0",
       },
     },
     "packages/tokenx-darwin-arm64": {
       "name": "@juya-ai/tokenx-darwin-arm64",
-      "version": "0.0.0",
+      "version": "0.1.0",
     },
     "packages/tokenx-linux-x64-gnu": {
       "name": "@juya-ai/tokenx-linux-x64-gnu",
-      "version": "0.0.0",
+      "version": "0.1.0",
     },
     "packages/tokenx-win32-x64-msvc": {
       "name": "@juya-ai/tokenx-win32-x64-msvc",
-      "version": "0.0.0",
+      "version": "0.1.0",
     },
   },
   "packages": {
