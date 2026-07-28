@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::{Datelike, Duration, NaiveDate};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{
+    error::ErrorKind, Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
+};
 use tokenx_engine::{CalendarContext, ClientId, ClientUniverse, DateRange, GroupBy};
 
 use crate::commands::shared::{parse_client_id_arg, resolve_client_universe};
@@ -12,12 +14,20 @@ use crate::failure::CliFailure;
 use crate::product_paths::ProductPaths;
 use crate::settings::Settings;
 use crate::theme::ThemeName;
+use crate::tui::date::format_month_year;
 use crate::tui::Tab;
 
 #[derive(Parser, Debug)]
 #[command(name = "tokenx")]
-#[command(author, version, about = "AI token usage analytics")]
+#[command(author, version, about = rust_i18n::t!("cli.about.root"))]
 pub(crate) struct Cli {
+    #[arg(
+        long,
+        value_enum,
+        global = true,
+        help = rust_i18n::t!("cli.help.language")
+    )]
+    pub(crate) language: Option<crate::i18n::Language>,
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
 }
@@ -25,22 +35,212 @@ pub(crate) struct Cli {
 impl Cli {
     /// Parse the process arguments from the current command grammar.
     pub(crate) fn parse_from_env() -> Self {
-        Self::parse()
+        let command = localized_command();
+        let matches = command
+            .try_get_matches_from(std::env::args_os())
+            .unwrap_or_else(|error| exit_with_clap_error(error));
+
+        Self::from_arg_matches(&matches).unwrap_or_else(|error| exit_with_clap_error(error))
     }
+}
+
+fn localized_command() -> Command {
+    let mut command = Cli::command();
+    command.build();
+    localize_command_tree(command)
+}
+
+fn localize_command_tree(mut command: Command) -> Command {
+    command = command
+        .help_template(rust_i18n::t!("cli.help.template"))
+        .subcommand_help_heading(rust_i18n::t!("cli.help.commands_heading").into_owned())
+        .mut_args(|arg| {
+            let heading = if arg.get_index().is_some() {
+                rust_i18n::t!("cli.help.arguments_heading").into_owned()
+            } else {
+                rust_i18n::t!("cli.help.options_heading").into_owned()
+            };
+
+            match arg.get_id().as_ref() {
+                "help" => arg
+                    .help(rust_i18n::t!("cli.help.print_help"))
+                    .long_help(rust_i18n::t!("cli.help.print_help_long"))
+                    .help_heading(heading),
+                "version" => arg
+                    .help(rust_i18n::t!("cli.help.print_version"))
+                    .help_heading(heading),
+                "subcommand" => arg
+                    .help(rust_i18n::t!("cli.help.print_subcommand_help"))
+                    .help_heading(heading),
+                _ => arg.help_heading(heading),
+            }
+        });
+
+    if command
+        .get_subcommands()
+        .any(|subcommand| subcommand.get_name() == "help")
+    {
+        command = command.mut_subcommand("help", |subcommand| {
+            subcommand.about(rust_i18n::t!("cli.help.help_subcommand"))
+        });
+    }
+
+    command.mut_subcommands(localize_command_tree)
+}
+
+fn exit_with_clap_error(error: clap::Error) -> ! {
+    let kind = error.kind();
+    let output = localize_clap_output(error.render().to_string());
+    if matches!(
+        kind,
+        ErrorKind::DisplayHelp
+            | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            | ErrorKind::DisplayVersion
+    ) {
+        print!("{output}");
+    } else {
+        eprint!("{output}");
+    }
+    std::process::exit(error.exit_code());
+}
+
+fn localize_clap_output(mut output: String) -> String {
+    let replacements = [
+        ("error:", rust_i18n::t!("cli.help.generated_error_prefix")),
+        ("Usage:", rust_i18n::t!("cli.help.generated_usage_heading")),
+        (
+            "For more information, try",
+            rust_i18n::t!("cli.help.generated_try_help"),
+        ),
+        (
+            "the following required arguments were not provided:",
+            rust_i18n::t!("cli.help.generated_required_arguments"),
+        ),
+        (
+            "one or more of the other specified arguments",
+            rust_i18n::t!("cli.help.generated_other_arguments"),
+        ),
+        (
+            "some similar arguments exist",
+            rust_i18n::t!("cli.help.generated_some_similar_arguments"),
+        ),
+        (
+            "some similar subcommands exist",
+            rust_i18n::t!("cli.help.generated_some_similar_subcommands"),
+        ),
+        (
+            "some similar values exist",
+            rust_i18n::t!("cli.help.generated_some_similar_values"),
+        ),
+        (
+            "a similar argument exists",
+            rust_i18n::t!("cli.help.generated_similar_argument"),
+        ),
+        (
+            "a similar subcommand exists",
+            rust_i18n::t!("cli.help.generated_similar_subcommand"),
+        ),
+        (
+            "a similar value exists",
+            rust_i18n::t!("cli.help.generated_similar_value"),
+        ),
+        (
+            "cannot be used multiple times",
+            rust_i18n::t!("cli.help.generated_cannot_multiple"),
+        ),
+        (
+            "cannot be used with",
+            rust_i18n::t!("cli.help.generated_cannot_with"),
+        ),
+        (
+            "equal sign is needed when assigning values to",
+            rust_i18n::t!("cli.help.generated_equals"),
+        ),
+        (
+            "a value is required for",
+            rust_i18n::t!("cli.help.generated_value_required"),
+        ),
+        (
+            "but none was supplied",
+            rust_i18n::t!("cli.help.generated_none_supplied"),
+        ),
+        (
+            "requires a subcommand but one was not provided",
+            rust_i18n::t!("cli.help.generated_requires_subcommand"),
+        ),
+        (
+            "unrecognized subcommand",
+            rust_i18n::t!("cli.help.generated_unrecognized_subcommand"),
+        ),
+        (
+            "unexpected argument",
+            rust_i18n::t!("cli.help.generated_unexpected_argument"),
+        ),
+        (
+            "unexpected value",
+            rust_i18n::t!("cli.help.generated_unexpected_value"),
+        ),
+        (
+            "invalid value",
+            rust_i18n::t!("cli.help.generated_invalid_value"),
+        ),
+        (
+            "possible values",
+            rust_i18n::t!("cli.help.generated_possible_values"),
+        ),
+        (
+            "no more were expected",
+            rust_i18n::t!("cli.help.generated_no_more"),
+        ),
+        (
+            "values required by",
+            rust_i18n::t!("cli.help.generated_values_required_by"),
+        ),
+        (
+            "values required for",
+            rust_i18n::t!("cli.help.generated_values_required_for"),
+        ),
+        ("the argument", rust_i18n::t!("cli.help.generated_argument")),
+        (
+            "the subcommand",
+            rust_i18n::t!("cli.help.generated_subcommand"),
+        ),
+        (
+            "subcommands",
+            rust_i18n::t!("cli.help.generated_subcommands"),
+        ),
+        ("only ", rust_i18n::t!("cli.help.generated_only")),
+        (
+            "were provided",
+            rust_i18n::t!("cli.help.generated_were_provided"),
+        ),
+        (
+            "was provided",
+            rust_i18n::t!("cli.help.generated_was_provided"),
+        ),
+        ("tip:", rust_i18n::t!("cli.help.generated_tip")),
+        (" for ", rust_i18n::t!("cli.help.generated_for")),
+        ("found", rust_i18n::t!("cli.help.generated_found")),
+    ];
+
+    for (source, target) in replacements {
+        output = output.replace(source, target.as_ref());
+    }
+    output
 }
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
-    #[command(about = "Launch the interactive terminal interface")]
+    #[command(about = rust_i18n::t!("cli.about.tui"))]
     Tui(TuiArgs),
-    #[command(about = "Show model usage")]
+    #[command(about = rust_i18n::t!("cli.about.models"))]
     Models(ModelsArgs),
-    #[command(about = "Query model pricing")]
+    #[command(about = rust_i18n::t!("cli.about.pricing"))]
     Pricing {
         #[command(subcommand)]
         subcommand: PricingSubcommand,
     },
-    #[command(about = "Maintain local Tokenx caches")]
+    #[command(about = rust_i18n::t!("cli.about.cache"))]
     Cache {
         #[command(subcommand)]
         subcommand: CacheSubcommand,
@@ -49,9 +249,9 @@ pub(crate) enum Commands {
 
 #[derive(Args, Debug, Default)]
 pub(crate) struct TuiArgs {
-    #[arg(long, value_enum, help = "Open a specific tab")]
+    #[arg(long, value_enum, help = rust_i18n::t!("cli.help.tab"))]
     pub(crate) tab: Option<Tab>,
-    #[arg(short, long, help = "Use a complete TUI semantic color theme")]
+    #[arg(short, long, help = rust_i18n::t!("cli.help.theme"))]
     pub(crate) theme: Option<ThemeName>,
     #[arg(
         short,
@@ -61,7 +261,7 @@ pub(crate) struct TuiArgs {
         conflicts_with = "no_refresh"
     )]
     pub(crate) refresh: Option<u64>,
-    #[arg(long, conflicts_with = "refresh", help = "Disable automatic refresh")]
+    #[arg(long, conflicts_with = "refresh", help = rust_i18n::t!("cli.help.no_refresh"))]
     pub(crate) no_refresh: bool,
     #[arg(long)]
     pub(crate) debug: bool,
@@ -73,21 +273,21 @@ pub(crate) struct TuiArgs {
 
 #[derive(Args, Debug)]
 pub(crate) struct ModelsArgs {
-    #[arg(long, help = "Output as JSON")]
+    #[arg(long, help = rust_i18n::t!("cli.help.json"))]
     pub(crate) json: bool,
     #[command(flatten)]
     pub(crate) input: InputScopeArgs,
     #[command(flatten)]
     pub(crate) date: DateRangeFlags,
-    #[arg(long, help = "Write processing time to stderr")]
+    #[arg(long, help = rust_i18n::t!("cli.help.benchmark"))]
     pub(crate) benchmark: bool,
-    #[arg(long, help = "Disable progress animation")]
+    #[arg(long, help = rust_i18n::t!("cli.help.no_spinner"))]
     pub(crate) no_spinner: bool,
     #[arg(
         long,
         value_name = "STRATEGY",
         default_value = "model",
-        help = "Use the same grouping as the TUI Models view: model, client,model, client,provider,model, or workspace,model"
+        help = rust_i18n::t!("cli.help.group_by")
     )]
     pub(crate) group_by: GroupBy,
 }
@@ -98,7 +298,7 @@ pub(crate) struct InputScopeArgs {
         long,
         value_name = "PATH",
         value_parser = parse_home_arg,
-        help = "Read local session data from this existing home directory"
+        help = rust_i18n::t!("cli.help.home")
     )]
     pub(crate) home: Option<PathBuf>,
     #[command(flatten)]
@@ -114,7 +314,7 @@ pub(crate) struct ClientFlags {
         value_parser = parse_client_id_arg,
         value_delimiter = ',',
         action = clap::ArgAction::Append,
-        help = "Filter by client. Repeatable or comma-separated"
+        help = rust_i18n::t!("cli.help.client")
     )]
     pub(crate) clients: Vec<ClientId>,
 }
@@ -124,72 +324,72 @@ pub(crate) struct DateRangeFlags {
     #[arg(
         long,
         conflicts_with_all = ["week", "month", "year", "since", "until"],
-        help = "Show only today's usage"
+        help = rust_i18n::t!("cli.help.today")
     )]
     pub(crate) today: bool,
     #[arg(
         long,
         conflicts_with_all = ["today", "month", "year", "since", "until"],
-        help = "Show the last seven days"
+        help = rust_i18n::t!("cli.help.week")
     )]
     pub(crate) week: bool,
     #[arg(
         long,
         conflicts_with_all = ["today", "week", "year", "since", "until"],
-        help = "Show the current month"
+        help = rust_i18n::t!("cli.help.month")
     )]
     pub(crate) month: bool,
     #[arg(
         long,
         value_parser = parse_date_arg,
         conflicts_with_all = ["today", "week", "month", "year"],
-        help = "Inclusive start date (YYYY-MM-DD)"
+        help = rust_i18n::t!("cli.help.since")
     )]
     pub(crate) since: Option<NaiveDate>,
     #[arg(
         long,
         value_parser = parse_date_arg,
         conflicts_with_all = ["today", "week", "month", "year"],
-        help = "Inclusive end date (YYYY-MM-DD)"
+        help = rust_i18n::t!("cli.help.until")
     )]
     pub(crate) until: Option<NaiveDate>,
     #[arg(
         long,
         value_parser = parse_year_arg,
         conflicts_with_all = ["today", "week", "month", "since", "until"],
-        help = "Filter by year (YYYY)"
+        help = rust_i18n::t!("cli.help.year")
     )]
     pub(crate) year: Option<i32>,
 }
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum PricingSubcommand {
-    #[command(about = "Look up pricing for a model")]
+    #[command(about = rust_i18n::t!("cli.about.pricing_lookup"))]
     Lookup {
-        #[arg(help = "Model ID to look up")]
+        #[arg(help = rust_i18n::t!("cli.help.model_id"))]
         model_id: String,
-        #[arg(long, help = "Output as JSON")]
+        #[arg(long, help = rust_i18n::t!("cli.help.json"))]
         json: bool,
-        #[arg(long = "pricing-source", value_enum, help = "Use one Pricing Source")]
+        #[arg(long = "pricing-source", value_enum, help = rust_i18n::t!("cli.help.pricing_source"))]
         pricing_source: Option<PricingSource>,
-        #[arg(long, help = "Disable progress animation")]
+        #[arg(long, help = rust_i18n::t!("cli.help.no_spinner"))]
         no_spinner: bool,
     },
-    #[command(about = "List custom pricing overrides")]
+    #[command(about = rust_i18n::t!("cli.about.pricing_overrides"))]
     Overrides {
-        #[arg(long, help = "Output as JSON")]
+        #[arg(long, help = rust_i18n::t!("cli.help.json"))]
         json: bool,
     },
 }
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum CacheSubcommand {
-    #[command(about = "Build the TUI aggregate cache for a client scope")]
+    #[command(about = rust_i18n::t!("cli.about.cache_warm"))]
     Warm {
         #[command(flatten)]
         input: InputScopeArgs,
     },
-    #[command(about = "Remove orphaned and superseded input-record cache shards")]
+    #[command(about = rust_i18n::t!("cli.about.cache_prune"))]
     Prune,
 }
 
@@ -339,19 +539,18 @@ impl ExecutionPlan {
 
 fn resolve_tui(args: TuiArgs, terminal: TerminalState) -> Result<TuiPlan, CliFailure> {
     if !terminal.interactive() {
-        return Err(CliFailure::invalid_message(
-            "TUI requires an interactive terminal\nhint: use `tokenx models --json` for structured output"
-                .to_string(),
-        ));
+        return Err(CliFailure::invalid_message(rust_i18n::t!(
+            "cli.error.tui_requires_terminal"
+        )));
     }
 
     let startup = resolve_startup(args.input)?;
     let date = resolve_date(args.date, startup.calendar)?;
     let initial_tab = args.tab;
     if initial_tab == Some(Tab::Subscription) && !startup.settings.subscription.enabled {
-        return Err(CliFailure::invalid_message(
-            "TUI tab `subscription` is disabled in settings.json".to_string(),
-        ));
+        return Err(CliFailure::invalid_message(rust_i18n::t!(
+            "cli.error.tui_tab_disabled"
+        )));
     }
 
     Ok(TuiPlan {
@@ -394,11 +593,10 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot, CliFailure> 
             &paths.cache_dir(),
         ),
     );
-    let home = args.home.or_else(dirs::home_dir).ok_or_else(|| {
-        CliFailure::invalid_message(
-            "could not determine the home directory; pass --home PATH".to_string(),
-        )
-    })?;
+    let home = args
+        .home
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| CliFailure::invalid_message(rust_i18n::t!("cli.error.home_dir_unknown")))?;
     let (universe, restricted) = resolve_client_universe(args.clients, &settings.default_clients)?;
     Ok(StartupSnapshot {
         paths,
@@ -426,8 +624,10 @@ pub(crate) fn resolve_date_for_date(
 ) -> Result<ResolvedDateRange, CliFailure> {
     if let (Some(since), Some(until)) = (date.since, date.until) {
         if since > until {
-            return Err(CliFailure::invalid_message(format!(
-                "--since ({since}) must not be later than --until ({until})"
+            return Err(CliFailure::invalid_message(rust_i18n::t!(
+                "cli.error.reversed_date_range",
+                since = since.to_string(),
+                until = until.to_string()
             )));
         }
     }
@@ -435,19 +635,19 @@ pub(crate) fn resolve_date_for_date(
     let (range, label, relative) = if date.today {
         (
             RelativeDateRange::Today.resolve(current_date),
-            Some("Today".to_string()),
+            Some(rust_i18n::t!("cli.date_label.today").into_owned()),
             Some(RelativeDateRange::Today),
         )
     } else if date.week {
         (
             RelativeDateRange::LastSevenDays.resolve(current_date),
-            Some("Last 7 days".to_string()),
+            Some(rust_i18n::t!("cli.date_label.last_7_days").into_owned()),
             Some(RelativeDateRange::LastSevenDays),
         )
     } else if date.month {
         (
             RelativeDateRange::CurrentMonth.resolve(current_date),
-            Some(current_date.format("%B %Y").to_string()),
+            Some(format_month_year(current_date)),
             Some(RelativeDateRange::CurrentMonth),
         )
     } else if let Some(year) = date.year {
@@ -459,10 +659,10 @@ pub(crate) fn resolve_date_for_date(
     } else {
         let mut label_parts = Vec::new();
         if let Some(since) = date.since {
-            label_parts.push(format!("from {since}"));
+            label_parts.push(rust_i18n::t!("cli.date_label.from", since = since).into_owned());
         }
         if let Some(until) = date.until {
-            label_parts.push(format!("to {until}"));
+            label_parts.push(rust_i18n::t!("cli.date_label.to", until = until).into_owned());
         }
         (
             DateRange::bounded(date.since, date.until)
@@ -483,46 +683,45 @@ pub(crate) fn resolve_date_for_date(
 fn parse_home_arg(raw: &str) -> Result<PathBuf, String> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err("--home must not be empty".to_string());
+        return Err(rust_i18n::t!("cli.error.home_empty").into_owned());
     }
     let path = PathBuf::from(raw);
     if !path.is_dir() {
-        return Err(format!(
-            "--home must be an existing directory: {}",
-            path.display()
-        ));
+        return Err(rust_i18n::t!("cli.error.home_not_dir", path = path.display()).into_owned());
     }
     path.canonicalize().map_err(|error| {
-        format!(
-            "failed to canonicalize --home `{}`: {error}",
-            path.display()
+        rust_i18n::t!(
+            "cli.error.home_canonicalize",
+            path = path.display(),
+            error = error
         )
+        .into_owned()
     })
 }
 
 fn parse_date_arg(raw: &str) -> Result<NaiveDate, String> {
     NaiveDate::parse_from_str(raw, "%Y-%m-%d")
-        .map_err(|_| format!("invalid date `{raw}`; expected YYYY-MM-DD"))
+        .map_err(|_| rust_i18n::t!("cli.error.invalid_date", raw = raw).into_owned())
 }
 
 fn parse_year_arg(raw: &str) -> Result<i32, String> {
     if raw.len() != 4 || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(format!("invalid year `{raw}`; expected YYYY"));
+        return Err(rust_i18n::t!("cli.error.invalid_year", raw = raw).into_owned());
     }
     let year = raw
         .parse::<i32>()
-        .map_err(|_| format!("invalid year `{raw}`; expected YYYY"))?;
+        .map_err(|_| rust_i18n::t!("cli.error.invalid_year", raw = raw).into_owned())?;
     NaiveDate::from_ymd_opt(year, 1, 1)
-        .ok_or_else(|| format!("invalid year `{raw}`; expected YYYY"))?;
+        .ok_or_else(|| rust_i18n::t!("cli.error.invalid_year", raw = raw).into_owned())?;
     Ok(year)
 }
 
 fn parse_positive_u64(raw: &str) -> Result<u64, String> {
     let value = raw
         .parse::<u64>()
-        .map_err(|_| format!("invalid refresh interval `{raw}`"))?;
+        .map_err(|_| rust_i18n::t!("cli.error.invalid_refresh", raw = raw).into_owned())?;
     if value == 0 {
-        return Err("--refresh must be greater than zero".to_string());
+        return Err(rust_i18n::t!("cli.error.refresh_not_positive").into_owned());
     }
     Ok(value)
 }

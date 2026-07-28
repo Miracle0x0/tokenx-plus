@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::prelude::*;
 
 use super::footer::{self, FooterContent, SortControl};
@@ -23,8 +25,8 @@ pub(crate) fn render(
                 frame,
                 app,
                 area,
-                super::loading::FETCHING_SUBSCRIPTION_DATA,
-                "Fetching",
+                rust_i18n::t!("tui.ui.loading.fetching_subscription_data"),
+                rust_i18n::t!("tui.ui.footer.activity.fetching"),
                 app.subscription_fetch_elapsed()
                     .unwrap_or_default()
                     .as_secs(),
@@ -74,16 +76,22 @@ fn sessions_summary_line(
     state: &PageStates,
     actions: &ActionSet,
 ) -> footer::ResponsiveLine {
+    let tokens_suffix = rust_i18n::t!("tui.ui.footer.tokens_suffix");
     let count = if actions.is_empty_view() {
         String::new()
     } else if state.session_detail_active() {
-        format!(" ({} sessions)", state.session_count(app))
-    } else {
-        format!(
-            " ({} clients · {} sessions)",
-            state.client_count(app),
-            state.session_count(app)
+        rust_i18n::t!(
+            "tui.ui.footer.count.sessions",
+            count = state.session_count(app)
         )
+        .into_owned()
+    } else {
+        rust_i18n::t!(
+            "tui.ui.footer.count.clients_sessions",
+            clients = state.client_count(app),
+            sessions = state.session_count(app)
+        )
+        .into_owned()
     };
     footer::ResponsiveLine::new(
         Line::from(vec![
@@ -91,7 +99,11 @@ fn sessions_summary_line(
                 format_tokens(app.usage().total_tokens),
                 Style::default().fg(app.theme.metrics.tokens),
             ),
-            Span::styled(" tokens | ", Style::default().fg(app.theme.text.secondary)),
+            Span::styled(
+                tokens_suffix.clone(),
+                Style::default().fg(app.theme.text.secondary),
+            ),
+            Span::styled(" | ", Style::default().fg(app.theme.text.secondary)),
             Span::styled(
                 format_cost(app.usage().total_cost),
                 Style::default()
@@ -117,10 +129,10 @@ fn sessions_summary_line(
 }
 
 fn daily_content(app: &TuiModel, state: &PageStates, actions: &ActionSet) -> FooterContent {
-    let toggle_target = if state.daily_profile_active() {
-        "table"
+    let toggle_target: Cow<'static, str> = if state.daily_profile_active() {
+        rust_i18n::t!("tui.ui.footer.toggle.table")
     } else {
-        "profile"
+        rust_i18n::t!("tui.ui.footer.toggle.profile")
     };
     let content = FooterContent::new(
         footer::standard_sort_controls(actions),
@@ -130,18 +142,18 @@ fn daily_content(app: &TuiModel, state: &PageStates, actions: &ActionSet) -> Foo
     footer::with_empty_scope(content, app, actions)
 }
 
-fn session_sort_label(state: &PageStates, field: SortField) -> &'static str {
+fn session_sort_label(state: &PageStates, field: SortField) -> Cow<'static, str> {
     if state.session_detail_active() {
         match field {
-            SortField::Date => "Active",
-            SortField::Tokens => "Tokens",
-            SortField::Cost => "Cost",
+            SortField::Date => rust_i18n::t!("tui.ui.footer.sort.active"),
+            SortField::Tokens => rust_i18n::t!("tui.ui.footer.sort.tokens"),
+            SortField::Cost => rust_i18n::t!("tui.ui.footer.sort.cost"),
         }
     } else {
         match field {
-            SortField::Date => "Active",
-            SortField::Tokens => "Sessions",
-            SortField::Cost => "Space",
+            SortField::Date => rust_i18n::t!("tui.ui.footer.sort.active"),
+            SortField::Tokens => rust_i18n::t!("tui.ui.footer.sort.sessions"),
+            SortField::Cost => rust_i18n::t!("tui.ui.footer.sort.space"),
         }
     }
 }

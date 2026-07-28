@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
@@ -8,13 +10,13 @@ use crate::tui::presentation::EmptySubject;
 
 use super::widgets::{get_client_display_name, truncate_display_width};
 
-const DATE_RANGE: &str = "Current date range";
-
-fn headline(subject: EmptySubject) -> &'static str {
+fn headline(subject: EmptySubject) -> Cow<'static, str> {
     match subject {
-        EmptySubject::Usage => "No usage in the current view",
-        EmptySubject::AgentBreakdown => "No agent breakdown in the current view",
-        EmptySubject::Sessions => "No sessions in the current view",
+        EmptySubject::Usage => rust_i18n::t!("tui.ui.empty_state.headline.usage"),
+        EmptySubject::AgentBreakdown => {
+            rust_i18n::t!("tui.ui.empty_state.headline.agent_breakdown")
+        }
+        EmptySubject::Sessions => rust_i18n::t!("tui.ui.empty_state.headline.sessions"),
     }
 }
 
@@ -32,7 +34,8 @@ pub(super) fn render(
     }
 
     let width = area.width as usize;
-    let headline = fitted_line(headline(subject), width, app.theme.text.primary);
+    let raw_headline = headline(subject);
+    let headline = fitted_line(&raw_headline, width, app.theme.text.primary);
     let scope = fitted_line(&scope_text(app, width), width, app.theme.text.secondary);
     let hint = fitted_hint(
         &recovery_hint(actions),
@@ -73,12 +76,12 @@ pub(super) fn render_if(
 }
 
 fn recovery_hint(actions: &ActionSet) -> String {
-    let mut hints = Vec::new();
+    let mut hints: Vec<Cow<'static, str>> = Vec::new();
     if actions.contains(Action::Clients) {
-        hints.push("[s] Change clients");
+        hints.push(rust_i18n::t!("tui.ui.empty_state.hint.change_clients"));
     }
     if actions.contains(Action::RefreshLocal) {
-        hints.push("[r] Rescan");
+        hints.push(rust_i18n::t!("tui.ui.empty_state.hint.rescan"));
     }
     hints.join(" · ")
 }
@@ -87,32 +90,40 @@ pub(super) fn scope_summary(app: &TuiModel) -> String {
     let selected_clients = app
         .selected_clients()
         .collect::<std::collections::HashSet<_>>();
-    let selection = if selected_clients.len() == 1 {
+    if selected_clients.len() == 1 {
         let client = selected_clients
             .iter()
             .next()
             .expect("one selected client must have one member");
         get_client_display_name(*client)
     } else if selected_clients == app.client_universe().as_hash_set() {
-        "All clients".to_string()
+        rust_i18n::t!("tui.ui.empty_state.scope.all_clients").into_owned()
     } else {
-        format!("{} selected clients", selected_clients.len())
-    };
-
-    selection
+        rust_i18n::t!(
+            "tui.ui.empty_state.scope.selected_clients",
+            count = selected_clients.len()
+        )
+        .into_owned()
+    }
 }
 
 fn scope_text(app: &TuiModel, width: usize) -> String {
     let summary = scope_summary(app);
-    let full = format!("Scope: {summary} · {DATE_RANGE}");
-    if UnicodeWidthStr::width(full.as_str()) <= width {
-        return full;
+    let date_range = rust_i18n::t!("tui.ui.empty_state.date_range");
+    let full = rust_i18n::t!(
+        "tui.ui.empty_state.scope.full",
+        summary = summary.as_str(),
+        range = date_range.as_ref()
+    );
+    if UnicodeWidthStr::width(full.as_ref()) <= width {
+        return full.into_owned();
     }
 
     // The date-range suffix is useful context, but the selected scope is
     // the identity users need first. Drop the suffix before clipping a long
     // single-client display name on cramped terminals.
-    truncate_display_width(&format!("Scope: {summary}"), width)
+    let short = rust_i18n::t!("tui.ui.empty_state.scope.short", summary = summary.as_str());
+    truncate_display_width(short.as_ref(), width)
 }
 
 fn fitted_line(text: &str, width: usize, color: Color) -> Line<'static> {

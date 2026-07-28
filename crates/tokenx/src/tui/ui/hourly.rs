@@ -1,6 +1,7 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, Table};
+use std::borrow::Cow;
 
 use super::empty_state;
 use super::hourly_profile;
@@ -13,6 +14,7 @@ use super::widgets::{
     get_client_display_name, total_tokens_cell, truncate_display_width, viewport_scrollbar_state,
 };
 use crate::tui::actions::ActionSet;
+use crate::tui::date::format_numeric_month_day;
 use crate::tui::model::{HourlyViewMode, SortDirection, SortField, TuiModel};
 use crate::tui::page_state::PageStates;
 use crate::tui::presentation::EmptySubject;
@@ -183,20 +185,20 @@ fn hourly_table_layout(
     }
 }
 
-fn hourly_column_header(column: HourlyColumn) -> &'static str {
+fn hourly_column_header(column: HourlyColumn) -> Cow<'static, str> {
     match column {
-        HourlyColumn::Hour => "Hour",
-        HourlyColumn::Client => "Client",
-        HourlyColumn::Turn => "Turn",
-        HourlyColumn::Messages => "Msgs",
-        HourlyColumn::Input => "Input",
-        HourlyColumn::Output => "Output",
-        HourlyColumn::CacheRead => "Cache R",
-        HourlyColumn::CacheWrite => "Cache W",
-        HourlyColumn::CacheRate => "Cache×",
-        HourlyColumn::Total => "Total",
-        HourlyColumn::Cost => "Cost",
-        HourlyColumn::CostPerMillion => "Cost/1M",
+        HourlyColumn::Hour => rust_i18n::t!("tui.ui.hourly.header.hour"),
+        HourlyColumn::Client => rust_i18n::t!("tui.ui.hourly.header.client"),
+        HourlyColumn::Turn => rust_i18n::t!("tui.ui.hourly.header.turn"),
+        HourlyColumn::Messages => rust_i18n::t!("tui.ui.hourly.header.messages"),
+        HourlyColumn::Input => rust_i18n::t!("tui.ui.hourly.header.input"),
+        HourlyColumn::Output => rust_i18n::t!("tui.ui.hourly.header.output"),
+        HourlyColumn::CacheRead => rust_i18n::t!("tui.ui.hourly.header.cache_read"),
+        HourlyColumn::CacheWrite => rust_i18n::t!("tui.ui.hourly.header.cache_write"),
+        HourlyColumn::CacheRate => rust_i18n::t!("tui.ui.hourly.header.cache_rate"),
+        HourlyColumn::Total => rust_i18n::t!("tui.ui.hourly.header.total"),
+        HourlyColumn::Cost => rust_i18n::t!("tui.ui.hourly.header.cost"),
+        HourlyColumn::CostPerMillion => rust_i18n::t!("tui.ui.hourly.header.cost_per_million"),
     }
 }
 
@@ -215,7 +217,7 @@ fn format_hour_label(datetime: NaiveDateTime) -> String {
 }
 
 fn format_date_separator(date: NaiveDate) -> String {
-    date.format("%m/%d").to_string()
+    format_numeric_month_day(date)
 }
 
 fn render_table(
@@ -230,7 +232,7 @@ fn render_table(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.chrome.border))
         .title(Span::styled(
-            " Hourly Usage ",
+            rust_i18n::t!("tui.ui.hourly.title"),
             Style::default()
                 .fg(app.theme.chrome.heading)
                 .add_modifier(Modifier::BOLD),
@@ -626,6 +628,26 @@ mod tests {
             NaiveDateTime::parse_from_str("2026-03-02 18:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
 
         assert_eq!(format_hour_label(datetime), "18:00");
+    }
+
+    #[test]
+    fn header_labels_translate_to_english_and_chinese() {
+        assert_eq!(
+            rust_i18n::t!("tui.ui.hourly.header.hour", locale = "en"),
+            "Hour"
+        );
+        assert_eq!(
+            rust_i18n::t!("tui.ui.hourly.header.hour", locale = "zh-CN"),
+            "小时"
+        );
+        assert_eq!(
+            rust_i18n::t!("tui.ui.hourly.title", locale = "en"),
+            " Hourly Usage "
+        );
+        assert_eq!(
+            rust_i18n::t!("tui.ui.hourly.title", locale = "zh-CN"),
+            " 每小时用量 "
+        );
     }
 
     #[test]

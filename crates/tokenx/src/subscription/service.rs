@@ -33,8 +33,8 @@ pub(crate) async fn fetch_enabled(enabled: &[ProviderId]) -> SubscriptionBatch {
             Ok(Ok(output)) => batch.outputs.push(output),
             Ok(Err(error)) => batch.errors.push(error),
             Err(_) => batch.errors.push(SubscriptionError::global(
-                "unknown",
-                "provider fetch panicked",
+                rust_i18n::t!("subscription.provider.unknown"),
+                rust_i18n::t!("subscription.error.fetch_panicked"),
             )),
         }
     }
@@ -68,10 +68,7 @@ where
         Ok(result) => result.map_err(|error| SubscriptionError::provider(provider, error)),
         Err(_) => Err(SubscriptionError::provider(
             provider,
-            format!(
-                "provider fetch exceeded the {}s overall timeout",
-                timeout.as_secs()
-            ),
+            rust_i18n::t!("subscription.error.fetch_timeout", secs = timeout.as_secs()),
         )),
     }
 }

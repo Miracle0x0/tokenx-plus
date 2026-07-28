@@ -5,8 +5,13 @@ pub(crate) fn run_input_record_cache_prune(
 ) -> Result<()> {
     let stats = tokenx_engine::prune_input_record_cache(&paths.cache_dir())?;
     println!(
-        "Input-record cache prune: scanned {}, removed {}, retained {}.",
-        stats.scanned, stats.removed, stats.retained
+        "{}",
+        rust_i18n::t!(
+            "commands.cache.prune_summary",
+            scanned = stats.scanned,
+            removed = stats.removed,
+            retained = stats.retained
+        )
     );
     Ok(())
 }
@@ -34,6 +39,6 @@ pub(crate) fn run_warm_generation_cache(startup: crate::cli::StartupSnapshot) ->
     let prepared = acquisition.prepare()?;
     let generation = build_generation(&acquisition, prepared)?;
     save_generation_cache(&paths.generation_cache_file(), &generation)?;
-    println!("Generation cache warmed.");
+    println!("{}", rust_i18n::t!("commands.cache.warmed"));
     Ok(())
 }

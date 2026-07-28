@@ -20,10 +20,10 @@ impl LightSpinner {
     const INACTIVE_COLOR: u8 = 240;
     const FRAME_MS: u64 = 40;
 
-    pub(crate) fn start(message: &'static str) -> Self {
+    pub(crate) fn start(message: impl Into<String>) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let running_thread = Arc::clone(&running);
-        let message = message.to_string();
+        let message = message.into();
 
         let handle = thread::spawn(move || {
             let mut frame = 0usize;

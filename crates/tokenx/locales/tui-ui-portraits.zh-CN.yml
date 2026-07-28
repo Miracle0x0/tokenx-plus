@@ -1,0 +1,16 @@
+tui:
+  ui:
+    portraits:
+      slogan:
+        gpt: "最后还得找我~"
+        claude: "You are absolutely right!"
+        gemini: "你真是太棒了"
+        xai: "最大限度求真"
+        mimo: "我流口水"
+        minimax: "我不爱刷榜"
+        qwen: "我这次是真学会了"
+        kimi: "我不是区（我去，真的不是区）"
+        glm: "蒸馏之神,不解释"
+        deepseek: "杂鱼 杂鱼"
+        mistral: "风往哪吹？"
+        unknown: "……"

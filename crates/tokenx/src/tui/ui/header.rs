@@ -29,7 +29,8 @@ pub fn render(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifacts
             let name = tab_label(app, *t, label_mode);
             let style = if *t == app.current_tab {
                 Style::default()
-                    .fg(app.theme.chrome.nav_active)
+                    .fg(app.theme.surface.canvas)
+                    .bg(app.theme.chrome.nav_active)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(app.theme.text.secondary)
@@ -48,7 +49,8 @@ pub fn render(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifacts
         .select(selected)
         .highlight_style(
             Style::default()
-                .fg(app.theme.chrome.nav_active)
+                .fg(app.theme.surface.canvas)
+                .bg(app.theme.chrome.nav_active)
                 .add_modifier(Modifier::BOLD),
         )
         .padding(TAB_PADDING_LEFT, TAB_PADDING_RIGHT)
@@ -64,7 +66,7 @@ fn header_block(app: &TuiModel) -> Block<'static> {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.chrome.border))
         .title(Span::styled(
-            " tokenx ",
+            rust_i18n::t!("tui.ui.header.title"),
             Style::default()
                 .fg(app.theme.chrome.heading)
                 .add_modifier(Modifier::BOLD),
@@ -76,7 +78,10 @@ fn header_block(app: &TuiModel) -> Block<'static> {
         block = block.title_top(
             Line::from(vec![
                 Span::styled(" | ", Style::default().fg(app.theme.text.secondary)),
-                Span::styled("GitHub ", Style::default().fg(app.theme.text.secondary)),
+                Span::styled(
+                    rust_i18n::t!("tui.ui.header.github"),
+                    Style::default().fg(app.theme.text.secondary),
+                ),
             ])
             .right_aligned(),
         );
@@ -391,6 +396,7 @@ mod tests {
             let panel = app.theme.surface.panel;
             let heading = app.theme.chrome.heading;
             let nav_active = app.theme.chrome.nav_active;
+            let active_tab_foreground = app.theme.surface.canvas;
             let buffer = render_header_buffer(&mut app, Rect::new(0, 0, 120, 3), 120, 4);
 
             let panel_cell = buffer.cell((110, 1)).unwrap();
@@ -407,8 +413,15 @@ mod tests {
                 "O",
                 "{theme_name:?} active tab sample"
             );
-            assert_eq!(active_tab_cell.fg, nav_active, "{theme_name:?} active tab");
-            active_tab_colors.push((theme_name, active_tab_cell.fg));
+            assert_eq!(
+                active_tab_cell.fg, active_tab_foreground,
+                "{theme_name:?} active tab foreground"
+            );
+            assert_eq!(
+                active_tab_cell.bg, nav_active,
+                "{theme_name:?} active tab background"
+            );
+            active_tab_colors.push((theme_name, active_tab_cell.bg));
         }
 
         for (index, &(theme_name, color)) in active_tab_colors.iter().enumerate() {

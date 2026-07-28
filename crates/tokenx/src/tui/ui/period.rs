@@ -1,5 +1,6 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, Table};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use super::empty_state;
@@ -21,6 +22,7 @@ use super::widgets::{
 };
 use crate::tui::actions::ActionSet;
 use crate::tui::data::{PeriodKind, PeriodUsage};
+use crate::tui::date::format_period_label;
 use crate::tui::model::{SortDirection, SortField, TuiModel};
 use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
@@ -366,45 +368,51 @@ fn period_detail_table_layout(
     )
 }
 
-fn period_column_header(column: PeriodColumn, density: PeriodTableDensity) -> &'static str {
+fn period_column_header(column: PeriodColumn, density: PeriodTableDensity) -> Cow<'static, str> {
     match column {
-        PeriodColumn::Period => "Period",
-        PeriodColumn::ActiveDays => "Days",
-        PeriodColumn::TopClient => "Client*",
-        PeriodColumn::TopModel => "Model*",
-        PeriodColumn::Turn => "Turn",
-        PeriodColumn::Messages => "Msgs",
-        PeriodColumn::Input => "Input",
-        PeriodColumn::Output => "Output",
-        PeriodColumn::CacheRead => "Cache R",
-        PeriodColumn::CacheWrite => "Cache W",
-        PeriodColumn::CacheRate => "Cache×",
-        PeriodColumn::Total if density == PeriodTableDensity::Full => "Total",
-        PeriodColumn::Total => "Tokens",
-        PeriodColumn::Cost => "Cost",
-        PeriodColumn::CostPerMillion => "Cost/1M",
+        PeriodColumn::Period => rust_i18n::t!("tui.ui.period.header.period"),
+        PeriodColumn::ActiveDays => rust_i18n::t!("tui.ui.period.header.days"),
+        PeriodColumn::TopClient => rust_i18n::t!("tui.ui.period.header.top_client"),
+        PeriodColumn::TopModel => rust_i18n::t!("tui.ui.period.header.top_model"),
+        PeriodColumn::Turn => rust_i18n::t!("tui.ui.period.header.turn"),
+        PeriodColumn::Messages => rust_i18n::t!("tui.ui.period.header.msgs"),
+        PeriodColumn::Input => rust_i18n::t!("tui.ui.period.header.input"),
+        PeriodColumn::Output => rust_i18n::t!("tui.ui.period.header.output"),
+        PeriodColumn::CacheRead => rust_i18n::t!("tui.ui.period.header.cache_read"),
+        PeriodColumn::CacheWrite => rust_i18n::t!("tui.ui.period.header.cache_write"),
+        PeriodColumn::CacheRate => rust_i18n::t!("tui.ui.period.header.cache_rate"),
+        PeriodColumn::Total if density == PeriodTableDensity::Full => {
+            rust_i18n::t!("tui.ui.period.header.total")
+        }
+        PeriodColumn::Total => rust_i18n::t!("tui.ui.period.header.tokens"),
+        PeriodColumn::Cost => rust_i18n::t!("tui.ui.period.header.cost"),
+        PeriodColumn::CostPerMillion => rust_i18n::t!("tui.ui.period.header.cost_per_million"),
     }
 }
 
 fn period_detail_column_header(
     column: PeriodDetailColumn,
     density: PeriodDetailTableDensity,
-) -> &'static str {
+) -> Cow<'static, str> {
     match column {
-        PeriodDetailColumn::Workspace => "Workspace",
-        PeriodDetailColumn::Model => "Model",
-        PeriodDetailColumn::Provider => "Provider",
-        PeriodDetailColumn::Client => "Client",
-        PeriodDetailColumn::Messages => "Msgs",
-        PeriodDetailColumn::Input => "Input",
-        PeriodDetailColumn::Output => "Output",
-        PeriodDetailColumn::CacheRead => "Cache R",
-        PeriodDetailColumn::CacheWrite => "Cache W",
-        PeriodDetailColumn::CacheRate => "Cache×",
-        PeriodDetailColumn::Total if density == PeriodDetailTableDensity::Full => "Total",
-        PeriodDetailColumn::Total => "Tokens",
-        PeriodDetailColumn::Cost => "Cost",
-        PeriodDetailColumn::CostPerMillion => "Cost/1M",
+        PeriodDetailColumn::Workspace => rust_i18n::t!("tui.ui.period.detail.header.workspace"),
+        PeriodDetailColumn::Model => rust_i18n::t!("tui.ui.period.detail.header.model"),
+        PeriodDetailColumn::Provider => rust_i18n::t!("tui.ui.period.detail.header.provider"),
+        PeriodDetailColumn::Client => rust_i18n::t!("tui.ui.period.detail.header.client"),
+        PeriodDetailColumn::Messages => rust_i18n::t!("tui.ui.period.header.msgs"),
+        PeriodDetailColumn::Input => rust_i18n::t!("tui.ui.period.header.input"),
+        PeriodDetailColumn::Output => rust_i18n::t!("tui.ui.period.header.output"),
+        PeriodDetailColumn::CacheRead => rust_i18n::t!("tui.ui.period.header.cache_read"),
+        PeriodDetailColumn::CacheWrite => rust_i18n::t!("tui.ui.period.header.cache_write"),
+        PeriodDetailColumn::CacheRate => rust_i18n::t!("tui.ui.period.header.cache_rate"),
+        PeriodDetailColumn::Total if density == PeriodDetailTableDensity::Full => {
+            rust_i18n::t!("tui.ui.period.header.total")
+        }
+        PeriodDetailColumn::Total => rust_i18n::t!("tui.ui.period.header.tokens"),
+        PeriodDetailColumn::Cost => rust_i18n::t!("tui.ui.period.header.cost"),
+        PeriodDetailColumn::CostPerMillion => {
+            rust_i18n::t!("tui.ui.period.header.cost_per_million")
+        }
     }
 }
 
@@ -496,12 +504,8 @@ fn top_period_model(period: &PeriodUsage) -> Option<TopPeriodModel> {
     candidates.into_iter().next()
 }
 
-fn period_label(period: &PeriodUsage, is_very_narrow: bool) -> &str {
-    if is_very_narrow {
-        &period.short_label
-    } else {
-        &period.label
-    }
+fn period_label(period: &PeriodUsage, kind: PeriodKind, is_very_narrow: bool) -> String {
+    format_period_label(kind, period.start_date, period.end_date, is_very_narrow)
 }
 
 fn clamped_detail_start(scroll_offset: usize, row_len: usize, visible_rows: usize) -> usize {
@@ -584,7 +588,7 @@ fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifa
     let workspace_content_width = if group_by == GroupBy::WorkspaceModel {
         rows_data
             .iter()
-            .map(|row| display_width(workspace_label_or_unknown(row.workspace.as_deref())))
+            .map(|row| display_width(workspace_label_or_unknown(row.workspace.as_deref()).as_ref()))
             .max()
             .unwrap_or(WORKSPACE_MIN_WIDTH)
     } else {
@@ -641,7 +645,7 @@ fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifa
             let cell_for_column = |column: PeriodDetailColumn| -> Cell {
                 match column {
                     PeriodDetailColumn::Workspace => Cell::from(truncate_display_width(
-                        workspace_label_or_unknown(row.workspace.as_deref()),
+                        workspace_label_or_unknown(row.workspace.as_deref()).as_ref(),
                         table_layout.width_for(PeriodDetailColumn::Workspace),
                     ))
                     .style(Style::default().fg(theme_secondary)),
@@ -751,8 +755,8 @@ fn render_period(
     actions: &ActionSet,
 ) {
     let title = match kind {
-        PeriodKind::Monthly => " Monthly Usage ",
-        PeriodKind::Weekly => " Weekly Usage ",
+        PeriodKind::Monthly => rust_i18n::t!("tui.ui.period.title.monthly"),
+        PeriodKind::Weekly => rust_i18n::t!("tui.ui.period.title.weekly"),
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -784,7 +788,7 @@ fn render_period(
     let has_turn_data = periods.iter().any(|p| p.turn_count > 0);
     let period_content_width = periods
         .iter()
-        .map(|period| display_width(period_label(period, is_very_narrow)))
+        .map(|period| display_width(&period_label(period, kind, is_very_narrow)))
         .max()
         .unwrap_or(PERIOD_MIN_WIDTH);
     let top_client_content_width = periods
@@ -879,7 +883,7 @@ fn render_period(
         let is_selected = idx == selected_index;
         let is_striped = idx % 2 == 1;
         let is_current = today >= period.start_date && today <= period.end_date;
-        let period_text = period_label(period, is_very_narrow).to_string();
+        let period_text = period_label(period, kind, is_very_narrow);
         let period_style = if is_current {
             Style::default()
                 .fg(app.theme.chrome.current)

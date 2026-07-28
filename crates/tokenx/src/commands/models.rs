@@ -84,7 +84,8 @@ pub(crate) fn run_models(plan: ModelsPlan, no_spinner: bool) -> Result<()> {
         group_by,
     } = plan;
 
-    let spinner = (!no_spinner).then(|| LightSpinner::start("Scanning session data..."));
+    let spinner =
+        (!no_spinner).then(|| LightSpinner::start(rust_i18n::t!("commands.models.scanning")));
     let start = Instant::now();
     let acquisition = acquisition_engine(
         paths.cache_dir(),
@@ -142,7 +143,11 @@ pub(crate) fn run_models(plan: ModelsPlan, no_spinner: bool) -> Result<()> {
         use colored::Colorize;
         eprintln!(
             "{}",
-            format!("  Processing time: {processing_time_ms}ms (Rust native)").bright_black()
+            format!(
+                "  {}",
+                rust_i18n::t!("commands.models.processing_time", ms = processing_time_ms)
+            )
+            .bright_black()
         );
     }
 
@@ -168,20 +173,20 @@ fn render_models_table(
     let workspace_grouping = *group_by == GroupBy::WorkspaceModel;
     let mut header = Vec::new();
     if workspace_grouping {
-        header.push(Cell::new("Workspace").fg(Color::Cyan));
+        header.push(Cell::new(rust_i18n::t!("commands.models.header.workspace")).fg(Color::Cyan));
     }
     header.extend([
-        Cell::new("Model").fg(Color::Cyan),
-        Cell::new("Client").fg(Color::Cyan),
-        Cell::new("Provider").fg(Color::Cyan),
-        Cell::new("Input").fg(Color::Cyan),
-        Cell::new("Output").fg(Color::Cyan),
-        Cell::new("Cache×").fg(Color::Cyan),
-        Cell::new("Cache R").fg(Color::Cyan),
-        Cell::new("Cache W").fg(Color::Cyan),
-        Cell::new("Total").fg(Color::Cyan),
-        Cell::new("Cost").fg(Color::Cyan),
-        Cell::new("Cost/1M").fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.model")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.client")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.provider")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.input")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.output")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.cache_hit")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.cache_read")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.cache_write")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.total")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.cost")).fg(Color::Cyan),
+        Cell::new(rust_i18n::t!("commands.models.header.cost_per_million")).fg(Color::Cyan),
     ]);
     table.set_header(header);
 
@@ -193,7 +198,10 @@ fn render_models_table(
                     .workspace_label
                     .as_deref()
                     .or(model.workspace_key.as_deref())
-                    .unwrap_or("Unknown workspace"),
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        rust_i18n::t!("commands.models.unknown_workspace").into_owned()
+                    }),
             ));
         }
         row.extend([
@@ -223,7 +231,7 @@ fn render_models_table(
         total_row.push(Cell::new(""));
     }
     total_row.extend([
-        Cell::new("Total")
+        Cell::new(rust_i18n::t!("commands.models.header.total"))
             .fg(Color::Yellow)
             .add_attribute(Attribute::Bold),
         Cell::new(""),
@@ -244,14 +252,17 @@ fn render_models_table(
     table.add_row(total_row);
 
     let title = date_range.map_or_else(
-        || "Token Usage by Model".to_string(),
-        |range| format!("Token Usage by Model ({range})"),
+        || rust_i18n::t!("commands.models.title").into_owned(),
+        |range| rust_i18n::t!("commands.models.title_with_range", range = range).into_owned(),
     );
     println!("\n  \x1b[36m{title}\x1b[0m\n");
     println!("{}", dim_borders(&table.to_string()));
     println!(
-        "\x1b[90m\n  Total: {} tokens, \x1b[32m{}\x1b[90m\x1b[0m",
-        format_tokens_with_commas(data.total_tokens),
+        "\x1b[90m\n  {}\x1b[32m{}\x1b[90m\x1b[0m",
+        rust_i18n::t!(
+            "commands.models.footer_total_prefix",
+            tokens = format_tokens_with_commas(data.total_tokens)
+        ),
         format_currency(data.total_cost)
     );
     io::stdout().flush()?;
@@ -267,10 +278,10 @@ fn emit_pricing_warning(
     let summary = match status {
         tokenx_engine::pricing::PricingStatus::Available => return,
         tokenx_engine::pricing::PricingStatus::CachedFallback => {
-            "Pricing refresh failed; costs use cached rates"
+            rust_i18n::t!("commands.models.pricing_cached_fallback")
         }
         tokenx_engine::pricing::PricingStatus::Unavailable => {
-            "Pricing unavailable; zero costs may mean missing rates"
+            rust_i18n::t!("commands.models.pricing_unavailable")
         }
     };
     eprintln!("{}", format!("  {summary}").yellow());

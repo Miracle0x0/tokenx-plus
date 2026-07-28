@@ -100,13 +100,13 @@ fn credentials_path() -> Option<std::path::PathBuf> {
 }
 
 fn read_credentials() -> Result<Credentials> {
-    let path = credentials_path().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Cannot locate Kimi Coding Plan credential because the home directory is unavailable"
-        )
-    })?;
+    let path = credentials_path()
+        .ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.kimi_no_home")))?;
     if !path.exists() {
-        anyhow::bail!("No Kimi Coding Plan credential found at {}", path.display());
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.kimi_no_credential",
+            path = path.display()
+        ));
     }
     let content = std::fs::read_to_string(&path)?;
     Ok(serde_json::from_str(&content)?)
@@ -131,7 +131,10 @@ async fn fetch_usage_result(
         return Ok(Err(status));
     }
     if !status.is_success() {
-        anyhow::bail!("Kimi usage request failed (HTTP {status})");
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.kimi_request_failed",
+            status = status.as_str()
+        ));
     }
     Ok(Ok(resp.json().await?))
 }
@@ -139,7 +142,11 @@ async fn fetch_usage_result(
 async fn fetch_usage(client: &reqwest::Client, token: &str, source: &str) -> Result<UsageResponse> {
     match fetch_usage_result(client, token).await? {
         Ok(resp) => Ok(resp),
-        Err(status) => anyhow::bail!("{source} authentication rejected (HTTP {status})"),
+        Err(status) => anyhow::bail!(rust_i18n::t!(
+            "subscription.error.kimi_auth_rejected",
+            source = source,
+            status = status.as_str()
+        )),
     }
 }
 
@@ -198,14 +205,26 @@ fn duration_label(duration: Option<&IntLike>, time_unit: Option<&String>) -> Opt
     match unit.as_deref() {
         Some("MINUTE") | Some("MINUTES") => {
             if duration >= 60 && duration % 60 == 0 {
-                Some(format!("{} Hour", duration / 60))
+                Some(
+                    rust_i18n::t!("subscription.metric.hour_window", hours = duration / 60)
+                        .into_owned(),
+                )
             } else {
-                Some(format!("{duration}m limit"))
+                Some(
+                    rust_i18n::t!("subscription.metric.minute_limit", duration = duration)
+                        .into_owned(),
+                )
             }
         }
-        Some("HOUR") | Some("HOURS") => Some(format!("{duration} Hour")),
-        Some("DAY") | Some("DAYS") => Some(format!("{duration}d limit")),
-        Some("SECOND") | Some("SECONDS") | None => Some(format!("{duration}s limit")),
+        Some("HOUR") | Some("HOURS") => {
+            Some(rust_i18n::t!("subscription.metric.hour_window", hours = duration).into_owned())
+        }
+        Some("DAY") | Some("DAYS") => {
+            Some(rust_i18n::t!("subscription.metric.day_limit", duration = duration).into_owned())
+        }
+        Some("SECOND") | Some("SECONDS") | None => Some(
+            rust_i18n::t!("subscription.metric.second_limit", duration = duration).into_owned(),
+        ),
         _ => None,
     }
 }
@@ -232,7 +251,9 @@ fn limit_label(entry: &LimitEntry, index: usize) -> String {
                 duration_label(detail.duration.as_ref(), detail.time_unit.as_ref())
             })
         })
-        .unwrap_or_else(|| format!("Limit {}", index + 1))
+        .unwrap_or_else(|| {
+            rust_i18n::t!("subscription.metric.limit_n", index = index + 1).into_owned()
+        })
 }
 
 fn metric_dedup_key(label: &str, metric: &UsageMetric) -> String {
@@ -272,7 +293,9 @@ fn payload_from_response(resp: UsageResponse) -> SubscriptionPayload {
 
     // Parse top-level usage as "Weekly" and deduplicate against limits[].
     if let Some(ref usage) = resp.usage {
-        if let Some(metric) = parse_quota_detail("Weekly", usage) {
+        if let Some(metric) =
+            parse_quota_detail(rust_i18n::t!("subscription.metric.weekly").as_ref(), usage)
+        {
             let key = metric_dedup_key(&metric.label, &metric);
             if seen.insert(key) {
                 metrics.push(metric);
@@ -295,14 +318,12 @@ async fn fetch_with_credential(client: &reqwest::Client) -> Result<UsageResponse
         .as_deref()
         .map(str::trim)
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("No Kimi Coding Plan access token."))?;
+        .ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.kimi_no_access_token")))?;
     if creds
         .expires_at
         .is_some_and(|expires_at| chrono::Utc::now().timestamp() as f64 >= expires_at)
     {
-        anyhow::bail!(
-            "Kimi Coding Plan credential has expired. Run `kimi` to refresh the provider-owned authentication."
-        );
+        anyhow::bail!(rust_i18n::t!("subscription.error.kimi_credential_expired"));
     }
     fetch_usage(client, access_token, CREDENTIAL_SOURCE).await
 }
@@ -317,8 +338,13 @@ async fn fetch_with_token(
 }
 
 pub async fn fetch_key(client: &reqwest::Client) -> Result<SubscriptionPayload> {
-    let api_key = read_api_key()
-        .ok_or_else(|| anyhow::anyhow!("{API_KEY_ENV} is required for {KEY_SOURCE}"))?;
+    let api_key = read_api_key().ok_or_else(|| {
+        anyhow::anyhow!(rust_i18n::t!(
+            "subscription.error.kimi_env_required",
+            env = API_KEY_ENV,
+            source = KEY_SOURCE
+        ))
+    })?;
     fetch_with_token(client, &api_key, KEY_SOURCE).await
 }
 

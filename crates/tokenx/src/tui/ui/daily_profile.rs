@@ -1,6 +1,7 @@
 use chrono::Datelike;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation};
+use std::borrow::Cow;
 
 use super::empty_state;
 use super::usage_profile;
@@ -12,27 +13,39 @@ use crate::tui::page_state::PageStates;
 use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
 
-const WEEKDAYS: [&str; 7] = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-];
+fn weekday_labels() -> [Cow<'static, str>; 7] {
+    [
+        rust_i18n::t!("tui.ui.daily.weekday.monday"),
+        rust_i18n::t!("tui.ui.daily.weekday.tuesday"),
+        rust_i18n::t!("tui.ui.daily.weekday.wednesday"),
+        rust_i18n::t!("tui.ui.daily.weekday.thursday"),
+        rust_i18n::t!("tui.ui.daily.weekday.friday"),
+        rust_i18n::t!("tui.ui.daily.weekday.saturday"),
+        rust_i18n::t!("tui.ui.daily.weekday.sunday"),
+    ]
+}
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Compile-time-embedded rust-i18n translations always resolve to a borrowed
+/// `&'static str`; unwrap the `Cow` for APIs that require `&'static str`.
+fn borrowed_static(text: Cow<'static, str>) -> &'static str {
+    match text {
+        Cow::Borrowed(text) => text,
+        Cow::Owned(text) => Box::leak(text.into_boxed_str()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct WeekdayUsage {
-    label: &'static str,
+    label: Cow<'static, str>,
     tokens: u64,
     cost: f64,
     active_days: usize,
 }
 
 fn aggregate_weekdays(daily: &[DailyUsage]) -> [WeekdayUsage; 7] {
+    let labels = weekday_labels();
     let mut weekdays = std::array::from_fn(|index| WeekdayUsage {
-        label: WEEKDAYS[index],
+        label: labels[index].clone(),
         tokens: 0,
         cost: 0.0,
         active_days: 0,
@@ -62,7 +75,7 @@ fn peak_weekday(weekdays: &[WeekdayUsage; 7]) -> Option<WeekdayUsage> {
                 .then_with(|| left.cost.total_cmp(&right.cost))
                 .then_with(|| right_index.cmp(left_index))
         })
-        .map(|(_, weekday)| *weekday)
+        .map(|(_, weekday)| weekday.clone())
 }
 
 pub fn render(
@@ -78,7 +91,7 @@ pub fn render(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.chrome.border))
         .title(Span::styled(
-            " Daily Profile ",
+            rust_i18n::t!("tui.ui.daily.profile_title"),
             Style::default()
                 .fg(app.theme.chrome.heading)
                 .add_modifier(Modifier::BOLD),
@@ -140,14 +153,14 @@ pub(crate) fn build_daily_profile_lines(app: &TuiModel, area_width: u16) -> Vec<
         app,
         app.usage().daily.iter().map(|day| day.date),
         app.usage().daily.len(),
-        "active days",
+        &rust_i18n::t!("tui.ui.daily.active_days"),
     )
     .into_iter()
     .collect::<Vec<_>>();
     lines.push(Line::default());
 
     for weekday in weekdays {
-        let is_peak = peak.is_some_and(|peak| peak.label == weekday.label);
+        let is_peak = peak.as_ref().is_some_and(|p| p.label == weekday.label);
         lines.push(usage_profile::bar_row(
             app,
             &usage_profile::ProfileBarRow {
@@ -166,7 +179,7 @@ pub(crate) fn build_daily_profile_lines(app: &TuiModel, area_width: u16) -> Vec<
     if let Some(peak) = peak {
         lines.push(usage_profile::peak_line(
             app,
-            "Peak day ",
+            borrowed_static(rust_i18n::t!("tui.ui.daily.peak_day")),
             peak.label.to_string(),
             peak.tokens,
             peak.cost,

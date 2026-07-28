@@ -78,12 +78,16 @@ fn is_api_error(resp: &ApiResponse) -> bool {
 fn build_metrics(remains: &[ModelRemains]) -> Vec<UsageMetric> {
     let mut metrics = Vec::new();
     for remain in remains {
-        let name = remain.model_name.as_deref().unwrap_or("model");
+        let name: String = remain
+            .model_name
+            .as_deref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| rust_i18n::t!("subscription.metric.model_fallback").into_owned());
 
         if let Some(percent) = remain.current_interval_remaining_percent {
             let remaining = percent.clamp(0, 100) as f64;
             metrics.push(UsageMetric {
-                label: name.to_string(),
+                label: name.clone(),
                 used_percent: 100.0 - remaining,
                 remaining_percent: remaining,
                 remaining_label: None,
@@ -98,7 +102,8 @@ fn build_metrics(remains: &[ModelRemains]) -> Vec<UsageMetric> {
             if let Some(percent) = remain.current_weekly_remaining_percent {
                 let remaining = percent.clamp(0, 100) as f64;
                 metrics.push(UsageMetric {
-                    label: format!("{name}-wk"),
+                    label: rust_i18n::t!("subscription.metric.weekly_suffix", name = name)
+                        .into_owned(),
                     used_percent: 100.0 - remaining,
                     remaining_percent: remaining,
                     remaining_label: None,
@@ -122,42 +127,49 @@ async fn fetch_site_api(client: &reqwest::Client, site: &Site, key: &str) -> Res
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        anyhow::bail!(
-            "MiniMax Token Plan ({}) session expired; check your API key",
-            site.label
-        );
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.minimax_session_expired",
+            site = site.label
+        ));
     }
     if !status.is_success() {
-        anyhow::bail!(
-            "MiniMax Token Plan ({}) request failed (HTTP {status})",
-            site.label
-        );
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.minimax_request_failed",
+            site = site.label,
+            status = status.as_str()
+        ));
     }
     Ok(resp.json().await?)
 }
 
 fn payload_from_response(site: &Site, resp: ApiResponse) -> Result<SubscriptionPayload> {
     if is_auth_error(&resp) {
-        anyhow::bail!(
-            "MiniMax Token Plan ({}) session expired; check your API key",
-            site.label
-        );
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.minimax_session_expired",
+            site = site.label
+        ));
     }
     if is_api_error(&resp) {
         let message = resp
             .base_resp
             .as_ref()
             .and_then(|base| base.status_msg.clone())
-            .unwrap_or_else(|| "unknown error".to_string());
-        anyhow::bail!("MiniMax Token Plan ({}): {message}", site.label);
+            .unwrap_or_else(|| {
+                rust_i18n::t!("subscription.error.minimax_unknown_error").into_owned()
+            });
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.minimax_api_error",
+            site = site.label,
+            message = message
+        ));
     }
 
     let metrics = build_metrics(resp.model_remains.as_deref().unwrap_or(&[]));
     if metrics.is_empty() {
-        anyhow::bail!(
-            "MiniMax Token Plan ({}) returned no parseable usage",
-            site.label
-        );
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.minimax_no_usage",
+            site = site.label
+        ));
     }
 
     Ok(SubscriptionPayload {
@@ -169,7 +181,12 @@ fn payload_from_response(site: &Site, resp: ApiResponse) -> Result<SubscriptionP
 }
 
 async fn fetch_site(client: &reqwest::Client, site: &Site) -> Result<SubscriptionPayload> {
-    let key = read_key(site).ok_or_else(|| anyhow::anyhow!("No {} set.", site.key_env))?;
+    let key = read_key(site).ok_or_else(|| {
+        anyhow::anyhow!(rust_i18n::t!(
+            "subscription.error.minimax_no_env",
+            env = site.key_env
+        ))
+    })?;
     let resp = fetch_site_api(client, site, &key).await?;
     payload_from_response(site, resp)
 }

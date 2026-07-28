@@ -2,6 +2,7 @@ mod actions;
 mod colors;
 mod contrast;
 pub mod data;
+pub(crate) mod date;
 mod effect;
 mod event;
 mod frame;
@@ -211,7 +212,7 @@ fn decide_initial_data(
             None,
             true,
             None,
-            Some(format!("Generation cache warning: {failure}")),
+            Some(rust_i18n::t!("tui.core.cache.warning", failure = failure).into_owned()),
         ),
     }
 }
@@ -227,11 +228,15 @@ fn install_cached_generation(app: &mut TuiModel, cached_snapshot: Option<Generat
     if let Some(cached) = cached_snapshot {
         match app.install_generation(cached) {
             Ok(()) => {
-                app.set_generation_status_with_tone("Loaded from cache", StatusTone::Success);
+                app.set_generation_status_with_tone(
+                    rust_i18n::t!("tui.core.status.loaded_from_cache").as_ref(),
+                    StatusTone::Success,
+                );
             }
             Err(error) => {
                 let warning =
-                    format!("Generation cache warning: cached generation rejected: {error:#}");
+                    rust_i18n::t!("tui.core.cache.rejected", error = format!("{error:#}"))
+                        .into_owned();
                 tracing::warn!(
                     error = %error,
                     "cached generation failed TUI projection; rebuilding from source inputs"
@@ -350,7 +355,10 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::TuiPlan) -> Result
         if let Err(err) =
             signal_hook::flag::register(signal_hook::consts::SIGCONT, Arc::clone(&flag))
         {
-            eprintln!("tokenx: failed to register SIGCONT handler: {err}");
+            eprintln!(
+                "{}",
+                rust_i18n::t!("tui.core.error.sigcont_handler", error = err)
+            );
         }
         flag
     };
@@ -418,11 +426,11 @@ fn run_loop_with_background(
             }
             Err(TryRecvError::Disconnected) => {
                 if tui_frame.model().is_background_loading() {
-                    tui_frame
-                        .model_mut()
-                        .fail_local_usage_load("Background thread disconnected".to_string());
+                    tui_frame.model_mut().fail_local_usage_load(
+                        rust_i18n::t!("tui.core.status.background_disconnected").into_owned(),
+                    );
                     tui_frame.model_mut().set_generation_status_with_tone(
-                        "Error: Background thread disconnected",
+                        rust_i18n::t!("tui.core.status.background_disconnected_error").as_ref(),
                         StatusTone::Danger,
                     );
                 }

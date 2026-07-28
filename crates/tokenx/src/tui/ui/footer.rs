@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use ratatui::prelude::*;
@@ -15,15 +16,18 @@ use crate::tui::render_artifacts::RenderArtifacts;
 
 pub(super) const HEIGHT: u16 = 5;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct SortControl {
     pub(super) field: SortField,
-    pub(super) label: &'static str,
+    pub(super) label: Cow<'static, str>,
 }
 
 impl SortControl {
-    pub(super) const fn new(field: SortField, label: &'static str) -> Self {
-        Self { field, label }
+    pub(super) fn new(field: SortField, label: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            field,
+            label: label.into(),
+        }
     }
 }
 
@@ -282,9 +286,12 @@ pub(super) fn subscription_content(
 
 pub(super) fn standard_sort_controls(actions: &ActionSet) -> Vec<SortControl> {
     [
-        SortControl::new(SortField::Date, "Date"),
-        SortControl::new(SortField::Cost, "Cost"),
-        SortControl::new(SortField::Tokens, "Tokens"),
+        SortControl::new(SortField::Date, rust_i18n::t!("tui.ui.footer.sort.date")),
+        SortControl::new(SortField::Cost, rust_i18n::t!("tui.ui.footer.sort.cost")),
+        SortControl::new(
+            SortField::Tokens,
+            rust_i18n::t!("tui.ui.footer.sort.tokens"),
+        ),
     ]
     .into_iter()
     .filter(|control| actions.contains(Action::Sort(control.field)))
@@ -300,7 +307,13 @@ pub(super) fn with_empty_scope(
         return content;
     }
 
-    content.with_leading(format!("Scope: {}", super::empty_state::scope_summary(app)))
+    content.with_leading(
+        rust_i18n::t!(
+            "tui.ui.footer.scope_label",
+            scope = super::empty_state::scope_summary(app)
+        )
+        .into_owned(),
+    )
 }
 
 pub(super) fn render(
@@ -390,8 +403,8 @@ pub(super) fn render_cold_loading(frame: &mut Frame, app: &TuiModel, area: Rect)
         frame,
         app,
         area,
-        super::loading::SCANNING_LOCAL_DATA,
-        "Scanning",
+        rust_i18n::t!("tui.ui.loading.scanning_local_data"),
+        rust_i18n::t!("tui.ui.footer.activity.scanning"),
         app.background_load_elapsed().unwrap_or_default().as_secs(),
     );
 }
@@ -400,8 +413,8 @@ pub(super) fn render_timed_activity(
     frame: &mut Frame,
     app: &TuiModel,
     area: Rect,
-    message: &'static str,
-    compact_message: &'static str,
+    message: Cow<'static, str>,
+    compact_message: Cow<'static, str>,
     elapsed_secs: u64,
 ) {
     let inner = render_shell(frame, app, area);
@@ -445,8 +458,8 @@ fn render_centered_line(frame: &mut Frame, area: Rect, line: Line<'static>) {
 fn timed_activity_line(
     app: &TuiModel,
     width: u16,
-    message: &'static str,
-    compact_message: &'static str,
+    message: Cow<'static, str>,
+    compact_message: Cow<'static, str>,
     elapsed_secs: u64,
 ) -> Line<'static> {
     const WAVE: &str = "~ ~";
@@ -503,40 +516,47 @@ fn timed_activity_line(
 }
 
 fn cold_failed_line(app: &TuiModel, width: u16) -> Line<'static> {
-    const FULL: &str = "Scan failed · [r] Retry · [q] Quit";
-    const ACTIONS: &str = "[r] Retry · [q] Quit";
-    const COMPACT: &str = "r:retry · q:quit";
+    let scan_failed = rust_i18n::t!("tui.ui.footer.cold_failed.scan_failed");
+    let retry = rust_i18n::t!("tui.ui.footer.cold_failed.retry");
+    let quit = rust_i18n::t!("tui.ui.footer.cold_failed.quit");
+    let separator = " · ";
     let available = width as usize;
 
-    if UnicodeWidthStr::width(FULL) <= available {
+    let full_width = scan_failed.width() + separator.width() * 2 + retry.width() + quit.width();
+    if full_width <= available {
         return Line::from(vec![
             Span::styled(
-                "Scan failed",
+                scan_failed,
                 Style::default()
                     .fg(app.theme.status.danger)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" · ", Style::default().fg(app.theme.text.secondary)),
-            Span::styled("[r] Retry", Style::default().fg(app.theme.chrome.focus)),
-            Span::styled(" · ", Style::default().fg(app.theme.text.secondary)),
-            Span::styled("[q] Quit", Style::default().fg(app.theme.text.secondary)),
+            Span::styled(separator, Style::default().fg(app.theme.text.secondary)),
+            Span::styled(retry.clone(), Style::default().fg(app.theme.chrome.focus)),
+            Span::styled(separator, Style::default().fg(app.theme.text.secondary)),
+            Span::styled(quit.clone(), Style::default().fg(app.theme.text.secondary)),
         ]);
     }
 
-    if UnicodeWidthStr::width(ACTIONS) <= available {
+    let actions_width = retry.width() + separator.width() + quit.width();
+    if actions_width <= available {
         return Line::from(vec![
-            Span::styled("[r] Retry", Style::default().fg(app.theme.chrome.focus)),
-            Span::styled(" · ", Style::default().fg(app.theme.text.secondary)),
-            Span::styled("[q] Quit", Style::default().fg(app.theme.text.secondary)),
+            Span::styled(retry, Style::default().fg(app.theme.chrome.focus)),
+            Span::styled(separator, Style::default().fg(app.theme.text.secondary)),
+            Span::styled(quit, Style::default().fg(app.theme.text.secondary)),
         ]);
     }
 
-    let compact = if UnicodeWidthStr::width(COMPACT) <= available {
-        COMPACT.to_string()
+    let compact_label = rust_i18n::t!("tui.ui.footer.cold_failed.compact");
+    let compact = if UnicodeWidthStr::width(compact_label.as_ref()) <= available {
+        compact_label.into_owned()
     } else if available >= 7 {
-        "[r] [q]".to_string()
+        rust_i18n::t!("tui.ui.footer.cold_failed.keys").into_owned()
     } else {
-        truncate_display_width("r q", available)
+        truncate_display_width(
+            &rust_i18n::t!("tui.ui.footer.cold_failed.minimal"),
+            available,
+        )
     };
     Line::from(Span::styled(
         compact,
@@ -603,7 +623,7 @@ fn render_main_row(
 }
 
 fn sort_controls_width(sort_controls: &[SortControl]) -> usize {
-    "Sort: ".width()
+    rust_i18n::t!("tui.ui.footer.sort_prefix").width()
         + sort_controls
             .iter()
             .map(|control| control.label.width())
@@ -618,11 +638,12 @@ fn render_sort_controls(
     area: Rect,
     sort_controls: &[SortControl],
 ) {
+    let sort_prefix = rust_i18n::t!("tui.ui.footer.sort_prefix");
     let mut spans = vec![Span::styled(
-        "Sort: ",
+        sort_prefix.clone(),
         Style::default().fg(app.theme.text.secondary),
     )];
-    let mut x_offset = area.x.saturating_add("Sort: ".width() as u16);
+    let mut x_offset = area.x.saturating_add(sort_prefix.width() as u16);
 
     for (index, control) in sort_controls.iter().enumerate() {
         if index > 0 {
@@ -636,7 +657,7 @@ fn render_sort_controls(
         } else {
             Style::default().fg(app.theme.text.secondary)
         };
-        spans.push(Span::styled(control.label, style));
+        spans.push(Span::styled(control.label.clone(), style));
 
         let label_width = control.label.width() as u16;
         artifacts.add_hit_target(
@@ -660,7 +681,7 @@ pub(super) fn summary_row_line(app: &TuiModel, actions: &ActionSet) -> Responsiv
     ));
     if !actions.is_empty_view() {
         right_spans.push(Span::styled(
-            " tokens",
+            rust_i18n::t!("tui.ui.footer.tokens_suffix"),
             Style::default().fg(app.theme.text.secondary),
         ));
     }
@@ -711,22 +732,29 @@ fn subscription_summary_line(
             let configured = app.enabled_subscription_provider_count();
             if configured == 0 {
                 Line::from(Span::styled(
-                    "No providers configured",
+                    rust_i18n::t!("tui.ui.footer.summary.no_providers_configured"),
                     Style::default().fg(app.theme.text.secondary),
                 ))
             } else {
                 Line::from(vec![
                     Span::styled(
-                        count_label(configured, "provider", "providers"),
+                        count_label(
+                            configured,
+                            &rust_i18n::t!("tui.ui.footer.word.provider_one"),
+                            &rust_i18n::t!("tui.ui.footer.word.provider_other"),
+                        ),
                         Style::default().fg(app.theme.metrics.total),
                     ),
-                    Span::styled(" configured", Style::default().fg(app.theme.text.secondary)),
+                    Span::styled(
+                        rust_i18n::t!("tui.ui.footer.summary.configured_suffix"),
+                        Style::default().fg(app.theme.text.secondary),
+                    ),
                 ])
             }
         }
         SubscriptionPresentation::Empty { .. } if app.subscription_outputs().is_empty() => {
             Line::from(Span::styled(
-                "No subscription results",
+                rust_i18n::t!("tui.ui.footer.summary.no_subscription_results"),
                 Style::default().fg(app.theme.text.secondary),
             ))
         }
@@ -734,7 +762,11 @@ fn subscription_summary_line(
             let subscriptions = app.subscription_outputs().len();
             let errors = app.subscription_errors().len();
             let mut spans = vec![Span::styled(
-                count_label(subscriptions, "subscription", "subscriptions"),
+                count_label(
+                    subscriptions,
+                    &rust_i18n::t!("tui.ui.footer.word.subscription_one"),
+                    &rust_i18n::t!("tui.ui.footer.word.subscription_other"),
+                ),
                 Style::default().fg(app.theme.metrics.total),
             )];
             if errors > 0 {
@@ -743,7 +775,11 @@ fn subscription_summary_line(
                     Style::default().fg(app.theme.text.secondary),
                 ));
                 spans.push(Span::styled(
-                    count_label(errors, "error", "errors"),
+                    count_label(
+                        errors,
+                        &rust_i18n::t!("tui.ui.footer.word.error_one"),
+                        &rust_i18n::t!("tui.ui.footer.word.error_other"),
+                    ),
                     Style::default().fg(app.theme.status.danger),
                 ));
             }
@@ -769,31 +805,62 @@ fn current_count_label(app: &TuiModel) -> String {
                     }
                 }
             }
-            format!(
-                " ({} models · {} clients · {} days)",
-                models.len(),
-                clients.len(),
-                app.usage().daily.len()
+            rust_i18n::t!(
+                "tui.ui.footer.count.overview",
+                models = models.len(),
+                clients = clients.len(),
+                days = app.usage().daily.len()
             )
+            .into_owned()
         }
-        Tab::Models if app.is_model_detail_active() => {
-            format!(" ({} provider rows)", app.model_row_count())
+        Tab::Models if app.is_model_detail_active() => rust_i18n::t!(
+            "tui.ui.footer.count.provider_rows",
+            count = app.model_row_count()
+        )
+        .into_owned(),
+        Tab::Models => rust_i18n::t!(
+            "tui.ui.footer.count.models",
+            count = app.usage().models.len()
+        )
+        .into_owned(),
+        Tab::Agents => rust_i18n::t!(
+            "tui.ui.footer.count.agents",
+            count = app.usage().agents.len()
+        )
+        .into_owned(),
+        Tab::Daily if app.is_daily_detail_active() => rust_i18n::t!(
+            "tui.ui.footer.count.models",
+            count = app.daily_detail_row_count()
+        )
+        .into_owned(),
+        Tab::Monthly if app.is_period_detail_active_for_kind(PeriodKind::Monthly) => rust_i18n::t!(
+            "tui.ui.footer.count.models",
+            count = app.period_detail_row_count()
+        )
+        .into_owned(),
+        Tab::Weekly if app.is_period_detail_active_for_kind(PeriodKind::Weekly) => rust_i18n::t!(
+            "tui.ui.footer.count.models",
+            count = app.period_detail_row_count()
+        )
+        .into_owned(),
+        Tab::Monthly => rust_i18n::t!(
+            "tui.ui.footer.count.months",
+            count = app.period_usage(PeriodKind::Monthly).len()
+        )
+        .into_owned(),
+        Tab::Weekly => rust_i18n::t!(
+            "tui.ui.footer.count.weeks",
+            count = app.period_usage(PeriodKind::Weekly).len()
+        )
+        .into_owned(),
+        Tab::Daily => {
+            rust_i18n::t!("tui.ui.footer.count.days", count = app.usage().daily.len()).into_owned()
         }
-        Tab::Models => format!(" ({} models)", app.usage().models.len()),
-        Tab::Agents => format!(" ({} agents)", app.usage().agents.len()),
-        Tab::Daily if app.is_daily_detail_active() => {
-            format!(" ({} models)", app.daily_detail_row_count())
-        }
-        Tab::Monthly if app.is_period_detail_active_for_kind(PeriodKind::Monthly) => {
-            format!(" ({} models)", app.period_detail_row_count())
-        }
-        Tab::Weekly if app.is_period_detail_active_for_kind(PeriodKind::Weekly) => {
-            format!(" ({} models)", app.period_detail_row_count())
-        }
-        Tab::Monthly => format!(" ({} months)", app.period_usage(PeriodKind::Monthly).len()),
-        Tab::Weekly => format!(" ({} weeks)", app.period_usage(PeriodKind::Weekly).len()),
-        Tab::Daily => format!(" ({} days)", app.usage().daily.len()),
-        Tab::Hourly => format!(" ({} hours)", app.usage().hourly.len()),
+        Tab::Hourly => rust_i18n::t!(
+            "tui.ui.footer.count.hours",
+            count = app.usage().hourly.len()
+        )
+        .into_owned(),
         Tab::Sessions => unreachable!("sessions footer supplies its own summary"),
         Tab::Stats | Tab::Subscription => String::new(),
     }
@@ -808,28 +875,28 @@ fn subscription_help_line(app: &TuiModel, actions: &ActionSet) -> HelpLine {
 
     if actions.contains(Action::RefreshSubscription) {
         items.push(HelpItem::new(
-            "[u:refresh]",
+            rust_i18n::t!("tui.ui.footer.help.refresh_subscription"),
             "[u]",
             Style::default().fg(app.theme.chrome.focus),
         ));
     }
     if actions.contains(Action::Scroll) {
         items.push(HelpItem::new(
-            "↑↓ scroll",
+            rust_i18n::t!("tui.ui.footer.help.scroll"),
             "↑↓",
             Style::default().fg(app.theme.text.secondary),
         ));
     }
     if actions.contains(Action::PreviousTab) || actions.contains(Action::NextTab) {
         items.push(HelpItem::new(
-            "←→/tab view",
+            rust_i18n::t!("tui.ui.footer.help.tab_view"),
             "←→",
             Style::default().fg(app.theme.text.secondary),
         ));
     }
     if actions.contains(Action::Theme) {
         items.push(HelpItem::new(
-            "[p:theme]",
+            rust_i18n::t!("tui.ui.footer.help.theme"),
             "[p]",
             Style::default().fg(app.theme.chrome.focus),
         ));
@@ -849,7 +916,7 @@ pub(super) fn action_help_row_line(
     app: &TuiModel,
     state: &PageStates,
     actions: &ActionSet,
-    toggle_target: Option<&str>,
+    toggle_target: Option<Cow<'static, str>>,
 ) -> HelpLine {
     debug_assert_ne!(app.current_tab, Tab::Subscription);
 
@@ -873,28 +940,43 @@ pub(super) fn action_help_row_line(
                     continue;
                 }
                 emitted_navigation = true;
-                ("←→/tab view".to_string(), "←→".to_string())
+                (
+                    rust_i18n::t!("tui.ui.footer.help.tab_view").into_owned(),
+                    "←→".to_string(),
+                )
             }
             Action::Sort(_) => {
                 if emitted_sort {
                     continue;
                 }
                 emitted_sort = true;
-                ("[d/t/c:sort]".to_string(), "d/t/c".to_string())
+                (
+                    rust_i18n::t!("tui.ui.footer.help.sort").into_owned(),
+                    "d/t/c".to_string(),
+                )
             }
-            Action::Scroll => ("↑↓ scroll".to_string(), "↑↓".to_string()),
+            Action::Scroll => (
+                rust_i18n::t!("tui.ui.footer.help.scroll").into_owned(),
+                "↑↓".to_string(),
+            ),
             Action::OpenDetails => (
                 if app.current_tab == Tab::Sessions {
-                    "[enter:sessions]"
+                    rust_i18n::t!("tui.ui.footer.help.enter_sessions")
                 } else {
-                    "[enter:details]"
+                    rust_i18n::t!("tui.ui.footer.help.enter_details")
                 }
-                .to_string(),
+                .into_owned(),
                 "↵".to_string(),
             ),
-            Action::Back => ("[esc:back]".to_string(), "esc".to_string()),
-            Action::ToggleView => toggle_action_labels(app, state, toggle_target),
-            Action::Clients => ("[s:clients]".to_string(), "[s]".to_string()),
+            Action::Back => (
+                rust_i18n::t!("tui.ui.footer.help.back").into_owned(),
+                "esc".to_string(),
+            ),
+            Action::ToggleView => toggle_action_labels(app, state, toggle_target.clone()),
+            Action::Clients => (
+                rust_i18n::t!("tui.ui.footer.help.clients").into_owned(),
+                "[s]".to_string(),
+            ),
             Action::GroupBy => (format!("[g:{}]", app.group_by()), "[g]".to_string()),
             Action::Theme => (
                 format!("[p:{}]", app.theme.name.as_str()),
@@ -902,13 +984,20 @@ pub(super) fn action_help_row_line(
             ),
             Action::ToggleAutoRefresh => (
                 if app.auto_refresh_enabled() {
-                    format!("[R:local auto {}s]", app.auto_refresh_interval().as_secs())
+                    rust_i18n::t!(
+                        "tui.ui.footer.help.auto_refresh_on",
+                        secs = app.auto_refresh_interval().as_secs()
+                    )
+                    .into_owned()
                 } else {
-                    "[R:local auto off]".to_string()
+                    rust_i18n::t!("tui.ui.footer.help.auto_refresh_off").into_owned()
                 },
                 "[R]".to_string(),
             ),
-            Action::RefreshLocal => ("[r:rescan]".to_string(), "[r]".to_string()),
+            Action::RefreshLocal => (
+                rust_i18n::t!("tui.ui.footer.help.rescan").into_owned(),
+                "[r]".to_string(),
+            ),
             Action::IncreaseRefreshInterval
             | Action::DecreaseRefreshInterval
             | Action::RefreshSubscription
@@ -926,25 +1015,34 @@ pub(super) fn action_help_row_line(
 fn toggle_action_labels(
     app: &TuiModel,
     state: &PageStates,
-    target: Option<&str>,
+    target: Option<Cow<'static, str>>,
 ) -> (String, String) {
+    let default_view = || rust_i18n::t!("tui.ui.footer.toggle.view");
     let (key, target) = match app.current_tab {
         Tab::Overview => (
             'h',
             match state.overview_granularity() {
-                crate::tui::model::ChartGranularity::Daily => "hourly",
-                crate::tui::model::ChartGranularity::Hourly => "daily",
+                crate::tui::model::ChartGranularity::Daily => {
+                    rust_i18n::t!("tui.ui.footer.toggle.hourly")
+                }
+                crate::tui::model::ChartGranularity::Hourly => {
+                    rust_i18n::t!("tui.ui.footer.toggle.daily")
+                }
             },
         ),
-        Tab::Daily => ('v', target.unwrap_or("view")),
+        Tab::Daily => ('v', target.unwrap_or_else(default_view)),
         Tab::Hourly => (
             'v',
             match state.hourly_mode() {
-                crate::tui::model::HourlyViewMode::Table => "profile",
-                crate::tui::model::HourlyViewMode::Profile => "table",
+                crate::tui::model::HourlyViewMode::Table => {
+                    rust_i18n::t!("tui.ui.footer.toggle.profile")
+                }
+                crate::tui::model::HourlyViewMode::Profile => {
+                    rust_i18n::t!("tui.ui.footer.toggle.table")
+                }
             },
         ),
-        _ => ('v', target.unwrap_or("view")),
+        _ => ('v', target.unwrap_or_else(default_view)),
     };
     (format!("[{key}:{target}]"), key.to_string())
 }
@@ -1007,7 +1105,7 @@ fn status_row_line(app: &TuiModel) -> Line<'static> {
 
     if app.is_background_loading() {
         spans.push(Span::styled(
-            "Refreshing cached data in background...",
+            rust_i18n::t!("tui.ui.footer.status.refreshing"),
             Style::default().fg(app.theme.status.pending),
         ));
     } else if let Some(ref msg) = app.status_message {
@@ -1024,21 +1122,19 @@ fn status_row_line(app: &TuiModel) -> Line<'static> {
         ));
     } else {
         let elapsed = app.last_refresh_elapsed();
-        let ago = if elapsed.as_secs() < 60 {
-            format!("{}s ago", elapsed.as_secs())
-        } else if elapsed.as_secs() < 3600 {
-            format!("{}m ago", elapsed.as_secs() / 60)
-        } else {
-            format!("{}h ago", elapsed.as_secs() / 3600)
-        };
+        let ago = elapsed_label(elapsed);
         spans.push(Span::styled(
-            format!("Last updated: {}", ago),
+            rust_i18n::t!("tui.ui.footer.status.last_updated", ago = ago).into_owned(),
             Style::default().fg(app.theme.text.secondary),
         ));
 
         if app.auto_refresh_enabled() {
             spans.push(Span::styled(
-                format!(" • Auto: {}s", app.auto_refresh_interval().as_secs()),
+                rust_i18n::t!(
+                    "tui.ui.footer.status.auto_refresh",
+                    secs = app.auto_refresh_interval().as_secs()
+                )
+                .into_owned(),
                 Style::default().fg(app.theme.text.secondary),
             ));
         }
@@ -1050,7 +1146,7 @@ fn status_row_line(app: &TuiModel) -> Line<'static> {
 fn subscription_status_row_line(app: &TuiModel) -> Line<'static> {
     let (text, style) = if app.is_fetching_subscription() {
         (
-            "Refreshing subscription data...".to_string(),
+            rust_i18n::t!("tui.ui.footer.subscription.refreshing").into_owned(),
             Style::default()
                 .fg(app.theme.status.pending)
                 .add_modifier(Modifier::BOLD),
@@ -1067,30 +1163,30 @@ fn subscription_status_row_line(app: &TuiModel) -> Line<'static> {
         )
     } else if let Some(updated_at) = app.last_subscription_check() {
         (
-            format!(
-                "Subscription checked: {}",
-                elapsed_label(updated_at.elapsed())
-            ),
+            rust_i18n::t!(
+                "tui.ui.footer.subscription.checked",
+                ago = elapsed_label(updated_at.elapsed())
+            )
+            .into_owned(),
             Style::default().fg(app.theme.text.secondary),
         )
     } else if !app.subscription_outputs().is_empty() {
         (
             if app.has_enabled_subscription_providers() {
-                "Subscription data loaded from cache".to_string()
+                rust_i18n::t!("tui.ui.footer.subscription.loaded_from_cache").into_owned()
             } else {
-                "Showing cached subscription data; no remote providers enabled".to_string()
+                rust_i18n::t!("tui.ui.footer.subscription.cached_no_providers").into_owned()
             },
             Style::default().fg(app.theme.text.secondary),
         )
     } else if !app.has_enabled_subscription_providers() {
         (
-            "No remote subscription providers enabled; configure subscription.providers"
-                .to_string(),
+            rust_i18n::t!("tui.ui.footer.subscription.no_providers").into_owned(),
             Style::default().fg(app.theme.text.secondary),
         )
     } else {
         (
-            "Press u to refresh subscription data".to_string(),
+            rust_i18n::t!("tui.ui.footer.subscription.press_u").into_owned(),
             Style::default().fg(app.theme.text.secondary),
         )
     };
@@ -1104,11 +1200,19 @@ fn subscription_status_message(app: &TuiModel) -> Option<&str> {
 
 fn elapsed_label(elapsed: std::time::Duration) -> String {
     if elapsed.as_secs() < 60 {
-        format!("{}s ago", elapsed.as_secs())
+        rust_i18n::t!("tui.ui.footer.status.ago_secs", secs = elapsed.as_secs()).into_owned()
     } else if elapsed.as_secs() < 3600 {
-        format!("{}m ago", elapsed.as_secs() / 60)
+        rust_i18n::t!(
+            "tui.ui.footer.status.ago_mins",
+            mins = elapsed.as_secs() / 60
+        )
+        .into_owned()
     } else {
-        format!("{}h ago", elapsed.as_secs() / 3600)
+        rust_i18n::t!(
+            "tui.ui.footer.status.ago_hours",
+            hours = elapsed.as_secs() / 3600
+        )
+        .into_owned()
     }
 }
 

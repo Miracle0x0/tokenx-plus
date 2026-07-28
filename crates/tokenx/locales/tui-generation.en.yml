@@ -1,0 +1,15 @@
+tui:
+  generation:
+    status:
+      loaded: "Data loaded"
+      error: "Error: %{diagnostic}"
+    auto_refresh:
+      on: "Auto-refresh ON (%{seconds}s)"
+      off: "Auto-refresh OFF"
+      interval: "Refresh interval: %{seconds}s"
+    error:
+      refresh_context: "Failed to refresh acquisition context: %{error}"
+      projection: "Generation projection failed: %{error}"
+      illegal_unchanged: "Forced acquisition returned an illegal unchanged result"
+      cache_persistence: "Cache persistence warning: %{diagnostic}"
+      worker_panic: "TUI background worker panicked: %{message}"

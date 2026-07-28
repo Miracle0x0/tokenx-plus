@@ -1,0 +1,5 @@
+cli:
+  error:
+    tui_requires_terminal: "TUI 需要交互式终端\n提示：使用 `tokenx models --json` 获取结构化输出"
+    tui_tab_disabled: "TUI 标签页 `subscription` 已在 settings.json 中禁用"
+    reversed_date_range: "--since（%{since}）不能晚于 --until（%{until}）"

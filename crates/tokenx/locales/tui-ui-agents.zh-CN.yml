@@ -1,0 +1,11 @@
+tui:
+  ui:
+    agents:
+      title: " 代理 "
+      column:
+        agent: "代理"
+        client: "客户端"
+        tokens: "令牌"
+        cost: "费用"
+        messages: "消息"
+        instances: "实例"

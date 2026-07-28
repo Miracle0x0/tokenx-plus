@@ -1,0 +1,19 @@
+tui:
+  ui:
+    stats:
+      graph_title: "贡献图（52 周）"
+      day_insights_title: "每日洞察"
+      metrics_current: "当前连续"
+      metrics_longest: "最长连续"
+      metrics_active: "活跃天数"
+      legend_less: "少"
+      legend_more: "多"
+      graph_hint: "点击某一天查看详情"
+      select_day_prompt: "在贡献图中选择一天，查看其客户端和模型用量。"
+      top_model: "Top 模型："
+      top_client: "Top 客户端："
+      no_detail: "该日没有可用的详细用量明细。"
+      no_activity: "无活动"
+      hours_active_narrow: "%{count} 小时活跃"
+      hours_active_wide: "活跃小时：%{count}"
+      radar_others: "其他"

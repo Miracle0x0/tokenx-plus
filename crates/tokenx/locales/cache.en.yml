@@ -1,0 +1,14 @@
+cache:
+  failure:
+    read: "read failure"
+    decode: "decode failure"
+    clock: "clock failure"
+  error:
+    read: "failed to read generation cache `%{path}`: %{error}"
+    inspect: "failed to inspect generation cache `%{path}`: %{error}"
+    not_regular_file: "failed to read generation cache `%{path}`: cache path is not a regular file"
+    invalid: "generation cache `%{path}` is invalid: %{error}"
+    clock_check: "generation cache clock check failed: %{error}"
+    future_timestamp: "generation cache `%{path}` was saved at timestamp %{saved_at_ms}, later than current timestamp %{now}"
+    retry_health_without_metadata: "generation cache `%{path}` has retryable input health without retry metadata"
+    persist: "failed to persist generation cache `%{path}`"

@@ -13,6 +13,7 @@ use super::widgets::{
     viewport_scrollbar_state,
 };
 use crate::tui::actions::ActionSet;
+use crate::tui::date::format_timestamp as format_local_timestamp;
 use crate::tui::local_usage::LocalUsageStatus;
 use crate::tui::model::TuiModel;
 use crate::tui::page_state::PageStates;
@@ -119,14 +120,14 @@ fn right_aligned_cell(value: impl AsRef<str>, width: usize) -> Cell<'static> {
     Cell::from(format!("{:>width$}", value.as_ref()))
 }
 
-fn client_column_label(column: ClientColumn) -> &'static str {
+fn client_column_label(column: ClientColumn) -> std::borrow::Cow<'static, str> {
     match column {
-        ClientColumn::Client => "Client",
-        ClientColumn::Main => "Main",
-        ClientColumn::Total => "Total",
-        ClientColumn::Workspaces => "Workspaces",
-        ClientColumn::Active => "Active",
-        ClientColumn::Space => "Space",
+        ClientColumn::Client => rust_i18n::t!("tui.ui.sessions.header.client"),
+        ClientColumn::Main => rust_i18n::t!("tui.ui.sessions.header.main"),
+        ClientColumn::Total => rust_i18n::t!("tui.ui.sessions.header.total"),
+        ClientColumn::Workspaces => rust_i18n::t!("tui.ui.sessions.header.workspaces"),
+        ClientColumn::Active => rust_i18n::t!("tui.ui.sessions.header.active"),
+        ClientColumn::Space => rust_i18n::t!("tui.ui.sessions.header.space"),
     }
 }
 
@@ -173,7 +174,7 @@ fn render_clients(
     let block = panel_block(
         app,
         Span::styled(
-            " Sessions ",
+            rust_i18n::t!("tui.ui.sessions.panel_title"),
             Style::default()
                 .fg(app.theme.chrome.heading)
                 .add_modifier(Modifier::BOLD),
@@ -307,7 +308,7 @@ fn render_session_details(
         .expect("session detail requires a selected client");
     let display_client = get_client_display_name(client);
     let title = Line::from(Span::styled(
-        format!(" Sessions / {display_client} "),
+        rust_i18n::t!("tui.ui.sessions.detail_title", client = display_client),
         Style::default()
             .fg(app.theme.chrome.heading)
             .add_modifier(Modifier::BOLD),
@@ -413,14 +414,14 @@ fn render_session_details(
             .iter()
             .map(|column| {
                 let label = match column {
-                    SessionColumn::Session => "  Session",
-                    SessionColumn::Workspace => "Workspace",
-                    SessionColumn::Models => "Models",
-                    SessionColumn::Messages => "Msg",
-                    SessionColumn::Turns => "Turns",
-                    SessionColumn::Tokens => "Tokens",
-                    SessionColumn::Cost => "Cost",
-                    SessionColumn::Active => "Active",
+                    SessionColumn::Session => rust_i18n::t!("tui.ui.sessions.header.session"),
+                    SessionColumn::Workspace => rust_i18n::t!("tui.ui.sessions.header.workspace"),
+                    SessionColumn::Models => rust_i18n::t!("tui.ui.sessions.header.models"),
+                    SessionColumn::Messages => rust_i18n::t!("tui.ui.sessions.header.messages"),
+                    SessionColumn::Turns => rust_i18n::t!("tui.ui.sessions.header.turns"),
+                    SessionColumn::Tokens => rust_i18n::t!("tui.ui.sessions.header.tokens"),
+                    SessionColumn::Cost => rust_i18n::t!("tui.ui.sessions.header.cost"),
+                    SessionColumn::Active => rust_i18n::t!("tui.ui.sessions.header.active"),
                 };
                 match column {
                     SessionColumn::Session | SessionColumn::Workspace | SessionColumn::Models => {
@@ -488,8 +489,11 @@ fn projection_status_line(
 ) -> Option<Line<'static>> {
     let (label, message, diagnostic) = match projection_status {
         LocalUsageStatus::Degraded { diagnostic } => (
-            "Degraded",
-            " · last refresh failed; showing last successful data",
+            rust_i18n::t!("tui.ui.sessions.status.degraded"),
+            format!(
+                " · {}",
+                rust_i18n::t!("tui.ui.sessions.status.degraded_message")
+            ),
             diagnostic,
         ),
         LocalUsageStatus::Failed { .. } => {
@@ -533,7 +537,7 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, visible: usize,
 fn format_timestamp(timestamp: i64, calendar: tokenx_engine::CalendarContext) -> String {
     calendar
         .local_datetime_seconds(timestamp)
-        .map(|datetime| datetime.format("%m-%d %H:%M").to_string())
+        .map(format_local_timestamp)
         .unwrap_or_else(|| "—".to_string())
 }
 
@@ -571,7 +575,7 @@ mod tests {
 
     #[test]
     fn client_header_has_no_duplicate_left_padding() {
-        assert_eq!(client_column_label(ClientColumn::Client), "Client");
+        assert_eq!(client_column_label(ClientColumn::Client).as_ref(), "Client");
     }
 
     #[test]

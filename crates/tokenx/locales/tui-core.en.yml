@@ -1,0 +1,11 @@
+tui:
+  core:
+    cache:
+      warning: "Generation cache warning: %{failure}"
+      rejected: "Generation cache warning: cached generation rejected: %{error}"
+    status:
+      loaded_from_cache: "Loaded from cache"
+      background_disconnected: "Background thread disconnected"
+      background_disconnected_error: "Error: Background thread disconnected"
+    error:
+      sigcont_handler: "tokenx: failed to register SIGCONT handler: %{error}"

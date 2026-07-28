@@ -1,0 +1,4 @@
+theme:
+  error:
+    invalid_theme: "invalid theme `%{name}`; expected one of: %{valid}"
+    unknown_theme: "unknown theme `%{name}`; expected one of: %{valid}"

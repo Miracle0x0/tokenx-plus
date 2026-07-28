@@ -22,8 +22,8 @@ pub struct GroupByPickerDialog {
 
 struct GroupByOption {
     value: GroupBy,
-    label: &'static str,
-    description: &'static str,
+    label: std::borrow::Cow<'static, str>,
+    description: std::borrow::Cow<'static, str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,23 +39,29 @@ impl GroupByPickerDialog {
         let options = vec![
             GroupByOption {
                 value: GroupBy::Model,
-                label: "Model",
-                description: "One row per model; merge clients and providers (default)",
+                label: rust_i18n::t!("tui.ui.dialog.group_by.option.model.label"),
+                description: rust_i18n::t!("tui.ui.dialog.group_by.option.model.description"),
             },
             GroupByOption {
                 value: GroupBy::ClientModel,
-                label: "Client + Model",
-                description: "One row per client-model pair",
+                label: rust_i18n::t!("tui.ui.dialog.group_by.option.client_model.label"),
+                description: rust_i18n::t!(
+                    "tui.ui.dialog.group_by.option.client_model.description"
+                ),
             },
             GroupByOption {
                 value: GroupBy::ClientProviderModel,
-                label: "Client + Provider + Model",
-                description: "Keep provider identity; no model merging",
+                label: rust_i18n::t!("tui.ui.dialog.group_by.option.client_provider_model.label"),
+                description: rust_i18n::t!(
+                    "tui.ui.dialog.group_by.option.client_provider_model.description"
+                ),
             },
             GroupByOption {
                 value: GroupBy::WorkspaceModel,
-                label: "Workspace + Model",
-                description: "Group local usage by workspace, then model",
+                label: rust_i18n::t!("tui.ui.dialog.group_by.option.workspace_model.label"),
+                description: rust_i18n::t!(
+                    "tui.ui.dialog.group_by.option.workspace_model.description"
+                ),
             },
         ];
 
@@ -146,7 +152,7 @@ impl DialogContent for GroupByPickerDialog {
 
     fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let block = Block::default()
-            .title(" Group By ")
+            .title(rust_i18n::t!("tui.ui.dialog.group_by.title"))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.chrome.focus));
         frame.render_widget(block, area);
@@ -154,7 +160,10 @@ impl DialogContent for GroupByPickerDialog {
         let rows = group_by_picker_areas(area);
 
         let header = Paragraph::new(Line::from(vec![
-            Span::styled("Current: ", Style::default().fg(theme.text.secondary)),
+            Span::styled(
+                rust_i18n::t!("tui.ui.dialog.group_by.current_label"),
+                Style::default().fg(theme.text.secondary),
+            ),
             Span::styled(
                 self.current.to_string(),
                 Style::default().fg(theme.chrome.current),
@@ -176,7 +185,12 @@ impl DialogContent for GroupByPickerDialog {
             let radio = if is_active { "(●)" } else { "( )" };
             let usable = list_area.width.saturating_sub(4) as usize;
             let left = if is_active {
-                format!("{} {}  current", radio, opt.label)
+                format!(
+                    "{} {}{}",
+                    radio,
+                    opt.label,
+                    rust_i18n::t!("tui.ui.dialog.group_by.current_suffix")
+                )
             } else {
                 format!("{} {}", radio, opt.label)
             };
@@ -211,7 +225,7 @@ impl DialogContent for GroupByPickerDialog {
 
         frame.render_widget(List::new(items), list_area);
 
-        let hint = Paragraph::new("↑↓ navigate • Enter select • Esc close")
+        let hint = Paragraph::new(rust_i18n::t!("tui.ui.dialog.group_by.hint"))
             .alignment(Alignment::Center)
             .style(Style::default().fg(theme.text.secondary));
         frame.render_widget(hint, rows.hint);

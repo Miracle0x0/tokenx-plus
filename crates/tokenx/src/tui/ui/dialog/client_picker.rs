@@ -28,7 +28,7 @@ pub struct ClientPickerDialog {
     /// Indices into `clients` that match the current type-to-filter
     /// substring. `selected` indexes into this vec, not into `clients`.
     filtered_indices: Vec<usize>,
-    last_error: Option<&'static str>,
+    last_error: Option<std::borrow::Cow<'static, str>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +105,9 @@ impl ClientPickerDialog {
 
     fn commit(&mut self) -> DialogResult {
         if self.draft_enabled.is_empty() {
-            self.last_error = Some("Select at least one client");
+            self.last_error = Some(rust_i18n::t!(
+                "tui.ui.dialog.client_picker.error_empty_selection"
+            ));
             return DialogResult::Handled;
         }
 
@@ -183,13 +185,13 @@ fn client_picker_areas(area: Rect) -> ClientPickerAreas {
     }
 }
 
-fn client_picker_hint(width: u16) -> &'static str {
+fn client_picker_hint(width: u16) -> std::borrow::Cow<'static, str> {
     if width >= 43 {
-        "↑↓ • Space • * invert matches • Enter • Esc"
+        rust_i18n::t!("tui.ui.dialog.client_picker.hint_full")
     } else if width >= 38 {
-        "* invert matches • Space • Enter • Esc"
+        rust_i18n::t!("tui.ui.dialog.client_picker.hint_medium")
     } else {
-        "* invert matches"
+        rust_i18n::t!("tui.ui.dialog.client_picker.hint_short")
     }
 }
 
@@ -202,7 +204,7 @@ impl DialogContent for ClientPickerDialog {
 
     fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let block = Block::default()
-            .title(" Clients ")
+            .title(rust_i18n::t!("tui.ui.dialog.client_picker.title"))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.chrome.focus));
         frame.render_widget(block, area);
@@ -211,14 +213,17 @@ impl DialogContent for ClientPickerDialog {
 
         let filter_text = if self.filter.is_empty() {
             Span::styled(
-                "Type to filter...",
+                rust_i18n::t!("tui.ui.dialog.client_picker.filter_placeholder"),
                 Style::default().fg(theme.text.secondary),
             )
         } else {
             Span::styled(&self.filter, Style::default().fg(theme.text.primary))
         };
         let filter_line = Paragraph::new(Line::from(vec![
-            Span::styled("Filter: ", Style::default().fg(theme.chrome.focus)),
+            Span::styled(
+                rust_i18n::t!("tui.ui.dialog.client_picker.filter_label"),
+                Style::default().fg(theme.chrome.focus),
+            ),
             filter_text,
         ]));
         frame.render_widget(filter_line, rows.filter);
@@ -267,7 +272,7 @@ impl DialogContent for ClientPickerDialog {
 
         if items.is_empty() {
             items.push(ListItem::new(Line::from(Span::styled(
-                "  No results",
+                rust_i18n::t!("tui.ui.dialog.client_picker.no_results"),
                 Style::default().fg(theme.text.secondary),
             ))));
         }
@@ -276,6 +281,8 @@ impl DialogContent for ClientPickerDialog {
 
         let hint_text = self
             .last_error
+            .as_ref()
+            .cloned()
             .unwrap_or_else(|| client_picker_hint(rows.hint.width));
         let hint_style = if self.last_error.is_some() {
             Style::default().fg(theme.status.warning)
@@ -491,7 +498,10 @@ mod tests {
         let result = dialog.handle_key(key(KeyCode::Enter));
 
         assert!(matches!(result, DialogResult::Handled));
-        assert_eq!(dialog.last_error, Some("Select at least one client"));
+        assert_eq!(
+            dialog.last_error.as_deref(),
+            Some("Select at least one client")
+        );
     }
 
     #[test]

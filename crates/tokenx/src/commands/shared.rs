@@ -6,10 +6,12 @@ use tokenx_engine::{ClientId, ClientUniverse};
 pub(crate) fn parse_client_id_arg(raw: &str) -> Result<ClientId, String> {
     let normalized = raw.trim().to_ascii_lowercase();
     ClientId::from_str(&normalized).ok_or_else(|| {
-        format!(
-            "invalid client id `{raw}`; use one of: {}",
-            valid_client_ids()
+        rust_i18n::t!(
+            "shared.client.invalid_id",
+            raw = raw,
+            valid_ids = valid_client_ids()
         )
+        .into_owned()
     })
 }
 
@@ -63,11 +65,14 @@ pub(crate) fn emit_health_summary(health: &tokenx_engine::input_health::HealthSu
     eprintln!(
         "{}",
         format!(
-            "  Data health: {} degraded input(s), {} rejected record(s), {} partial input(s), {} failed input(s)",
-            health.degraded_inputs,
-            health.rejected_records(),
-            health.partial_inputs(),
-            health.failed_inputs()
+            "  {}",
+            rust_i18n::t!(
+                "commands.shared.health_summary",
+                degraded = health.degraded_inputs,
+                rejected = health.rejected_records(),
+                partial = health.partial_inputs(),
+                failed = health.failed_inputs()
+            )
         )
         .yellow()
     );

@@ -63,6 +63,14 @@ impl ThemeName {
             .copied()
             .find(|theme| theme.as_str() == value)
     }
+
+    fn valid_list() -> String {
+        Self::all()
+            .iter()
+            .map(|theme| theme.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 impl std::str::FromStr for ThemeName {
@@ -70,14 +78,12 @@ impl std::str::FromStr for ThemeName {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::from_canonical(s).ok_or_else(|| {
-            format!(
-                "invalid theme `{s}`; expected one of: {}",
-                Self::all()
-                    .iter()
-                    .map(|theme| theme.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+            rust_i18n::t!(
+                "theme.error.invalid_theme",
+                name = s,
+                valid = Self::valid_list()
             )
+            .into_owned()
         })
     }
 }
@@ -98,13 +104,10 @@ impl<'de> Deserialize<'de> for ThemeName {
     {
         let value = String::deserialize(deserializer)?;
         Self::from_canonical(&value).ok_or_else(|| {
-            serde::de::Error::custom(format!(
-                "unknown theme `{value}`; expected one of: {}",
-                Self::all()
-                    .iter()
-                    .map(|theme| theme.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+            serde::de::Error::custom(rust_i18n::t!(
+                "theme.error.unknown_theme",
+                name = value,
+                valid = Self::valid_list()
             ))
         })
     }

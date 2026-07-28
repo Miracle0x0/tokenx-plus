@@ -143,11 +143,11 @@ pub(crate) enum CacheFailureKind {
 }
 
 impl CacheFailureKind {
-    const fn label(self) -> &'static str {
+    fn label(self) -> std::borrow::Cow<'static, str> {
         match self {
-            Self::Read => "read failure",
-            Self::Decode => "decode failure",
-            Self::Clock => "clock failure",
+            Self::Read => rust_i18n::t!("cache.failure.read"),
+            Self::Decode => rust_i18n::t!("cache.failure.decode"),
+            Self::Clock => rust_i18n::t!("cache.failure.clock"),
         }
     }
 }
@@ -279,9 +279,10 @@ pub(crate) fn load_generation_cache(
         Err(error) => {
             return CacheResult::Failure(CacheFailure::new(
                 CacheFailureKind::Read,
-                format!(
-                    "failed to read generation cache `{}`: {error}",
-                    path.display()
+                rust_i18n::t!(
+                    "cache.error.read",
+                    path = path.display().to_string(),
+                    error = error.to_string()
                 ),
             ));
         }
@@ -291,9 +292,10 @@ pub(crate) fn load_generation_cache(
         Err(error) => {
             return CacheResult::Failure(CacheFailure::new(
                 CacheFailureKind::Read,
-                format!(
-                    "failed to inspect generation cache `{}`: {error}",
-                    path.display()
+                rust_i18n::t!(
+                    "cache.error.inspect",
+                    path = path.display().to_string(),
+                    error = error.to_string()
                 ),
             ));
         }
@@ -301,9 +303,9 @@ pub(crate) fn load_generation_cache(
     if !metadata.is_file() {
         return CacheResult::Failure(CacheFailure::new(
             CacheFailureKind::Read,
-            format!(
-                "failed to read generation cache `{}`: cache path is not a regular file",
-                path.display()
+            rust_i18n::t!(
+                "cache.error.not_regular_file",
+                path = path.display().to_string()
             ),
         ));
     }
@@ -313,9 +315,10 @@ pub(crate) fn load_generation_cache(
         Err(error) => {
             return CacheResult::Failure(CacheFailure::new(
                 CacheFailureKind::Decode,
-                format!(
-                    "generation cache `{}` is invalid: {error:#}",
-                    path.display()
+                rust_i18n::t!(
+                    "cache.error.invalid",
+                    path = path.display().to_string(),
+                    error = format!("{error:#}")
                 ),
             ));
         }
@@ -336,7 +339,7 @@ pub(crate) fn load_generation_cache(
         Err(error) => {
             return CacheResult::Failure(CacheFailure::new(
                 CacheFailureKind::Clock,
-                format!("generation cache clock check failed: {error:#}"),
+                rust_i18n::t!("cache.error.clock_check", error = format!("{error:#}")),
             ));
         }
     };
@@ -345,9 +348,11 @@ pub(crate) fn load_generation_cache(
         None => {
             return CacheResult::Failure(CacheFailure::new(
                 CacheFailureKind::Clock,
-                format!(
-                    "generation cache `{}` was saved at timestamp {saved_at_ms}, later than current timestamp {now}",
-                    path.display()
+                rust_i18n::t!(
+                    "cache.error.future_timestamp",
+                    path = path.display().to_string(),
+                    saved_at_ms = saved_at_ms.to_string(),
+                    now = now.to_string()
                 ),
             ));
         }
@@ -365,9 +370,9 @@ pub(crate) fn load_generation_cache(
         let Some(retry_backoff) = retry_backoff else {
             return CacheResult::Failure(CacheFailure::new(
                 CacheFailureKind::Decode,
-                format!(
-                    "generation cache `{}` has retryable input health without retry metadata",
-                    path.display()
+                rust_i18n::t!(
+                    "cache.error.retry_health_without_metadata",
+                    path = path.display().to_string()
                 ),
             ));
         };
@@ -457,7 +462,7 @@ pub(crate) fn save_generation_cache_with_retry_backoff(
         file.write_all(&header)?;
         Ok(())
     })
-    .with_context(|| format!("failed to persist generation cache `{}`", path.display()))?;
+    .with_context(|| rust_i18n::t!("cache.error.persist", path = path.display().to_string()))?;
     Ok(retry_backoff)
 }
 

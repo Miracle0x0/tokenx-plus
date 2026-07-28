@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use ratatui::prelude::*;
 
 use super::widgets::{format_cost, format_tokens};
+use crate::tui::date::format_year_month_day;
 use crate::tui::model::TuiModel;
 
 const PROFILE_MAX_BAR_WIDTH: usize = 80;
@@ -134,7 +135,7 @@ where
     [
         Line::from(vec![
             Span::styled(
-                "When You Work Most",
+                rust_i18n::t!("tui.ui.profile.heading"),
                 Style::default()
                     .fg(app.theme.chrome.heading)
                     .add_modifier(Modifier::BOLD),
@@ -149,7 +150,10 @@ where
             ),
             Span::styled("  ·  ", Style::default().fg(app.theme.text.secondary)),
             Span::styled(
-                format!("{} tokens", format_tokens(app.usage().total_tokens)),
+                rust_i18n::t!(
+                    "tui.ui.profile.summary_tokens",
+                    count = format_tokens(app.usage().total_tokens)
+                ),
                 Style::default().fg(app.theme.metrics.tokens),
             ),
             Span::styled("  ·  ", Style::default().fg(app.theme.text.secondary)),
@@ -185,9 +189,10 @@ pub(crate) fn peak_line(
             Style::default().fg(app.theme.metrics.tokens),
         ),
         Span::styled(
-            " tokens  ·  ",
+            rust_i18n::t!("tui.ui.profile.tokens_unit"),
             Style::default().fg(app.theme.text.secondary),
         ),
+        Span::styled("  ·  ", Style::default().fg(app.theme.text.secondary)),
         Span::styled(
             format_cost(cost),
             Style::default().fg(app.theme.metrics.cost),
@@ -197,10 +202,13 @@ pub(crate) fn peak_line(
 
 pub(crate) fn switch_to_table_line(app: &TuiModel) -> Line<'static> {
     Line::from(vec![
-        Span::styled("Press ", Style::default().fg(app.theme.text.secondary)),
+        Span::styled(
+            rust_i18n::t!("tui.ui.profile.switch_press"),
+            Style::default().fg(app.theme.text.secondary),
+        ),
         Span::styled("[v]", Style::default().fg(app.theme.chrome.focus)),
         Span::styled(
-            " to switch to table view",
+            rust_i18n::t!("tui.ui.profile.switch_to_table"),
             Style::default().fg(app.theme.text.secondary),
         ),
     ])
@@ -212,16 +220,21 @@ where
 {
     let mut dates = dates.into_iter();
     let Some(first) = dates.next() else {
-        return "No data".to_string();
+        return rust_i18n::t!("tui.ui.profile.no_data").into_owned();
     };
     let (start, end) = dates.fold((first, first), |(start, end), date| {
         (start.min(date), end.max(date))
     });
 
     if start == end {
-        start.format("%Y-%m-%d").to_string()
+        format_year_month_day(start)
     } else {
-        format!("{} to {}", start.format("%Y-%m-%d"), end.format("%Y-%m-%d"))
+        rust_i18n::t!(
+            "tui.ui.profile.date_range",
+            start = format_year_month_day(start),
+            end = format_year_month_day(end)
+        )
+        .into_owned()
     }
 }
 

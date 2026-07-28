@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, Table};
 
@@ -60,7 +62,7 @@ pub fn render(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.chrome.border))
         .title(Span::styled(
-            " Agents ",
+            rust_i18n::t!("tui.ui.agents.title"),
             Style::default()
                 .fg(app.theme.chrome.heading)
                 .add_modifier(Modifier::BOLD),
@@ -241,15 +243,15 @@ fn agent_column_order(column: AgentColumn) -> u16 {
     }
 }
 
-fn agent_column_header(column: AgentColumn) -> &'static str {
+fn agent_column_header(column: AgentColumn) -> Cow<'static, str> {
     match column {
-        AgentColumn::Rank => "#",
-        AgentColumn::Agent => "Agent",
-        AgentColumn::Client => "Client",
-        AgentColumn::Tokens => "Tokens",
-        AgentColumn::Cost => "Cost",
-        AgentColumn::Messages => "Msgs",
-        AgentColumn::Instances => "Instances",
+        AgentColumn::Rank => Cow::Borrowed("#"),
+        AgentColumn::Agent => rust_i18n::t!("tui.ui.agents.column.agent"),
+        AgentColumn::Client => rust_i18n::t!("tui.ui.agents.column.client"),
+        AgentColumn::Tokens => rust_i18n::t!("tui.ui.agents.column.tokens"),
+        AgentColumn::Cost => rust_i18n::t!("tui.ui.agents.column.cost"),
+        AgentColumn::Messages => rust_i18n::t!("tui.ui.agents.column.messages"),
+        AgentColumn::Instances => rust_i18n::t!("tui.ui.agents.column.instances"),
     }
 }
 

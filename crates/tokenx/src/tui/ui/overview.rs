@@ -7,6 +7,7 @@ use unicode_width::UnicodeWidthStr;
 use super::bar_chart::{render_stacked_bar_chart, ModelSegment, StackedBarData};
 use super::empty_state;
 use crate::tui::actions::ActionSet;
+use crate::tui::date::format_numeric_month_day;
 use crate::tui::model::{ChartGranularity, TuiModel};
 use crate::tui::page_state::PageStates;
 use crate::tui::presentation::EmptySubject;
@@ -55,9 +56,9 @@ pub(crate) fn render(
         .split(area);
 
     let title = if app.is_very_narrow() {
-        " Tokens "
+        rust_i18n::t!("tui.ui.overview.chart_title_narrow")
     } else {
-        " Tokens per Day "
+        rust_i18n::t!("tui.ui.overview.chart_title")
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -152,7 +153,7 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
                 }
 
                 StackedBarData {
-                    date: day.date.format("%m/%d").to_string(),
+                    date: format_numeric_month_day(day.date),
                     models: models
                         .into_iter()
                         .map(|(model, aggregate)| ModelSegment {
@@ -184,7 +185,11 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
                 }
 
                 StackedBarData {
-                    date: hour.datetime.format("%d %H:%M").to_string(),
+                    date: format!(
+                        "{} {}",
+                        format_numeric_month_day(hour.datetime.date()),
+                        hour.datetime.format("%H:%M")
+                    ),
                     models: models
                         .into_iter()
                         .map(|(model, aggregate)| ModelSegment {

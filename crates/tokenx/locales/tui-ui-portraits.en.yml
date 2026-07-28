@@ -1,0 +1,16 @@
+tui:
+  ui:
+    portraits:
+      slogan:
+        gpt: "You always come back~"
+        claude: "You are absolutely right!"
+        gemini: "You're absolutely amazing"
+        xai: "Maximum truth-seeking"
+        mimo: "I'm drooling"
+        minimax: "I don't chase benchmarks"
+        qwen: "I really learned it this time"
+        kimi: "I'm not a nobody"
+        glm: "God of distillation, period"
+        deepseek: "Small fry, small fry"
+        mistral: "Which way does the wind blow?"
+        unknown: "..."

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthChar;
@@ -47,7 +49,7 @@ pub(crate) fn render(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.chrome.border))
         .title(Span::styled(
-            " Snapshot ",
+            rust_i18n::t!("tui.ui.overview.snapshot_title"),
             Style::default()
                 .fg(app.theme.chrome.heading)
                 .add_modifier(Modifier::BOLD),
@@ -118,7 +120,7 @@ fn section_area(area: Rect) -> Rect {
 /// separated from the scoped facts when vertical space permits.
 fn render_core(frame: &mut Frame, app: &TuiModel, area: Rect, data: &OverviewSummary) {
     let mut lines = vec![
-        section_title(app, "Core"),
+        section_title(app, rust_i18n::t!("tui.ui.overview.section_core")),
         Line::default(),
         Line::from(vec![
             Span::styled(
@@ -127,45 +129,51 @@ fn render_core(frame: &mut Frame, app: &TuiModel, area: Rect, data: &OverviewSum
                     .fg(app.theme.metrics.tokens)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" tokens    ", Style::default().fg(app.theme.text.secondary)),
+            Span::styled(
+                rust_i18n::t!("tui.ui.overview.hero_unit_tokens"),
+                Style::default().fg(app.theme.text.secondary),
+            ),
             Span::styled(
                 format_cost(app.usage().total_cost),
                 Style::default()
                     .fg(app.theme.metrics.cost)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" cost", Style::default().fg(app.theme.text.secondary)),
+            Span::styled(
+                rust_i18n::t!("tui.ui.overview.hero_unit_cost"),
+                Style::default().fg(app.theme.text.secondary),
+            ),
         ]),
         separator_line(app, area.width as usize),
-        section_title(app, "Fact"),
+        section_title(app, rust_i18n::t!("tui.ui.overview.section_fact")),
         Line::default(),
         metric_line(
             app,
-            "Active Days",
+            rust_i18n::t!("tui.ui.overview.metric_active_days").as_ref(),
             data.active_days.to_string(),
             app.theme.metrics.total,
         ),
         metric_line(
             app,
-            "Sessions Scanned",
+            rust_i18n::t!("tui.ui.overview.metric_sessions_scanned").as_ref(),
             data.main_session_count.to_string(),
             app.theme.metrics.total,
         ),
         metric_line(
             app,
-            "Cache Rate",
+            rust_i18n::t!("tui.ui.overview.metric_cache_rate").as_ref(),
             data.cache_rate.to_string(),
             app.theme.metrics.rate,
         ),
         metric_line(
             app,
-            "Models Eaten",
+            rust_i18n::t!("tui.ui.overview.metric_models_eaten").as_ref(),
             data.model_count.to_string(),
             app.theme.metrics.total,
         ),
         metric_line(
             app,
-            "Clients Used",
+            rust_i18n::t!("tui.ui.overview.metric_clients_used").as_ref(),
             data.client_count.to_string(),
             app.theme.metrics.total,
         ),
@@ -174,7 +182,7 @@ fn render_core(frame: &mut Frame, app: &TuiModel, area: Rect, data: &OverviewSum
         inputs_healthy_metric_line(app),
         metric_line(
             app,
-            "Data Size",
+            rust_i18n::t!("tui.ui.overview.metric_data_size").as_ref(),
             format_bytes(app.total_input_bytes()),
             app.theme.text.primary,
         ),
@@ -200,7 +208,7 @@ fn render_fun_things(frame: &mut Frame, app: &TuiModel, area: Rect, data: &Overv
     let family = favorite.family;
     let color = portraits::family_color(app, family);
     let favorite_label = Some(Line::from(Span::styled(
-        "Favorite Model",
+        rust_i18n::t!("tui.ui.overview.metric_favorite_model"),
         Style::default().fg(app.theme.text.secondary),
     )));
     let portrait = portraits::lines(app, family).map(|line| center_line(line, width));
@@ -256,7 +264,10 @@ fn render_fun_things(frame: &mut Frame, app: &TuiModel, area: Rect, data: &Overv
 
     let mut lines = Vec::new();
     if height >= full_height {
-        lines.push(section_title(app, "Fun"));
+        lines.push(section_title(
+            app,
+            rust_i18n::t!("tui.ui.overview.section_fun"),
+        ));
         lines.push(Line::default());
         if let Some(label) = favorite_label {
             lines.push(label);
@@ -279,7 +290,10 @@ fn render_fun_things(frame: &mut Frame, app: &TuiModel, area: Rect, data: &Overv
         }
         append_favorite_client_block(&mut lines, client_block, height);
     } else if height >= COMPACT_FUN_THINGS_HEIGHT {
-        lines.push(section_title(app, "Fun"));
+        lines.push(section_title(
+            app,
+            rust_i18n::t!("tui.ui.overview.section_fun"),
+        ));
         lines.extend(portrait);
         if let Some(slogan) = slogan {
             lines.push(slogan);
@@ -314,7 +328,7 @@ fn favorite_client_block(
     vec![
         Line::default(),
         Line::from(Span::styled(
-            "Favorite Client",
+            rust_i18n::t!("tui.ui.overview.metric_favorite_client"),
             Style::default().fg(app.theme.text.secondary),
         )),
         centered_identity_slogan_line(client_slogan(client), color, width),
@@ -331,12 +345,12 @@ fn favorite_client_block(
 }
 
 fn centered_identity_slogan_line(
-    slogan: &'static str,
+    slogan: impl Into<Cow<'static, str>>,
     color: Color,
     width: usize,
 ) -> Line<'static> {
     center_line(
-        Line::from(Span::styled(slogan, Style::default().fg(color))),
+        Line::from(Span::styled(slogan.into(), Style::default().fg(color))),
         width,
     )
 }
@@ -398,7 +412,13 @@ fn render_empty_fun_things(frame: &mut Frame, app: &TuiModel, area: Rect) {
         height: area.height.min(1),
         ..area
     };
-    frame.render_widget(Paragraph::new(section_title(app, "Fun")), title_area);
+    frame.render_widget(
+        Paragraph::new(section_title(
+            app,
+            rust_i18n::t!("tui.ui.overview.section_fun"),
+        )),
+        title_area,
+    );
 
     let body = Rect {
         y: area.y.saturating_add(1),
@@ -412,7 +432,7 @@ fn render_empty_fun_things(frame: &mut Frame, app: &TuiModel, area: Rect) {
     lines.extend(portraits::lines(app, ModelFamily::Unknown).map(|line| center_line(line, width)));
     lines.push(center_line(
         Line::from(Span::styled(
-            "no data yet",
+            rust_i18n::t!("tui.ui.overview.empty_no_data"),
             Style::default().fg(app.theme.text.secondary),
         )),
         width,
@@ -432,13 +452,19 @@ fn center_line(line: Line<'static>, width: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-fn client_slogan(client: ClientId) -> &'static str {
+fn client_slogan(client: ClientId) -> Cow<'static, str> {
     match client {
-        ClientId::Pi | ClientId::Claude => "最一流的品味",
-        ClientId::Kimi | ClientId::Codex | ClientId::Omp | ClientId::Droid => "顶级玩家",
-        ClientId::Antigravity | ClientId::Copilot | ClientId::Kiro | ClientId::Gemini => "你拉完了",
-        ClientId::Warp => "口味人上人",
-        _ => "无知的NPC",
+        ClientId::Pi | ClientId::Claude => {
+            rust_i18n::t!("tui.ui.overview.slogan_first_class_taste")
+        }
+        ClientId::Kimi | ClientId::Codex | ClientId::Omp | ClientId::Droid => {
+            rust_i18n::t!("tui.ui.overview.slogan_elite_player")
+        }
+        ClientId::Antigravity | ClientId::Copilot | ClientId::Kiro | ClientId::Gemini => {
+            rust_i18n::t!("tui.ui.overview.slogan_pulled_out")
+        }
+        ClientId::Warp => rust_i18n::t!("tui.ui.overview.slogan_taste_above"),
+        _ => rust_i18n::t!("tui.ui.overview.slogan_clueless_npc"),
     }
 }
 
@@ -449,13 +475,22 @@ fn inputs_healthy_metric_line(app: &TuiModel) -> Line<'static> {
     let health = generation_health(app);
     let (value, color) = if inputs > 0 && health.clean_inputs == inputs {
         (
-            format!("✓ {} clean", format_tokens_with_commas(inputs as u64)),
+            rust_i18n::t!(
+                "tui.ui.overview.inputs_clean_value",
+                count = format_tokens_with_commas(inputs as u64)
+            )
+            .into_owned(),
             app.theme.status.success,
         )
     } else {
         (health_percentage(app), health_color(app))
     };
-    metric_line(app, "Inputs Healthy", value, color)
+    metric_line(
+        app,
+        rust_i18n::t!("tui.ui.overview.metric_inputs_healthy").as_ref(),
+        value,
+        color,
+    )
 }
 
 fn share_percent(tokens: u64, total: u64) -> f64 {
@@ -524,49 +559,76 @@ fn fun_facts(app: &TuiModel, data: &OverviewSummary) -> Vec<String> {
     let mut facts = Vec::new();
     let total = data.tokens.total();
     if total >= 1_000_000 {
-        facts.push(format!(
-            "{} tokens ≈ {} 部莎翁全集",
-            format_tokens(total),
-            format_tokens_with_commas(total / 1_100_000)
-        ));
+        facts.push(
+            rust_i18n::t!(
+                "tui.ui.overview.fact_shakespeare",
+                tokens = format_tokens(total),
+                count = format_tokens_with_commas(total / 1_100_000)
+            )
+            .into_owned(),
+        );
     }
     let cost = app.usage().total_cost;
     if cost >= 1.0 {
-        facts.push(format!(
-            "{} ≈ {} 块原味鸡",
-            format_cost(cost),
-            format_tokens_with_commas((cost / 1.7) as u64)
-        ));
-        facts.push(format!(
-            "≈ {} 杯奶茶",
-            format_tokens_with_commas((cost / 3.0) as u64)
-        ));
+        facts.push(
+            rust_i18n::t!(
+                "tui.ui.overview.fact_fried_chicken",
+                cost = format_cost(cost),
+                count = format_tokens_with_commas((cost / 1.7) as u64)
+            )
+            .into_owned(),
+        );
+        facts.push(
+            rust_i18n::t!(
+                "tui.ui.overview.fact_bubble_tea",
+                count = format_tokens_with_commas((cost / 3.0) as u64)
+            )
+            .into_owned(),
+        );
     }
     if total > 0 {
         if data.cache_rate.reaches(80) {
-            facts.push(format!("缓存命中 {} · 会过日子", data.cache_rate));
+            facts.push(
+                rust_i18n::t!("tui.ui.overview.fact_cache_frugal", rate = data.cache_rate)
+                    .into_owned(),
+            );
         } else if !data.cache_rate.reaches(50) {
-            facts.push(format!("缓存命中 {} · 败家指数拉满", data.cache_rate));
+            facts.push(
+                rust_i18n::t!(
+                    "tui.ui.overview.fact_cache_wasteful",
+                    rate = data.cache_rate
+                )
+                .into_owned(),
+            );
         }
     }
     if data.active_days >= 7 {
-        facts.push(format!("{} 个活跃日 · 超过大多数情侣", data.active_days));
+        facts.push(
+            rust_i18n::t!("tui.ui.overview.fact_active_days", days = data.active_days).into_owned(),
+        );
     }
     if data.model_count >= 5 {
-        facts.push(format!(
-            "{} 个模型 · 后宫佳丽 {} 员",
-            data.model_count, data.model_count
-        ));
+        facts.push(
+            rust_i18n::t!(
+                "tui.ui.overview.fact_models_harem",
+                models = data.model_count,
+                count = data.model_count
+            )
+            .into_owned(),
+        );
     }
     if data.peak_daily_tokens > 0 {
-        facts.push(format!(
-            "峰值日 {} · 键盘冒烟",
-            format_tokens(data.peak_daily_tokens)
-        ));
+        facts.push(
+            rust_i18n::t!(
+                "tui.ui.overview.fact_peak_day",
+                tokens = format_tokens(data.peak_daily_tokens)
+            )
+            .into_owned(),
+        );
     }
     let streak = app.usage().current_streak;
     if streak >= 3 {
-        facts.push(format!("连击 {streak} 天 · 和终端锁了"));
+        facts.push(rust_i18n::t!("tui.ui.overview.fact_streak", streak = streak).into_owned());
     }
     facts
 }
@@ -591,7 +653,13 @@ fn render_right(frame: &mut Frame, app: &TuiModel, area: Rect, data: &OverviewSu
             Constraint::Min(0),
         ])
         .split(area);
-    frame.render_widget(Paragraph::new(section_title(app, "Roast")), rows[0]);
+    frame.render_widget(
+        Paragraph::new(section_title(
+            app,
+            rust_i18n::t!("tui.ui.overview.section_roast"),
+        )),
+        rows[0],
+    );
     render_fact_box(frame, app, rows[2], data);
 
     let items = achievements::build(
@@ -606,7 +674,7 @@ fn render_right(frame: &mut Frame, app: &TuiModel, area: Rect, data: &OverviewSu
     frame.render_widget(Paragraph::new(lines), rows[3]);
 }
 
-fn section_title(app: &TuiModel, title: &'static str) -> Line<'static> {
+fn section_title(app: &TuiModel, title: Cow<'static, str>) -> Line<'static> {
     Line::from(Span::styled(
         title,
         Style::default()
@@ -644,13 +712,13 @@ fn left_lines(
         vec![
             metric_line(
                 app,
-                "Total Tokens",
+                rust_i18n::t!("tui.ui.overview.metric_total_tokens").as_ref(),
                 format_tokens(app.usage().total_tokens),
                 app.theme.metrics.tokens,
             ),
             metric_line(
                 app,
-                "Peak Daily Tokens",
+                rust_i18n::t!("tui.ui.overview.metric_peak_daily_tokens").as_ref(),
                 format_tokens(data.peak_daily_tokens),
                 app.theme.metrics.tokens,
             ),
@@ -658,13 +726,13 @@ fn left_lines(
         vec![
             metric_line(
                 app,
-                "Total Cost",
+                rust_i18n::t!("tui.ui.overview.metric_total_cost").as_ref(),
                 format_cost(app.usage().total_cost),
                 app.theme.metrics.cost,
             ),
             metric_line(
                 app,
-                "Peak Daily Cost",
+                rust_i18n::t!("tui.ui.overview.metric_peak_daily_cost").as_ref(),
                 format_cost(data.peak_daily_cost),
                 app.theme.metrics.cost,
             ),
@@ -672,7 +740,7 @@ fn left_lines(
         vec![
             metric_line(
                 app,
-                "Input Data",
+                rust_i18n::t!("tui.ui.overview.metric_input_data").as_ref(),
                 format_bytes(app.total_input_bytes()),
                 app.theme.text.primary,
             ),
@@ -680,7 +748,7 @@ fn left_lines(
             // group paired with Input Data.
             metric_line(
                 app,
-                "Active Days",
+                rust_i18n::t!("tui.ui.overview.metric_active_days").as_ref(),
                 data.active_days.to_string(),
                 app.theme.metrics.total,
             ),
@@ -688,13 +756,13 @@ fn left_lines(
         vec![
             metric_line(
                 app,
-                "Models Eaten",
+                rust_i18n::t!("tui.ui.overview.metric_models_eaten").as_ref(),
                 data.model_count.to_string(),
                 app.theme.metrics.total,
             ),
             metric_line(
                 app,
-                "Favorite Model",
+                rust_i18n::t!("tui.ui.overview.metric_favorite_model").as_ref(),
                 truncate(favorite_model, favorite_width),
                 app.model_color(favorite_model),
             ),
@@ -702,13 +770,13 @@ fn left_lines(
         vec![
             metric_line(
                 app,
-                "Clients Used",
+                rust_i18n::t!("tui.ui.overview.metric_clients_used").as_ref(),
                 data.client_count.to_string(),
                 app.theme.metrics.total,
             ),
             metric_line(
                 app,
-                "Favorite Client",
+                rust_i18n::t!("tui.ui.overview.metric_favorite_client").as_ref(),
                 truncate(&favorite_client, favorite_width),
                 data.favorite_client
                     .as_ref()
@@ -892,7 +960,7 @@ mod tests {
 
         for (role, row_text, cell_text) in [
             ("portrait", "¬", "¬"),
-            ("slogan", "最", "最"),
+            ("slogan", "always come back", "always"),
             ("family name", "gpt  10K", "gpt"),
         ] {
             let (x, y) = buffer_text_cell(&terminal, row_text, cell_text);
@@ -979,7 +1047,7 @@ mod tests {
 
         let facts = fun_facts(&app, &OverviewSummary::default());
 
-        assert!(facts.iter().any(|fact| fact.contains("连击 3 天")));
+        assert!(facts.iter().any(|fact| fact.contains("3-day streak")));
     }
 
     #[test]
@@ -1063,7 +1131,8 @@ mod tests {
             })
             .unwrap();
 
-        for (role, row_text, cell_text) in [("slogan", "顶", "顶"), ("client name", "OMP", "OMP")]
+        for (role, row_text, cell_text) in
+            [("slogan", "Elite", "Elite"), ("client name", "OMP", "OMP")]
         {
             let (x, y) = buffer_text_cell(&terminal, row_text, cell_text);
             assert_eq!(

@@ -1,0 +1,12 @@
+tui:
+  local_usage:
+    error:
+      materialize_daily: "无法生成 %{date} 的每日明细"
+      materialize_period: "无法生成 %{start} 至 %{end} 的 %{kind} 明细"
+      detail_token_total_overflow: "客户端 %{client} 模型 %{model} 的明细 token 总量溢出"
+      detail_client_token_total_overflow: "客户端 %{client} 模型 %{model} 的明细客户端 token 总量溢出"
+      detail_token_bucket_overflow: "模型 %{model} 的明细 token 分桶溢出"
+      detail_total_overflow: "模型 %{model} 的明细 token 总量溢出"
+      detail_cost_overflow: "模型 %{model} 的明细费用溢出"
+      detail_message_count_overflow: "模型 %{model} 的明细消息计数溢出"
+      no_installed_generation: "本地数据 generation 尚未安装"

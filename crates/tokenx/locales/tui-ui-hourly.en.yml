@@ -1,0 +1,26 @@
+tui:
+  ui:
+    hourly:
+      title: " Hourly Usage "
+      profile_title: " Hourly Profile "
+      projection_failed: "Hourly profile projection failed: %{error}"
+      active_hours: "active hours"
+      period:
+        morning: "Morning"
+        daytime: "Daytime"
+        evening: "Evening"
+        night: "Night"
+      peak_hour: "Peak hour "
+      header:
+        hour: "Hour"
+        client: "Client"
+        turn: "Turn"
+        messages: "Msgs"
+        input: "Input"
+        output: "Output"
+        cache_read: "Cache R"
+        cache_write: "Cache W"
+        cache_rate: "Cache×"
+        total: "Total"
+        cost: "Cost"
+        cost_per_million: "Cost/1M"

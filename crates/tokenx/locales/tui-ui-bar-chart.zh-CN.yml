@@ -1,0 +1,4 @@
+tui:
+  ui:
+    bar_chart:
+      peak: "峰值 %{max}"

@@ -1,5 +1,7 @@
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
+
+use crate::tui::date::{format_clock_time, format_month_day, weekday_name};
 
 pub fn capitalize(s: &str) -> String {
     let mut c = s.chars();
@@ -11,13 +13,16 @@ pub fn capitalize(s: &str) -> String {
 
 pub fn read_keychain(service: &str) -> Result<String> {
     if cfg!(not(target_os = "macos")) {
-        anyhow::bail!("Keychain lookup is only available on macOS");
+        anyhow::bail!(rust_i18n::t!("subscription.error.keychain_macos_only"));
     }
     let out = std::process::Command::new("security")
         .args(["find-generic-password", "-s", service, "-w"])
         .output()?;
     if !out.status.success() {
-        anyhow::bail!("Keychain lookup failed for service '{service}'");
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.keychain_lookup_failed",
+            service = service
+        ));
     }
     Ok(String::from_utf8(out.stdout)?.trim_end().to_string())
 }
@@ -35,23 +40,29 @@ pub fn format_reset_time(resets_at: &str) -> String {
     };
     let diff = dt - Utc::now();
     if diff <= Duration::zero() {
-        return "resets now".into();
+        return rust_i18n::t!("subscription.reset.now").to_string();
     }
     let total_mins = diff.num_minutes();
     if total_mins < 60 {
-        format!("resets in {total_mins}m")
+        rust_i18n::t!("subscription.reset.in_minutes", mins = total_mins).to_string()
     } else if total_mins < 24 * 60 {
         let h = diff.num_hours();
         let m = (diff - Duration::hours(h)).num_minutes();
         if m > 0 {
-            format!("resets in {h}h {m}m")
+            rust_i18n::t!("subscription.reset.in_hours_minutes", hours = h, mins = m).to_string()
         } else {
-            format!("resets in {h}h")
+            rust_i18n::t!("subscription.reset.in_hours", hours = h).to_string()
         }
     } else if diff.num_days() < 7 {
-        format!("resets {} {}", dt.format("%a"), dt.format("%-I%P"))
+        let datetime = format!(
+            "{} {}",
+            weekday_name(dt.weekday()),
+            format_clock_time(dt.naive_utc())
+        );
+        rust_i18n::t!("subscription.reset.at", datetime = datetime).to_string()
     } else {
-        format!("resets {}", dt.format("%b %-d"))
+        let datetime = format_month_day(dt.date_naive());
+        rust_i18n::t!("subscription.reset.at", datetime = datetime).to_string()
     }
 }
 

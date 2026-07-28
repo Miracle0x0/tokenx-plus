@@ -1,0 +1,39 @@
+tui:
+  ui:
+    achievements:
+      title: "成就"
+      streak:
+        roast: "三天打鱼"
+        tier1: "浅尝辄止"
+        tier2: "渐入佳境"
+        tier3: "废寝忘食"
+        tier4: "不眠不休"
+        tier5: "人机合一"
+      tokens:
+        roast: "养生局"
+        tier1: "开胃小菜"
+        tier2: "细嚼慢咽"
+        tier3: "大胃袋"
+        tier4: "饕餮"
+        tier5: "黑洞"
+      cache:
+        roast: "败家子"
+        tier1: "省吃俭用"
+        tier2: "精打细算"
+        tier3: "持家有道"
+        tier4: "薅羊毛大师"
+        tier5: "infra 之神"
+      models:
+        roast: "从一而终"
+        tier1: "浅尝一口"
+        tier2: "品石师"
+        tier3: "赤石大王"
+        tier4: "神农尝百草"
+        tier5: "满汉全席"
+      clients:
+        roast: "光杆司令"
+        tier1: "牧马人"
+        tier2: "驯马师"
+        tier3: "弼马温"
+        tier4: "御马监"
+        tier5: "齐天大圣"

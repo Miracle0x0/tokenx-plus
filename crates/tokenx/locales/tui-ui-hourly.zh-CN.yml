@@ -1,0 +1,26 @@
+tui:
+  ui:
+    hourly:
+      title: " 每小时用量 "
+      profile_title: " 每小时概览 "
+      projection_failed: "每小时概览投影失败：%{error}"
+      active_hours: "个活跃小时"
+      period:
+        morning: "早晨"
+        daytime: "白天"
+        evening: "傍晚"
+        night: "夜间"
+      peak_hour: "高峰小时 "
+      header:
+        hour: "小时"
+        client: "客户端"
+        turn: "轮次"
+        messages: "消息"
+        input: "输入"
+        output: "输出"
+        cache_read: "缓存读"
+        cache_write: "缓存写"
+        cache_rate: "缓存×"
+        total: "总计"
+        cost: "费用"
+        cost_per_million: "费用/1M"

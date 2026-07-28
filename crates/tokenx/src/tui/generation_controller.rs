@@ -224,7 +224,11 @@ impl GenerationController {
             Err(error) => {
                 generation_background_failure(
                     app,
-                    format!("Failed to refresh acquisition context: {error:#}"),
+                    rust_i18n::t!(
+                        "tui.generation.error.refresh_context",
+                        error = format!("{error:#}")
+                    )
+                    .into_owned(),
                 );
                 self.publish_status(app);
                 return;
@@ -312,7 +316,11 @@ impl GenerationController {
                 if let Err(error) = app.install_generation(*generation) {
                     generation_background_failure(
                         app,
-                        format!("Generation projection failed: {error:#}"),
+                        rust_i18n::t!(
+                            "tui.generation.error.projection",
+                            error = format!("{error:#}")
+                        )
+                        .into_owned(),
                     );
                 } else {
                     self.set_retry_backoff(retry_backoff);
@@ -324,14 +332,17 @@ impl GenerationController {
                     if let Some(warning) = recovered_cache_warning {
                         app.set_generation_status_with_tone(&warning, StatusTone::Warning);
                     } else {
-                        app.set_generation_status_with_tone("Data loaded", StatusTone::Success);
+                        app.set_generation_status_with_tone(
+                            &rust_i18n::t!("tui.generation.status.loaded"),
+                            StatusTone::Success,
+                        );
                     }
                 }
             }
             Ok(BackgroundLoad::Unchanged) if active.force => {
                 generation_background_failure(
                     app,
-                    "Forced acquisition returned an illegal unchanged result".to_string(),
+                    rust_i18n::t!("tui.generation.error.illegal_unchanged").into_owned(),
                 );
             }
             Ok(BackgroundLoad::Unchanged) => {}
@@ -361,9 +372,13 @@ impl GenerationController {
                     self.last_checked = Instant::now();
                 }
                 if self.status.automatic {
-                    format!("Auto-refresh ON ({}s)", self.status.interval.as_secs())
+                    rust_i18n::t!(
+                        "tui.generation.auto_refresh.on",
+                        seconds = self.status.interval.as_secs()
+                    )
+                    .into_owned()
                 } else {
-                    "Auto-refresh OFF".to_string()
+                    rust_i18n::t!("tui.generation.auto_refresh.off").into_owned()
                 }
             }
             RefreshControl::IncreaseInterval => {
@@ -373,7 +388,11 @@ impl GenerationController {
                         .saturating_add(AUTO_REFRESH_STEP_MS)
                         .min(MAX_AUTO_REFRESH_MS),
                 );
-                format!("Refresh interval: {}s", self.status.interval.as_secs())
+                rust_i18n::t!(
+                    "tui.generation.auto_refresh.interval",
+                    seconds = self.status.interval.as_secs()
+                )
+                .into_owned()
             }
             RefreshControl::DecreaseInterval => {
                 let millis = self.status.interval.as_millis() as u64;
@@ -382,7 +401,11 @@ impl GenerationController {
                         .saturating_sub(AUTO_REFRESH_STEP_MS)
                         .max(MIN_AUTO_REFRESH_MS),
                 );
-                format!("Refresh interval: {}s", self.status.interval.as_secs())
+                rust_i18n::t!(
+                    "tui.generation.auto_refresh.interval",
+                    seconds = self.status.interval.as_secs()
+                )
+                .into_owned()
             }
         };
         app.persist_refresh_policy(self.status.automatic, self.status.interval, message);
@@ -419,7 +442,10 @@ impl GenerationController {
 
 fn generation_background_failure(app: &mut TuiModel, diagnostic: String) {
     app.fail_local_usage_load(diagnostic.clone());
-    app.set_generation_status_with_tone(&format!("Error: {diagnostic}"), StatusTone::Danger);
+    app.set_generation_status_with_tone(
+        &rust_i18n::t!("tui.generation.status.error", diagnostic = diagnostic),
+        StatusTone::Danger,
+    );
 }
 
 fn should_force_input_reload(
@@ -516,7 +542,13 @@ pub(super) fn persist_background_load_with_cancellation(
             );
             Ok(BackgroundLoad::Loaded {
                 generation,
-                cache_persistence_warning: Some(format!("Cache persistence warning: {diagnostic}")),
+                cache_persistence_warning: Some(
+                    rust_i18n::t!(
+                        "tui.generation.error.cache_persistence",
+                        diagnostic = diagnostic
+                    )
+                    .into_owned(),
+                ),
                 retry_backoff: None,
             })
         }
@@ -535,7 +567,11 @@ pub(super) fn run_acquisition_task(
             .copied()
             .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("unknown panic payload");
-        Err(anyhow::anyhow!("TUI background worker panicked: {message}"))
+        Err(anyhow::anyhow!(rust_i18n::t!(
+            "tui.generation.error.worker_panic",
+            message = message
+        )
+        .into_owned()))
     });
     if tx
         .send(AcquisitionTaskResult { request_id, result })
@@ -560,7 +596,11 @@ pub(super) fn run_acquisition_task_with_cancellation(
             .copied()
             .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("unknown panic payload");
-        Err(anyhow::anyhow!("TUI background worker panicked: {message}"))
+        Err(anyhow::anyhow!(rust_i18n::t!(
+            "tui.generation.error.worker_panic",
+            message = message
+        )
+        .into_owned()))
     });
     if cancellation.is_cancelled() {
         return;

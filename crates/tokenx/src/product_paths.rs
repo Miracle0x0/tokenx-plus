@@ -14,20 +14,50 @@ pub(crate) struct ProductPaths {
     root: PathBuf,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub(crate) enum ProductPathsError {
-    #[error(
-        "could not determine the Tokenx product directory because the user home is unavailable"
-    )]
     HomeUnavailable,
-    #[error("resolved Tokenx product root `{path}` must be absolute")]
-    RelativeProductRoot { path: PathBuf },
-    #[error("{variable} path `{path}` must be absolute")]
+    RelativeProductRoot {
+        path: PathBuf,
+    },
     RelativeOverride {
         variable: &'static str,
         path: PathBuf,
     },
 }
+
+impl std::fmt::Display for ProductPathsError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HomeUnavailable => {
+                write!(
+                    formatter,
+                    "{}",
+                    rust_i18n::t!("paths.error.home_unavailable")
+                )
+            }
+            Self::RelativeProductRoot { path } => write!(
+                formatter,
+                "{}",
+                rust_i18n::t!(
+                    "paths.error.relative_product_root",
+                    path = path.display().to_string()
+                )
+            ),
+            Self::RelativeOverride { variable, path } => write!(
+                formatter,
+                "{}",
+                rust_i18n::t!(
+                    "paths.error.relative_override",
+                    variable = *variable,
+                    path = path.display().to_string()
+                )
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ProductPathsError {}
 
 impl ProductPaths {
     pub(crate) fn resolve() -> Result<Self, ProductPathsError> {

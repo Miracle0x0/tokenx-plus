@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokenx_engine::scanner::{ScannerSettings, ScannerSettingsError};
 use tokenx_engine::{CalendarContext, ClientId};
 
+use crate::i18n::Language;
 use crate::product_paths::ProductPaths;
 use crate::subscription::ProviderId;
 use crate::theme::ThemeName;
@@ -16,26 +17,64 @@ pub(crate) const MIN_AUTO_REFRESH_MS: u64 = 30_000;
 pub(crate) const MAX_AUTO_REFRESH_MS: u64 = 3_600_000;
 pub(crate) const AUTO_REFRESH_STEP_MS: u64 = 10_000;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub(crate) enum SettingsLoadError {
-    #[error("failed to read settings file `{path}`: {source}")]
     Read {
         path: PathBuf,
-        #[source]
         source: std::io::Error,
     },
-    #[error("failed to parse settings JSON `{path}`: {source}")]
     Parse {
         path: PathBuf,
-        #[source]
         source: serde_json::Error,
     },
-    #[error("invalid settings in `{path}`: {source}")]
     Invalid {
         path: PathBuf,
-        #[source]
         source: SettingsValidationError,
     },
+}
+
+impl std::fmt::Display for SettingsLoadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read { path, source } => write!(
+                formatter,
+                "{}",
+                rust_i18n::t!(
+                    "settings.error.read",
+                    path = path.display().to_string(),
+                    source = source.to_string()
+                )
+            ),
+            Self::Parse { path, source } => write!(
+                formatter,
+                "{}",
+                rust_i18n::t!(
+                    "settings.error.parse",
+                    path = path.display().to_string(),
+                    source = source.to_string()
+                )
+            ),
+            Self::Invalid { path, source } => write!(
+                formatter,
+                "{}",
+                rust_i18n::t!(
+                    "settings.error.invalid",
+                    path = path.display().to_string(),
+                    source = source.to_string()
+                )
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SettingsLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Read { source, .. } => Some(source),
+            Self::Parse { source, .. } => Some(source),
+            Self::Invalid { source, .. } => Some(source),
+        }
+    }
 }
 
 impl SettingsLoadError {
@@ -44,14 +83,60 @@ impl SettingsLoadError {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub(crate) enum SettingsValidationError {
-    #[error("invalid autoRefreshMs {value}; expected {min}..={max}")]
     AutoRefreshRange { value: u64, min: u64, max: u64 },
-    #[error("invalid scanner settings: {0}")]
-    Scanner(#[from] ScannerSettingsError),
-    #[error("duplicate subscription provider `{provider}` in subscription.providers")]
+    Scanner(ScannerSettingsError),
     DuplicateSubscriptionProvider { provider: &'static str },
+}
+
+impl From<ScannerSettingsError> for SettingsValidationError {
+    fn from(source: ScannerSettingsError) -> Self {
+        Self::Scanner(source)
+    }
+}
+
+impl std::fmt::Display for SettingsValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AutoRefreshRange { value, min, max } => write!(
+                formatter,
+                "{}",
+                rust_i18n::t!(
+                    "settings.error.auto_refresh_range",
+                    value = value.to_string(),
+                    min = min.to_string(),
+                    max = max.to_string()
+                )
+            ),
+            Self::Scanner(source) => write!(
+                formatter,
+                "{}",
+                rust_i18n::t!(
+                    "settings.error.invalid_scanner",
+                    source = source.to_string()
+                )
+            ),
+            Self::DuplicateSubscriptionProvider { provider } => write!(
+                formatter,
+                "{}",
+                rust_i18n::t!(
+                    "settings.error.duplicate_subscription_provider",
+                    provider = *provider
+                )
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SettingsValidationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::AutoRefreshRange { .. } => None,
+            Self::Scanner(source) => Some(source),
+            Self::DuplicateSubscriptionProvider { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +171,18 @@ pub struct Settings {
     /// Remote subscription-quota surface and its explicit provider allowlist.
     #[serde(default)]
     pub subscription: SubscriptionSettings,
+    /// Optional interface language override (`en` or `zh-CN`). Absent means
+    /// the environment (`LC_ALL`/`LANG`) decides, falling back to English.
+    /// An explicit `--language` flag always wins over this value. Unknown
+    /// spellings are parse errors, never a silent default.
+    #[serde(default)]
+    pub language: Option<Language>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LanguageSettings {
+    #[serde(default)]
+    language: Option<Language>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -117,6 +214,7 @@ impl Default for Settings {
             default_clients: Vec::new(),
             time_zone: None,
             subscription: SubscriptionSettings::default(),
+            language: None,
         }
     }
 }
@@ -148,9 +246,35 @@ impl Settings {
             .parent()
             .expect("settings path must have a configuration directory");
         fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create settings directory `{}`", parent.display())
+            rust_i18n::t!(
+                "settings.error.create_dir",
+                path = parent.display().to_string()
+            )
         })?;
         Ok(path)
+    }
+
+    fn load_language_from_path(
+        path: &Path,
+    ) -> std::result::Result<Option<Language>, SettingsLoadError> {
+        let content = match fs::read(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(SettingsLoadError::Read {
+                    path: path.to_path_buf(),
+                    source: error,
+                });
+            }
+        };
+
+        let settings = serde_json::from_slice::<LanguageSettings>(&content).map_err(|source| {
+            SettingsLoadError::Parse {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
+        Ok(settings.language)
     }
 
     fn load_from_path(path: &Path) -> std::result::Result<Self, SettingsLoadError> {
@@ -184,6 +308,18 @@ impl Settings {
     pub fn load(paths: &ProductPaths) -> std::result::Result<Self, SettingsLoadError> {
         let path = paths.settings_file();
         Self::load_from_path(&path)
+    }
+
+    /// Read only the optional language override without validating unrelated
+    /// settings. Startup uses this before Clap parses the command line;
+    /// missing settings return `None`, while malformed or unreadable files
+    /// remain typed load errors. [`Self::load`] remains authoritative for
+    /// execution.
+    pub(crate) fn load_language(
+        paths: &ProductPaths,
+    ) -> std::result::Result<Option<Language>, SettingsLoadError> {
+        let path = paths.settings_file();
+        Self::load_language_from_path(&path)
     }
 
     pub fn save(&self, paths: &ProductPaths) -> Result<()> {
@@ -617,6 +753,72 @@ mod tests {
             settings.validate(),
             Err(SettingsValidationError::DuplicateSubscriptionProvider { provider: "codex" })
         ));
+    }
+
+    #[test]
+    fn settings_language_round_trips_canonical_values() {
+        let parsed: Settings = serde_json::from_str(r#"{"language":"zh-CN"}"#).unwrap();
+        assert_eq!(parsed.language, Some(crate::i18n::Language::ZhCn));
+        assert_eq!(
+            serde_json::to_value(parsed).unwrap()["language"],
+            serde_json::json!("zh-CN")
+        );
+
+        let absent: Settings = serde_json::from_str(r#"{"colorPalette":"blue"}"#).unwrap();
+        assert_eq!(absent.language, None);
+        assert_eq!(Settings::default().language, None);
+    }
+
+    #[test]
+    fn early_language_load_ignores_unrelated_invalid_settings() {
+        let temp = tempfile::TempDir::new().unwrap();
+        fs::write(
+            temp.path().join("settings.json"),
+            r#"{"language":"zh-CN","autoRefreshMs":1}"#,
+        )
+        .unwrap();
+        let paths = ProductPaths::at(temp.path());
+
+        assert_eq!(
+            Settings::load_language(&paths).unwrap(),
+            Some(crate::i18n::Language::ZhCn)
+        );
+        assert!(
+            Settings::load(&paths).is_err(),
+            "full settings loading must retain validation authority"
+        );
+    }
+
+    #[test]
+    fn early_language_load_rejects_unknown_values() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("settings.json");
+        fs::write(&path, r#"{"language":"zh"}"#).unwrap();
+        let error = Settings::load_language(&ProductPaths::at(temp.path())).unwrap_err();
+
+        assert!(matches!(&error, SettingsLoadError::Parse { .. }));
+        assert!(error.is_invalid_environment());
+        let message = format!("{error:#}");
+        assert!(message.contains("parse settings JSON"), "{message}");
+        assert!(message.contains(&path.display().to_string()), "{message}");
+        assert!(message.contains("unknown variant"), "{message}");
+    }
+
+    #[test]
+    fn early_language_load_returns_none_for_missing_settings() {
+        let temp = tempfile::TempDir::new().unwrap();
+
+        assert_eq!(
+            Settings::load_language(&ProductPaths::at(temp.path())).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn settings_language_rejects_unknown_values_explicitly() {
+        // A mistyped language is a hard parse error, never a silent default.
+        let error = serde_json::from_str::<Settings>(r#"{"language":"zh"}"#).unwrap_err();
+        assert!(error.to_string().contains("unknown variant"), "{error}");
     }
 
     #[test]

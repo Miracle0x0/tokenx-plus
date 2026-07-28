@@ -1,0 +1,12 @@
+tui:
+  local_usage:
+    error:
+      materialize_daily: "failed to materialize daily detail for %{date}"
+      materialize_period: "failed to materialize %{kind} detail for %{start} through %{end}"
+      detail_token_total_overflow: "detail token total overflow for client %{client} model %{model}"
+      detail_client_token_total_overflow: "detail client token total overflow for client %{client} model %{model}"
+      detail_token_bucket_overflow: "detail token bucket overflow for model %{model}"
+      detail_total_overflow: "detail token total overflow for model %{model}"
+      detail_cost_overflow: "detail cost overflow for model %{model}"
+      detail_message_count_overflow: "detail message count overflow for model %{model}"
+      no_installed_generation: "local data generation is not installed"

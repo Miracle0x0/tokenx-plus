@@ -1,0 +1,3 @@
+shared:
+  client:
+    invalid_id: "invalid client id `%{raw}`; use one of: %{valid_ids}"

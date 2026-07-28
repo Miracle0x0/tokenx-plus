@@ -1,0 +1,11 @@
+tui:
+  core:
+    cache:
+      warning: "Generation 缓存警告：%{failure}"
+      rejected: "Generation 缓存警告：缓存的 Generation 校验未通过：%{error}"
+    status:
+      loaded_from_cache: "已从缓存加载"
+      background_disconnected: "后台线程已断开连接"
+      background_disconnected_error: "错误：后台线程已断开连接"
+    error:
+      sigcont_handler: "tokenx: 注册 SIGCONT 信号处理器失败：%{error}"

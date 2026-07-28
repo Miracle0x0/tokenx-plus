@@ -1,6 +1,7 @@
 use chrono::{Datelike, NaiveDate};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, Table};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use super::empty_state;
@@ -22,6 +23,9 @@ use super::widgets::{
 };
 use crate::tui::actions::ActionSet;
 use crate::tui::data::DailyUsage;
+use crate::tui::date::{
+    format_day_weekday, format_month_separator as localized_month_separator, format_year_month_day,
+};
 use crate::tui::model::{SortDirection, SortField, TuiModel};
 use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
@@ -282,22 +286,24 @@ fn daily_detail_table_layout(
 fn daily_detail_column_header(
     column: DailyDetailColumn,
     density: DailyDetailTableDensity,
-) -> &'static str {
+) -> Cow<'static, str> {
     match column {
-        DailyDetailColumn::Workspace => "Workspace",
-        DailyDetailColumn::Model => "Model",
-        DailyDetailColumn::Provider => "Provider",
-        DailyDetailColumn::Client => "Client",
-        DailyDetailColumn::Messages => "Msgs",
-        DailyDetailColumn::Input => "Input",
-        DailyDetailColumn::Output => "Output",
-        DailyDetailColumn::CacheRead => "Cache R",
-        DailyDetailColumn::CacheWrite => "Cache W",
-        DailyDetailColumn::CacheRate => "Cache×",
-        DailyDetailColumn::Total if density == DailyDetailTableDensity::Full => "Total",
-        DailyDetailColumn::Total => "Tokens",
-        DailyDetailColumn::Cost => "Cost",
-        DailyDetailColumn::CostPerMillion => "Cost/1M",
+        DailyDetailColumn::Workspace => rust_i18n::t!("tui.ui.daily.header.workspace"),
+        DailyDetailColumn::Model => rust_i18n::t!("tui.ui.daily.header.model"),
+        DailyDetailColumn::Provider => rust_i18n::t!("tui.ui.daily.header.provider"),
+        DailyDetailColumn::Client => rust_i18n::t!("tui.ui.daily.header.client"),
+        DailyDetailColumn::Messages => rust_i18n::t!("tui.ui.daily.header.messages"),
+        DailyDetailColumn::Input => rust_i18n::t!("tui.ui.daily.header.input"),
+        DailyDetailColumn::Output => rust_i18n::t!("tui.ui.daily.header.output"),
+        DailyDetailColumn::CacheRead => rust_i18n::t!("tui.ui.daily.header.cache_read"),
+        DailyDetailColumn::CacheWrite => rust_i18n::t!("tui.ui.daily.header.cache_write"),
+        DailyDetailColumn::CacheRate => rust_i18n::t!("tui.ui.daily.header.cache_rate"),
+        DailyDetailColumn::Total if density == DailyDetailTableDensity::Full => {
+            rust_i18n::t!("tui.ui.daily.header.total")
+        }
+        DailyDetailColumn::Total => rust_i18n::t!("tui.ui.daily.header.tokens"),
+        DailyDetailColumn::Cost => rust_i18n::t!("tui.ui.daily.header.cost"),
+        DailyDetailColumn::CostPerMillion => rust_i18n::t!("tui.ui.daily.header.cost_per_million"),
     }
 }
 
@@ -310,22 +316,24 @@ fn daily_detail_column_sort_field(column: DailyDetailColumn) -> Option<SortField
     }
 }
 
-fn daily_column_header(column: DailyColumn, density: DailyTableDensity) -> &'static str {
+fn daily_column_header(column: DailyColumn, density: DailyTableDensity) -> Cow<'static, str> {
     match column {
-        DailyColumn::Date => "Date",
-        DailyColumn::TopClient => "Client*",
-        DailyColumn::TopModel => "Model*",
-        DailyColumn::Turn => "Turn",
-        DailyColumn::Messages => "Msgs",
-        DailyColumn::Input => "Input",
-        DailyColumn::Output => "Output",
-        DailyColumn::CacheRead => "Cache R",
-        DailyColumn::CacheWrite => "Cache W",
-        DailyColumn::CacheRate => "Cache×",
-        DailyColumn::Total if density == DailyTableDensity::Full => "Total",
-        DailyColumn::Total => "Tokens",
-        DailyColumn::Cost => "Cost",
-        DailyColumn::CostPerMillion => "Cost/1M",
+        DailyColumn::Date => rust_i18n::t!("tui.ui.daily.header.date"),
+        DailyColumn::TopClient => rust_i18n::t!("tui.ui.daily.header.top_client"),
+        DailyColumn::TopModel => rust_i18n::t!("tui.ui.daily.header.top_model"),
+        DailyColumn::Turn => rust_i18n::t!("tui.ui.daily.header.turn"),
+        DailyColumn::Messages => rust_i18n::t!("tui.ui.daily.header.messages"),
+        DailyColumn::Input => rust_i18n::t!("tui.ui.daily.header.input"),
+        DailyColumn::Output => rust_i18n::t!("tui.ui.daily.header.output"),
+        DailyColumn::CacheRead => rust_i18n::t!("tui.ui.daily.header.cache_read"),
+        DailyColumn::CacheWrite => rust_i18n::t!("tui.ui.daily.header.cache_write"),
+        DailyColumn::CacheRate => rust_i18n::t!("tui.ui.daily.header.cache_rate"),
+        DailyColumn::Total if density == DailyTableDensity::Full => {
+            rust_i18n::t!("tui.ui.daily.header.total")
+        }
+        DailyColumn::Total => rust_i18n::t!("tui.ui.daily.header.tokens"),
+        DailyColumn::Cost => rust_i18n::t!("tui.ui.daily.header.cost"),
+        DailyColumn::CostPerMillion => rust_i18n::t!("tui.ui.daily.header.cost_per_million"),
     }
 }
 
@@ -341,11 +349,11 @@ fn daily_column_sort_field(column: DailyColumn) -> Option<SortField> {
 }
 
 fn format_daily_row_date(date: NaiveDate) -> String {
-    date.format("%d %a").to_string()
+    format_day_weekday(date)
 }
 
 fn format_month_separator(date: NaiveDate) -> String {
-    date.format("%Y/%m").to_string()
+    localized_month_separator(date)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -451,7 +459,7 @@ pub fn render(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.chrome.border))
         .title(Span::styled(
-            " Daily Usage ",
+            rust_i18n::t!("tui.ui.daily.title"),
             Style::default()
                 .fg(app.theme.chrome.heading)
                 .add_modifier(Modifier::BOLD),
@@ -714,8 +722,14 @@ pub fn render(
 fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifacts, area: Rect) {
     let title = app
         .daily_detail_date()
-        .map(|date| format!(" Daily Detail: {} ", date))
-        .unwrap_or_else(|| " Daily Detail ".to_string());
+        .map(|date| {
+            rust_i18n::t!(
+                "tui.ui.daily.detail_title_with_date",
+                date = format_year_month_day(date)
+            )
+            .into_owned()
+        })
+        .unwrap_or_else(|| rust_i18n::t!("tui.ui.daily.detail_title").into_owned());
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -784,7 +798,7 @@ fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifa
     let workspace_content_width = if group_by == GroupBy::WorkspaceModel {
         rows_data
             .iter()
-            .map(|row| display_width(workspace_label_or_unknown(row.workspace.as_deref())))
+            .map(|row| display_width(workspace_label_or_unknown(row.workspace.as_deref()).as_ref()))
             .max()
             .unwrap_or(WORKSPACE_MIN_WIDTH)
     } else {
@@ -845,7 +859,7 @@ fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifa
             let cell_for_column = |column: DailyDetailColumn| -> Cell {
                 match column {
                     DailyDetailColumn::Workspace => Cell::from(truncate_display_width(
-                        workspace_label_or_unknown(row.workspace.as_deref()),
+                        workspace_label_or_unknown(row.workspace.as_deref()).as_ref(),
                         table_layout.width_for(DailyDetailColumn::Workspace),
                     ))
                     .style(Style::default().fg(theme_secondary)),

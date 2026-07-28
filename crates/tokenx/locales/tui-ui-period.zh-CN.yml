@@ -1,0 +1,30 @@
+tui:
+  ui:
+    period:
+      title:
+        monthly: " 每月用量 "
+        weekly: " 每周用量 "
+      detail:
+        title: " 周期明细：%{label} "
+        title_default: " 周期明细 "
+        header:
+          workspace: "工作区"
+          model: "模型"
+          provider: "提供商"
+          client: "客户端"
+      header:
+        period: "周期"
+        days: "天数"
+        top_client: "客户端*"
+        top_model: "模型*"
+        turn: "轮次"
+        msgs: "消息"
+        input: "输入"
+        output: "输出"
+        cache_read: "缓存读"
+        cache_write: "缓存写"
+        cache_rate: "缓存率"
+        total: "总计"
+        tokens: "Tokens"
+        cost: "费用"
+        cost_per_million: "费用/1M"

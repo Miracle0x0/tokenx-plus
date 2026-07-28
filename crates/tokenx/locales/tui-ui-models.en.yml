@@ -1,0 +1,24 @@
+tui:
+  ui:
+    models:
+      title:
+        models: " Models "
+        model_detail: " Model Details · %{model} "
+        client_model_detail: " Model Details · %{client} · %{model} "
+      header:
+        workspace: "Workspace"
+        model: "Model"
+        messages: "Msgs"
+        provider: "Provider"
+        client: "Client"
+        input: "Input"
+        output: "Output"
+        cache_read_full: "Cache Read"
+        cache_read_short: "Cache R"
+        cache_write_full: "Cache Write"
+        cache_write_short: "Cache W"
+        cache_rate: "Cache×"
+        total_full: "Total"
+        total_short: "Tokens"
+        cost: "Cost"
+        cost_per_million: "Cost/1M"

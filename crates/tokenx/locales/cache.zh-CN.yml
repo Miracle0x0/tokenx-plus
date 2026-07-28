@@ -1,0 +1,14 @@
+cache:
+  failure:
+    read: "读取失败"
+    decode: "解码失败"
+    clock: "时钟异常"
+  error:
+    read: "无法读取缓存 `%{path}`：%{error}"
+    inspect: "无法读取缓存 `%{path}` 的元数据：%{error}"
+    not_regular_file: "无法读取缓存 `%{path}`：缓存路径不是普通文件"
+    invalid: "缓存 `%{path}` 无效：%{error}"
+    clock_check: "缓存时钟检查失败：%{error}"
+    future_timestamp: "缓存 `%{path}` 保存于时间戳 %{saved_at_ms}，晚于当前时间戳 %{now}"
+    retry_health_without_metadata: "缓存 `%{path}` 存在可重试的输入健康问题，但缺少重试元数据"
+    persist: "无法写入缓存 `%{path}`"

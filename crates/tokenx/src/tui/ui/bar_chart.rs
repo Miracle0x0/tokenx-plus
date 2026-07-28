@@ -13,16 +13,14 @@
 //!   right-aligned, middle date centered when there is room.
 
 use ratatui::prelude::*;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::widgets::format_tokens;
+use crate::tui::date::month_name;
 use crate::tui::model::TuiModel;
 
 /// 8-level block characters for sub-cell precision (matching OpenTUI)
 const BLOCKS: &[char] = &[' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
-const MONTH_NAMES: &[&str] = &[
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
 
 /// A single model's contribution to a bar
 #[derive(Debug, Clone)]
@@ -133,17 +131,22 @@ pub fn render_stacked_bar_chart(
     // Compact peak marker, right-aligned on the top bar row; drawn after the
     // bars with an explicit background so it reads over any bar beneath it.
     if chart_height > 0 {
-        let peak_label = format!("peak {}", compact_tokens(max_value as u64));
-        let peak_width = peak_label.chars().count() as u16;
+        let peak_label = rust_i18n::t!(
+            "tui.ui.bar_chart.peak",
+            max = compact_tokens(max_value as u64)
+        )
+        .into_owned();
+        let peak_width = UnicodeWidthStr::width(peak_label.as_str()) as u16;
         if area.width >= peak_width + 2 {
             let peak_x = area.x + area.width - peak_width;
-            for (i, ch) in peak_label.chars().enumerate() {
-                buf[(peak_x + i as u16, area.y)].set_char(ch).set_style(
-                    Style::default()
-                        .fg(app.theme.text.secondary)
-                        .bg(app.theme.surface.panel),
-                );
-            }
+            buf.set_string(
+                peak_x,
+                area.y,
+                &peak_label,
+                Style::default()
+                    .fg(app.theme.text.secondary)
+                    .bg(app.theme.surface.panel),
+            );
         }
     }
 
@@ -161,17 +164,17 @@ fn render_date_labels(buf: &mut Buffer, app: &TuiModel, area: Rect, data: &[Stac
     let bar_count = data.len();
 
     let first_label = format_date_label(&data[0].date, is_very_narrow);
-    let first_width = first_label.chars().count() as u16;
+    let first_width = UnicodeWidthStr::width(first_label.as_str()) as u16;
 
     let mut labels: Vec<(String, u16)> = vec![(first_label, area.x)];
 
     if bar_count > 1 {
         let last_label = format_date_label(&data[bar_count - 1].date, is_very_narrow);
-        let last_width = last_label.chars().count() as u16;
+        let last_width = UnicodeWidthStr::width(last_label.as_str()) as u16;
 
         if !is_very_narrow && bar_count > 2 {
             let middle_label = format_date_label(&data[bar_count / 2].date, is_very_narrow);
-            let middle_width = middle_label.chars().count() as u16;
+            let middle_width = UnicodeWidthStr::width(middle_label.as_str()) as u16;
             // Keep the middle label only when all three fit with a gap each.
             if first_width + middle_width + last_width + 2 <= area.width {
                 let middle_x = area.x + (area.width - middle_width) / 2;
@@ -183,29 +186,38 @@ fn render_date_labels(buf: &mut Buffer, app: &TuiModel, area: Rect, data: &[Stac
             // Still colliding without the middle label: truncate the right
             // label from the left, keeping its tail.
             let keep = area.width.saturating_sub(first_width + 1) as usize;
-            last_label
-                .chars()
-                .skip(last_label.chars().count().saturating_sub(keep))
-                .collect()
+            truncate_left_to_width(&last_label, keep)
         } else {
             last_label
         };
-        let last_width = last_label.chars().count() as u16;
+        let last_width = UnicodeWidthStr::width(last_label.as_str()) as u16;
         if last_width > 0 {
             labels.push((last_label, area.x + area.width - last_width));
         }
     }
 
     for (label, label_x) in labels {
-        for (i, ch) in label.chars().enumerate() {
-            let x = label_x + i as u16;
-            if x < area.x + area.width {
-                buf[(x, label_y)]
-                    .set_char(ch)
-                    .set_style(Style::default().fg(app.theme.text.secondary));
-            }
-        }
+        buf.set_string(
+            label_x,
+            label_y,
+            &label,
+            Style::default().fg(app.theme.text.secondary),
+        );
     }
+}
+
+fn truncate_left_to_width(label: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut kept = Vec::new();
+    for ch in label.chars().rev() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        kept.push(ch);
+        width += ch_width;
+    }
+    kept.into_iter().rev().collect()
 }
 
 /// Format a raw `month/day` date string for the label row.
@@ -216,7 +228,12 @@ fn format_date_label(date_str: &str, is_very_narrow: bool) -> String {
                 return if is_very_narrow {
                     format!("{}/{}", month, day)
                 } else {
-                    format!("{} {}", MONTH_NAMES[month - 1], day)
+                    rust_i18n::t!(
+                        "tui.date.month_day",
+                        month = month_name(month as u32, true),
+                        day = day
+                    )
+                    .into_owned()
                 };
             }
         }

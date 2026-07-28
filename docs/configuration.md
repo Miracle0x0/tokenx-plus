@@ -50,6 +50,7 @@ cross-platform product root:
 | `timeZone` | IANA timezone string | Optional calendar authority such as `Asia/Shanghai` or `America/New_York`. When absent, Tokenx resolves the operating system's configured IANA timezone once at startup. Per-shell `TZ` is deliberately ignored. |
 | `subscription.enabled` | boolean | Show the remote Subscription tab in the TUI. |
 | `subscription.providers` | string[] | Explicit allowlist of subscription providers the TUI may fetch. Empty means cache-display mode. |
+| `language` | string | Optional interface language: `en` or `zh-CN`. When absent, the environment (`LC_ALL`, then `LANG`) decides, with `zh*` values mapping to `zh-CN` and everything else to English. An explicit `--language` flag overrides this value; unknown spellings are parse errors. |
 | `scanner.opencodeDbPaths` | string[] | Authoritative absolute paths to additional current-format OpenCode SQLite database files. Missing, unreadable, relative, or invalid entries fail explicitly. This is the only custom OpenCode scan setting. |
 | `scanner.extraScanPaths` | object | Persistent absolute extra scan roots by client id. Relative paths are rejected so acquisition identity cannot depend on the process working directory. |
 

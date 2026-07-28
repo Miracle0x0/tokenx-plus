@@ -1,0 +1,19 @@
+tui:
+  ui:
+    stats:
+      graph_title: "Contribution Graph (52 weeks)"
+      day_insights_title: "Day Insights"
+      metrics_current: "Current"
+      metrics_longest: "Longest"
+      metrics_active: "Active"
+      legend_less: "Less"
+      legend_more: "More"
+      graph_hint: "click a day to inspect details"
+      select_day_prompt: "Select a day in the contribution graph to inspect its client and model usage."
+      top_model: "Top model: "
+      top_client: "Top client: "
+      no_detail: "No detailed usage breakdown is available for this day."
+      no_activity: "No activity"
+      hours_active_narrow: "%{count}h active"
+      hours_active_wide: "Hours: %{count} active"
+      radar_others: "Others"

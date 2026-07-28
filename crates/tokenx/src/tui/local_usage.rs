@@ -120,8 +120,9 @@ impl DetailProjectionCache {
             self.daily = None;
             return Ok(());
         };
-        let rows = build_detail_rows(&day.client_breakdown, view.group_by)
-            .with_context(|| format!("failed to materialize daily detail for {date}"))?;
+        let rows = build_detail_rows(&day.client_breakdown, view.group_by).with_context(|| {
+            rust_i18n::t!("tui.local_usage.error.materialize_daily", date = date).into_owned()
+        })?;
         self.daily = Some((date, rows));
         Ok(())
     }
@@ -146,10 +147,13 @@ impl DetailProjectionCache {
             return Ok(());
         };
         let rows = build_detail_rows(&period.client_breakdown, group_by).with_context(|| {
-            format!(
-                "failed to materialize {:?} detail for {} through {}",
-                selection.kind, selection.start_date, selection.end_date
+            rust_i18n::t!(
+                "tui.local_usage.error.materialize_period",
+                kind = format!("{:?}", selection.kind),
+                start = selection.start_date,
+                end = selection.end_date
             )
+            .into_owned()
         })?;
         self.period = Some((selection, rows));
         Ok(())
@@ -257,11 +261,12 @@ fn build_detail_rows(
                 });
 
             let model_total = model_info.tokens.checked_total().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "detail token total overflow for client {} model {}",
-                    client,
-                    model_info.model_id
+                anyhow::anyhow!(rust_i18n::t!(
+                    "tui.local_usage.error.detail_token_total_overflow",
+                    client = client,
+                    model = model_info.model_id
                 )
+                .into_owned())
             })?;
             let client_count = row.client_totals.len();
             let client_total =
@@ -275,11 +280,12 @@ fn build_detail_rows(
                 .total_tokens
                 .checked_add(model_total)
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "detail client token total overflow for client {} model {}",
-                        client,
-                        model_info.model_id
+                    anyhow::anyhow!(rust_i18n::t!(
+                        "tui.local_usage.error.detail_client_token_total_overflow",
+                        client = client,
+                        model = model_info.model_id
                     )
+                    .into_owned())
                 })?;
 
             if !model_info.provider.is_empty()
@@ -291,29 +297,36 @@ fn build_detail_rows(
                 row.providers.push(Arc::clone(&model_info.provider));
             }
             row.tokens = row.tokens.checked_add(&model_info.tokens).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "detail token bucket overflow for model {}",
-                    model_info.model_id
+                anyhow::anyhow!(rust_i18n::t!(
+                    "tui.local_usage.error.detail_token_bucket_overflow",
+                    model = model_info.model_id
                 )
+                .into_owned())
             })?;
             if row.tokens.checked_total().is_none() {
-                anyhow::bail!(
-                    "detail token total overflow for model {}",
-                    model_info.model_id
-                );
+                anyhow::bail!(rust_i18n::t!(
+                    "tui.local_usage.error.detail_total_overflow",
+                    model = model_info.model_id
+                )
+                .into_owned());
             }
             row.cost += model_info.cost;
             if !row.cost.is_finite() {
-                anyhow::bail!("detail cost overflow for model {}", model_info.model_id);
+                anyhow::bail!(rust_i18n::t!(
+                    "tui.local_usage.error.detail_cost_overflow",
+                    model = model_info.model_id
+                )
+                .into_owned());
             }
             row.messages = row
                 .messages
                 .checked_add(model_info.messages)
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "detail message count overflow for model {}",
-                        model_info.model_id
+                    anyhow::anyhow!(rust_i18n::t!(
+                        "tui.local_usage.error.detail_message_count_overflow",
+                        model = model_info.model_id
                     )
+                    .into_owned())
                 })?;
         }
     }
@@ -551,9 +564,11 @@ impl LocalUsageState {
     }
 
     pub(crate) fn project_view(&self, query: &UsageQuery) -> Result<UsageProjection> {
-        let installed = self
-            .installed()
-            .ok_or_else(|| anyhow::anyhow!("local data generation is not installed"))?;
+        let installed = self.installed().ok_or_else(|| {
+            anyhow::anyhow!(
+                rust_i18n::t!("tui.local_usage.error.no_installed_generation").into_owned()
+            )
+        })?;
         Ok(installed.generation.project_usage(query)?)
     }
 
@@ -562,9 +577,11 @@ impl LocalUsageState {
         query: UsageQuery,
         detail_selections: DetailSelections,
     ) -> Result<PreparedProjection> {
-        let installed = self
-            .installed()
-            .ok_or_else(|| anyhow::anyhow!("local data generation is not installed"))?;
+        let installed = self.installed().ok_or_else(|| {
+            anyhow::anyhow!(
+                rust_i18n::t!("tui.local_usage.error.no_installed_generation").into_owned()
+            )
+        })?;
         installed.prepare_projection(query, detail_selections)
     }
 
@@ -576,7 +593,11 @@ impl LocalUsageState {
 
     pub(crate) fn materialize_daily_detail(&mut self, date: NaiveDate) -> Result<()> {
         self.installed_mut()
-            .ok_or_else(|| anyhow::anyhow!("local data generation is not installed"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    rust_i18n::t!("tui.local_usage.error.no_installed_generation").into_owned()
+                )
+            })?
             .materialize_daily_detail(date)
     }
 
@@ -585,7 +606,11 @@ impl LocalUsageState {
         selection: PeriodDetailSelection,
     ) -> Result<()> {
         self.installed_mut()
-            .ok_or_else(|| anyhow::anyhow!("local data generation is not installed"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    rust_i18n::t!("tui.local_usage.error.no_installed_generation").into_owned()
+                )
+            })?
             .materialize_period_detail(selection)
     }
 
@@ -902,7 +927,12 @@ mod tests {
         let error = build_detail_rows(&client_breakdown, GroupBy::Model)
             .expect_err("cross-client detail overflow must fail");
 
-        assert!(format!("{error:#}").contains("detail token bucket overflow"));
+        let expected = rust_i18n::t!(
+            "tui.local_usage.error.detail_token_bucket_overflow",
+            locale = "en",
+            model = "gpt-5"
+        );
+        assert!(format!("{error:#}").contains(expected.as_ref()));
     }
 
     #[test]

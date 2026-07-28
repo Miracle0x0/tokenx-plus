@@ -40,9 +40,8 @@ struct Window {
 }
 
 fn auth_path_for_home(home: Option<&Path>) -> Result<PathBuf> {
-    let home = home.ok_or_else(|| {
-        anyhow::anyhow!("Cannot locate the home directory for Codex credentials.")
-    })?;
+    let home =
+        home.ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.codex_no_home")))?;
     Ok(home.join(".codex").join("auth.json"))
 }
 
@@ -51,10 +50,12 @@ fn current_auth_path() -> Result<PathBuf> {
 }
 
 fn parse_auth_file(path: &Path) -> Result<Option<Auth>> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read Codex auth from {}", path.display()))?;
-    let auth = serde_json::from_str::<Auth>(&content)
-        .with_context(|| format!("Failed to parse Codex auth from {}", path.display()))?;
+    let content = std::fs::read_to_string(path).with_context(|| {
+        rust_i18n::t!("subscription.error.codex_read_auth", path = path.display()).into_owned()
+    })?;
+    let auth = serde_json::from_str::<Auth>(&content).with_context(|| {
+        rust_i18n::t!("subscription.error.codex_parse_auth", path = path.display()).into_owned()
+    })?;
     Ok(auth
         .tokens
         .as_ref()
@@ -66,16 +67,16 @@ fn parse_auth_file(path: &Path) -> Result<Option<Auth>> {
 fn read_current_credentials() -> Result<Auth> {
     let path = current_auth_path()?;
     if !path.exists() {
-        anyhow::bail!(
-            "No Codex credentials found at {}. Run `codex login` to authenticate.",
-            path.display()
-        );
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.codex_no_credentials",
+            path = path.display()
+        ));
     }
     parse_auth_file(&path)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "No usable Codex access token found at {}. Run `codex login` to authenticate.",
-            path.display()
-        )
+        anyhow::anyhow!(rust_i18n::t!(
+            "subscription.error.codex_no_usable_token",
+            path = path.display()
+        ))
     })
 }
 
@@ -99,19 +100,18 @@ async fn fetch_usage(
     let response = request.send().await?;
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        anyhow::bail!(
-            "Codex credentials were rejected. Run `codex login` to refresh the provider-owned authentication."
-        );
+        anyhow::bail!(rust_i18n::t!("subscription.error.codex_rejected"));
     }
     if !status.is_success() {
-        anyhow::bail!("Codex usage request failed (HTTP {status})");
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.codex_request_failed",
+            status = status.as_str()
+        ));
     }
 
     let body = response.text().await?;
     if body.trim().starts_with('<') {
-        anyhow::bail!(
-            "Codex usage returned an authentication page. Run `codex login` to refresh the provider-owned authentication."
-        );
+        anyhow::bail!(rust_i18n::t!("subscription.error.codex_auth_page"));
     }
     Ok(serde_json::from_str(&body)?)
 }
@@ -144,13 +144,15 @@ fn account_from_id(account_id: Option<&str>) -> Option<UsageAccount> {
 async fn fetch_async(auth: Auth, client: &reqwest::Client) -> Result<SubscriptionPayload> {
     let tokens = auth
         .tokens
-        .ok_or_else(|| anyhow::anyhow!("No Codex tokens."))?;
+        .ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.codex_no_tokens")))?;
     let access_token = tokens
         .access_token
         .as_deref()
         .map(str::trim)
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("No Codex access token."))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(rust_i18n::t!("subscription.error.codex_no_access_token"))
+        })?;
     let account = account_from_id(tokens.account_id.as_deref());
 
     let response = fetch_usage(
@@ -163,10 +165,16 @@ async fn fetch_async(auth: Auth, client: &reqwest::Client) -> Result<Subscriptio
     let mut metrics = Vec::new();
     if let Some(rate_limit) = &response.rate_limit {
         if let Some(window) = &rate_limit.primary_window {
-            metrics.push(metric_from_window("Session", window));
+            metrics.push(metric_from_window(
+                rust_i18n::t!("subscription.metric.session").as_ref(),
+                window,
+            ));
         }
         if let Some(window) = &rate_limit.secondary_window {
-            metrics.push(metric_from_window("Weekly", window));
+            metrics.push(metric_from_window(
+                rust_i18n::t!("subscription.metric.weekly").as_ref(),
+                window,
+            ));
         }
     }
 

@@ -1,0 +1,39 @@
+tui:
+  ui:
+    achievements:
+      title: "Achievements"
+      streak:
+        roast: "Sporadic"
+        tier1: "Dabbler"
+        tier2: "Warming Up"
+        tier3: "Obsessed"
+        tier4: "Sleepless"
+        tier5: "Symbiote"
+      tokens:
+        roast: "Wellness"
+        tier1: "Appetizer"
+        tier2: "Slow Eater"
+        tier3: "Big Eater"
+        tier4: "Glutton"
+        tier5: "Black Hole"
+      cache:
+        roast: "Wasteful"
+        tier1: "Frugal"
+        tier2: "Thrifty"
+        tier3: "Prudent"
+        tier4: "Coupon Pro"
+        tier5: "Infra God"
+      models:
+        roast: "Monogamist"
+        tier1: "Sipper"
+        tier2: "Taster"
+        tier3: "Fearless"
+        tier4: "Shennong"
+        tier5: "Banquet"
+      clients:
+        roast: "No Troops"
+        tier1: "Wrangler"
+        tier2: "Tamer"
+        tier3: "Stableman"
+        tier4: "Equerry"
+        tier5: "Great Sage"

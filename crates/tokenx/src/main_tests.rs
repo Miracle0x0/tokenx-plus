@@ -492,6 +492,51 @@ fn models_execution_plan_does_not_depend_on_terminal_state() {
 
 #[test]
 #[serial_test::serial]
+fn early_settings_language_loader_preserves_optional_values_and_errors() {
+    struct ConfigDirGuard(Option<std::ffi::OsString>);
+    impl Drop for ConfigDirGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("TOKENX_CONFIG_DIR", value),
+                    None => std::env::remove_var("TOKENX_CONFIG_DIR"),
+                }
+            }
+        }
+    }
+
+    let product_root = tempfile::TempDir::new().unwrap();
+    let settings_path = product_root.path().join("settings.json");
+    let previous_config_dir = std::env::var_os("TOKENX_CONFIG_DIR");
+    unsafe {
+        std::env::set_var("TOKENX_CONFIG_DIR", product_root.path());
+    }
+    let _guard = ConfigDirGuard(previous_config_dir);
+
+    assert_eq!(super::load_settings_language().unwrap(), None);
+
+    std::fs::write(&settings_path, r#"{"language":"zh-CN"}"#).unwrap();
+    assert_eq!(
+        super::load_settings_language().unwrap(),
+        Some(crate::i18n::Language::ZhCn)
+    );
+
+    std::fs::write(&settings_path, r#"{"language":"zh"}"#).unwrap();
+    let error = super::load_settings_language().expect_err("invalid language must fail startup");
+    assert_eq!(
+        error.class(),
+        crate::failure::FailureClass::InvalidInvocation
+    );
+    assert_eq!(error.exit_code(), 2);
+    assert!(error.to_string().contains("unknown variant"), "{error}");
+    unsafe {
+        std::env::set_var("TOKENX_CONFIG_DIR", "relative/tokenx");
+    }
+    assert_eq!(super::load_settings_language().unwrap(), None);
+}
+
+#[test]
+#[serial_test::serial]
 fn one_startup_snapshot_resolves_all_settings_driven_policy() {
     struct ConfigDirGuard(Option<std::ffi::OsString>);
     impl Drop for ConfigDirGuard {
@@ -776,6 +821,35 @@ fn clap_accepts_explicit_cache_warm_scope() {
             subcommand: CacheSubcommand::Warm { .. }
         })
     ));
+}
+
+#[test]
+fn language_flag_is_global_and_typed() {
+    for argv in [
+        vec!["tokenx", "--language", "zh-CN", "models"],
+        vec!["tokenx", "models", "--language", "zh-CN"],
+    ] {
+        let cli = Cli::try_parse_from(argv).expect("--language must parse anywhere");
+        assert_eq!(cli.language, Some(crate::i18n::Language::ZhCn));
+    }
+
+    let cli = Cli::try_parse_from(["tokenx", "tui", "--language=en"]).expect("equals form parses");
+    assert_eq!(cli.language, Some(crate::i18n::Language::En));
+
+    let cli = Cli::try_parse_from(["tokenx", "models"]).expect("parse ok");
+    assert_eq!(cli.language, None);
+}
+
+#[test]
+fn language_flag_rejects_unknown_values() {
+    // An unsupported language is a clap error, not a silent English fallback.
+    for argv in [
+        vec!["tokenx", "--language", "zh", "models"],
+        vec!["tokenx", "models", "--language", "french"],
+    ] {
+        let error = Cli::try_parse_from(argv).expect_err("invalid language must fail");
+        assert_eq!(error.exit_code(), 2);
+    }
 }
 
 #[test]

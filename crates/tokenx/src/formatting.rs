@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use tokenx_engine::{normalize_provider_for_grouping, ClientId};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -136,8 +138,10 @@ pub(crate) fn get_client_display_names(clients: &[ClientId]) -> String {
         .join(", ")
 }
 
-pub(crate) fn workspace_label_or_unknown(workspace: Option<&str>) -> &str {
-    workspace.unwrap_or("Unknown workspace")
+pub(crate) fn workspace_label_or_unknown<'a>(workspace: Option<&'a str>) -> Cow<'a, str> {
+    workspace
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|| Cow::Owned(rust_i18n::t!("tui.model.unknown_workspace").into_owned()))
 }
 
 pub(crate) fn get_provider_display_name(provider: &str) -> String {

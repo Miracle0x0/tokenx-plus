@@ -1,0 +1,11 @@
+tui:
+  ui:
+    agents:
+      title: " Agents "
+      column:
+        agent: "Agent"
+        client: "Client"
+        tokens: "Tokens"
+        cost: "Cost"
+        messages: "Msgs"
+        instances: "Instances"

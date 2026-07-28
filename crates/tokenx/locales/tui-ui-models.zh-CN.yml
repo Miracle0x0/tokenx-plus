@@ -1,0 +1,24 @@
+tui:
+  ui:
+    models:
+      title:
+        models: " 模型 "
+        model_detail: " 模型详情 · %{model} "
+        client_model_detail: " 模型详情 · %{client} · %{model} "
+      header:
+        workspace: "工作区"
+        model: "模型"
+        messages: "消息"
+        provider: "提供商"
+        client: "客户端"
+        input: "输入"
+        output: "输出"
+        cache_read_full: "缓存读"
+        cache_read_short: "缓存读"
+        cache_write_full: "缓存写"
+        cache_write_short: "缓存写"
+        cache_rate: "缓存×"
+        total_full: "总计"
+        total_short: "令牌"
+        cost: "费用"
+        cost_per_million: "费用/1M"

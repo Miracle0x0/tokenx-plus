@@ -11,10 +11,6 @@ use crate::tui::themes::Theme;
 use crate::tui::ui::widgets::viewport_scrollbar_state;
 
 const BAR_WIDTH: usize = 20;
-const FETCH_PROMPT: &str = "Press 'u' to fetch subscription data";
-const NO_PROVIDERS_PROMPT: &str =
-    "No remote subscription providers enabled; configure subscription.providers";
-const CACHE_DISPLAY_NOTICE: &str = "Showing cached subscription data; no remote providers enabled";
 
 pub fn render(
     frame: &mut Frame,
@@ -27,7 +23,7 @@ pub fn render(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.chrome.border))
-        .title(" Subscription ")
+        .title(rust_i18n::t!("tui.ui.subscription.panel_title"))
         .title_style(Style::default().fg(app.theme.chrome.heading))
         .style(app.theme.panel_style());
 
@@ -54,15 +50,20 @@ pub fn render(
 }
 
 fn render_fetching(frame: &mut Frame, app: &TuiModel, area: Rect) {
-    super::loading::render(frame, app, area, super::loading::FETCHING_SUBSCRIPTION_DATA);
+    super::loading::render(
+        frame,
+        app,
+        area,
+        rust_i18n::t!("tui.ui.loading.fetching_subscription_data"),
+    );
 }
 
 fn render_prompt(frame: &mut Frame, app: &TuiModel, area: Rect) {
-    render_centered_message(frame, app, area, prompt_message(app));
+    render_centered_message(frame, app, area, prompt_message(app).as_ref());
 }
 
 fn render_empty(frame: &mut Frame, app: &TuiModel, area: Rect) {
-    render_centered_message(frame, app, area, empty_message(app));
+    render_centered_message(frame, app, area, empty_message(app).as_ref());
 }
 
 fn render_centered_message(frame: &mut Frame, app: &TuiModel, area: Rect, message: &str) {
@@ -81,27 +82,27 @@ fn render_centered_message(frame: &mut Frame, app: &TuiModel, area: Rect, messag
     frame.render_widget(paragraph, center);
 }
 
-fn prompt_message(app: &TuiModel) -> &'static str {
+fn prompt_message(app: &TuiModel) -> std::borrow::Cow<'static, str> {
     if app.has_enabled_subscription_providers() {
-        FETCH_PROMPT
+        rust_i18n::t!("tui.ui.subscription.prompt_fetch")
     } else {
-        NO_PROVIDERS_PROMPT
+        rust_i18n::t!("tui.ui.subscription.prompt_no_providers")
     }
 }
 
-fn empty_message(app: &TuiModel) -> &'static str {
+fn empty_message(app: &TuiModel) -> std::borrow::Cow<'static, str> {
     if app.has_enabled_subscription_providers() {
-        "No subscription data available"
+        rust_i18n::t!("tui.ui.subscription.empty")
     } else {
-        NO_PROVIDERS_PROMPT
+        rust_i18n::t!("tui.ui.subscription.prompt_no_providers")
     }
 }
 
-fn cache_display_notice(app: &TuiModel) -> Option<&'static str> {
+fn cache_display_notice(app: &TuiModel) -> Option<std::borrow::Cow<'static, str>> {
     if app.subscription_outputs().is_empty() || app.has_enabled_subscription_providers() {
         None
     } else {
-        Some(CACHE_DISPLAY_NOTICE)
+        Some(rust_i18n::t!("tui.ui.subscription.cache_notice"))
     }
 }
 
@@ -125,10 +126,13 @@ pub(crate) fn build_subscription_lines(
         )));
 
         for m in &output.metrics {
-            let remaining = m
-                .remaining_label
-                .clone()
-                .unwrap_or_else(|| format!("{:.0}% left", m.remaining_percent));
+            let remaining = m.remaining_label.clone().unwrap_or_else(|| {
+                rust_i18n::t!(
+                    "tui.ui.subscription.percent_left",
+                    percent = format!("{:.0}", m.remaining_percent)
+                )
+                .into_owned()
+            });
             let bar = helpers::render_ascii_bar(m.remaining_percent, BAR_WIDTH);
             let reset = m
                 .resets_at
@@ -161,13 +165,19 @@ pub(crate) fn build_subscription_lines(
 
         if let Some(ref email) = output.email {
             lines.push(Line::from(Span::styled(
-                format!(" {:<12}{email}", "Account"),
+                format!(
+                    " {:<12}{email}",
+                    rust_i18n::t!("tui.ui.subscription.account_label")
+                ),
                 Style::default().fg(theme.text.secondary),
             )));
         }
         if let Some(ref plan) = output.plan {
             lines.push(Line::from(Span::styled(
-                format!(" {:<12}{plan}", "Plan"),
+                format!(
+                    " {:<12}{plan}",
+                    rust_i18n::t!("tui.ui.subscription.plan_label")
+                ),
                 Style::default().fg(theme.text.secondary),
             )));
         }
@@ -178,7 +188,7 @@ pub(crate) fn build_subscription_lines(
             lines.push(Line::from(""));
         }
         lines.push(Line::from(Span::styled(
-            " Provider errors ",
+            rust_i18n::t!("tui.ui.subscription.provider_errors"),
             Style::default()
                 .fg(theme.status.danger)
                 .add_modifier(Modifier::BOLD),
@@ -321,7 +331,12 @@ mod tests {
 
         let screen = render_text(&mut app);
 
-        assert!(screen.contains(NO_PROVIDERS_PROMPT), "{screen}");
+        assert!(
+            screen.contains(
+                rust_i18n::t!("tui.ui.subscription.prompt_no_providers", locale = "en").as_ref()
+            ),
+            "{screen}"
+        );
         assert!(!screen.contains('⠋'), "idle prompt must not spin: {screen}");
         assert!(
             !screen.contains("~  ~"),
@@ -372,22 +387,34 @@ mod tests {
     fn idle_prompt_reflects_provider_availability() {
         let mut app = make_subscription_app();
 
-        assert_eq!(prompt_message(&app), NO_PROVIDERS_PROMPT);
+        assert_eq!(
+            prompt_message(&app),
+            rust_i18n::t!("tui.ui.subscription.prompt_no_providers", locale = "en")
+        );
 
         app.set_subscription_provider_ids_for_test(vec![ProviderId::Codex]);
 
-        assert_eq!(prompt_message(&app), FETCH_PROMPT);
+        assert_eq!(
+            prompt_message(&app),
+            rust_i18n::t!("tui.ui.subscription.prompt_fetch", locale = "en")
+        );
     }
 
     #[test]
     fn empty_prompt_requires_enabled_provider() {
         let mut app = make_subscription_app();
 
-        assert_eq!(empty_message(&app), NO_PROVIDERS_PROMPT);
+        assert_eq!(
+            empty_message(&app),
+            rust_i18n::t!("tui.ui.subscription.prompt_no_providers", locale = "en")
+        );
 
         app.set_subscription_provider_ids_for_test(vec![ProviderId::Codex]);
 
-        assert_eq!(empty_message(&app), "No subscription data available");
+        assert_eq!(
+            empty_message(&app),
+            rust_i18n::t!("tui.ui.subscription.empty", locale = "en")
+        );
     }
 
     #[test]
@@ -409,7 +436,13 @@ mod tests {
                 }],
             });
 
-        assert_eq!(cache_display_notice(&app), Some(CACHE_DISPLAY_NOTICE));
+        assert_eq!(
+            cache_display_notice(&app),
+            Some(rust_i18n::t!(
+                "tui.ui.subscription.cache_notice",
+                locale = "en"
+            ))
+        );
 
         app.set_subscription_provider_ids_for_test(vec![ProviderId::Codex]);
 

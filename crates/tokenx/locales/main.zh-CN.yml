@@ -1,0 +1,5 @@
+main:
+  error:
+    runtime_init: "错误：异步运行时初始化失败：%{error}"
+    prefix_invalid: "错误"
+    prefix_operational: "错误"

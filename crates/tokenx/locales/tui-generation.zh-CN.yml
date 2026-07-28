@@ -1,0 +1,15 @@
+tui:
+  generation:
+    status:
+      loaded: "数据已加载"
+      error: "错误：%{diagnostic}"
+    auto_refresh:
+      on: "自动刷新已开启（%{seconds} 秒）"
+      off: "自动刷新已关闭"
+      interval: "刷新间隔：%{seconds} 秒"
+    error:
+      refresh_context: "刷新采集上下文失败：%{error}"
+      projection: "生成数据投影失败：%{error}"
+      illegal_unchanged: "强制采集返回了非法的“无变化”结果"
+      cache_persistence: "缓存持久化警告：%{diagnostic}"
+      worker_panic: "TUI 后台任务发生 panic：%{message}"

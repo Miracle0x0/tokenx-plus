@@ -5,12 +5,15 @@ mod commands;
 mod failure;
 mod formatting;
 mod generation_cache;
+mod i18n;
 mod product_paths;
 mod report;
 mod settings;
 mod subscription;
 mod theme;
 mod tui;
+
+rust_i18n::i18n!("locales", fallback = "en");
 
 use cli::{Cli, ExecutionPlan, PricingSource, PricingSubcommand, TerminalState};
 use commands::cache::{run_input_record_cache_prune, run_warm_generation_cache};
@@ -24,7 +27,10 @@ fn main() {
     let runtime = match build_process_runtime() {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("Error: failed to initialize async runtime: {error}");
+            eprintln!(
+                "{}",
+                rust_i18n::t!("main.error.runtime_init", error = error)
+            );
             std::process::exit(1);
         }
     };
@@ -33,8 +39,8 @@ fn main() {
         Ok(ExecutionOutcome::Interrupted) => std::process::exit(130),
         Err(error) => {
             let prefix = match error.class() {
-                FailureClass::InvalidInvocation => "error",
-                FailureClass::Operational => "Error",
+                FailureClass::InvalidInvocation => rust_i18n::t!("main.error.prefix_invalid"),
+                FailureClass::Operational => rust_i18n::t!("main.error.prefix_operational"),
             };
             eprintln!("{prefix}: {error}");
             std::process::exit(error.exit_code());
@@ -66,9 +72,23 @@ fn configure_allocator() -> std::io::Result<()> {
 }
 
 fn run(runtime: &tokio::runtime::Runtime) -> std::result::Result<ExecutionOutcome, CliFailure> {
+    // Clap owns validation and error reporting, but raw scanning lets us set
+    // the locale before Clap renders help or a parse error.
+    let cli_language = i18n::scan_cli_language(std::env::args_os());
+    let settings_language = load_settings_language()?;
+    i18n::init(cli_language, settings_language);
+
     let cli = Cli::parse_from_env();
     let plan = ExecutionPlan::resolve(cli, TerminalState::detect())?;
     execute(plan, runtime)
+}
+
+fn load_settings_language() -> std::result::Result<Option<i18n::Language>, CliFailure> {
+    let paths = match product_paths::ProductPaths::resolve() {
+        Ok(paths) => paths,
+        Err(_) => return Ok(None),
+    };
+    settings::Settings::load_language(&paths).map_err(CliFailure::from)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

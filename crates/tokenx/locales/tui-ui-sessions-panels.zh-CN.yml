@@ -1,0 +1,68 @@
+tui:
+  ui:
+    sessions:
+      panel_title: " 会话 "
+      detail_title: " 会话 / %{client} "
+      header:
+        client: "客户端"
+        main: "主会话"
+        total: "总计"
+        workspaces: "工作区"
+        active: "活跃时间"
+        space: "空间"
+        session: "  会话"
+        workspace: "工作区"
+        models: "模型"
+        messages: "消息"
+        turns: "轮次"
+        tokens: "Token"
+        cost: "费用"
+      status:
+        degraded: "已降级"
+        degraded_message: "上次刷新失败；正在显示最近一次成功的数据"
+    subscription:
+      panel_title: " 订阅 "
+      prompt_fetch: "按 'u' 获取订阅数据"
+      prompt_no_providers: "未启用远程订阅提供方；请配置 subscription.providers"
+      cache_notice: "正在显示缓存的订阅数据；未启用远程提供方"
+      empty: "暂无订阅数据"
+      percent_left: "剩余 %{percent}%"
+      account_label: "账户"
+      plan_label: "套餐"
+      provider_errors: " 提供方错误 "
+    profile:
+      heading: "工作最活跃的时段"
+      no_data: "暂无数据"
+      date_range: "%{start} 至 %{end}"
+      summary_tokens: "%{count} 个 token"
+      tokens_unit: " 个 token"
+      switch_press: "按 "
+      switch_to_table: " 切换到表格视图"
+    dialog:
+      client_picker:
+        title: " 客户端 "
+        filter_label: "筛选："
+        filter_placeholder: "输入以筛选…"
+        no_results: "  无结果"
+        hint_full: "↑↓ • 空格 • * 反选匹配项 • 回车 • Esc"
+        hint_medium: "* 反选匹配项 • 空格 • 回车 • Esc"
+        hint_short: "* 反选匹配项"
+        error_empty_selection: "请至少选择一个客户端"
+      group_by:
+        title: " 分组方式 "
+        current_label: "当前："
+        current_suffix: "  当前"
+        hint: "↑↓ 移动 • 回车 选择 • Esc 关闭"
+        option:
+          model:
+            label: "模型"
+            description: "每个模型一行；合并客户端与提供方（默认）"
+          client_model:
+            label: "客户端 + 模型"
+            description: "每个客户端-模型组合一行"
+          client_provider_model:
+            label: "客户端 + 提供方 + 模型"
+            description: "保留提供方身份；不合并模型"
+          workspace_model:
+            label: "工作区 + 模型"
+            description: "先按工作区、再按模型分组本地用量"

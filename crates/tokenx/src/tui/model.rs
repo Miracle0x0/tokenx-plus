@@ -4,6 +4,7 @@
 //! interaction state, rendering measurements, and effect execution live in
 //! their dedicated modules.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Index;
@@ -23,6 +24,7 @@ use super::data::{
     AgentEntry, DailyUsage, HourlyUsage, OverviewSummary, PeriodKind, PeriodUsage, UsageModelEntry,
     UsageProjection,
 };
+use super::date::{format_period_label, format_year_month_day};
 use super::effect::{EffectOutcome, TuiEffect};
 use super::generation_controller::{RefreshControl, RefreshRequest, RefreshStatus};
 use super::intent::Intent;
@@ -105,16 +107,46 @@ impl Tab {
 
     fn labels(self) -> (&'static str, &'static str) {
         match self {
-            Tab::Overview => ("Overview", "Ovw"),
-            Tab::Subscription => ("Subscription", "Sub"),
-            Tab::Models => ("Models", "Mod"),
-            Tab::Monthly => ("Monthly", "Mth"),
-            Tab::Weekly => ("Weekly", "Wk"),
-            Tab::Daily => ("Daily", "Day"),
-            Tab::Hourly => ("Hourly", "Hr"),
-            Tab::Stats => ("Stats", "Sta"),
-            Tab::Agents => ("Agents", "Agt"),
-            Tab::Sessions => ("Sessions", "Ses"),
+            Tab::Overview => (
+                static_text(rust_i18n::t!("tui.model.tab.overview")),
+                static_text(rust_i18n::t!("tui.model.tab.overview_short")),
+            ),
+            Tab::Subscription => (
+                static_text(rust_i18n::t!("tui.model.tab.subscription")),
+                static_text(rust_i18n::t!("tui.model.tab.subscription_short")),
+            ),
+            Tab::Models => (
+                static_text(rust_i18n::t!("tui.model.tab.models")),
+                static_text(rust_i18n::t!("tui.model.tab.models_short")),
+            ),
+            Tab::Monthly => (
+                static_text(rust_i18n::t!("tui.model.tab.monthly")),
+                static_text(rust_i18n::t!("tui.model.tab.monthly_short")),
+            ),
+            Tab::Weekly => (
+                static_text(rust_i18n::t!("tui.model.tab.weekly")),
+                static_text(rust_i18n::t!("tui.model.tab.weekly_short")),
+            ),
+            Tab::Daily => (
+                static_text(rust_i18n::t!("tui.model.tab.daily")),
+                static_text(rust_i18n::t!("tui.model.tab.daily_short")),
+            ),
+            Tab::Hourly => (
+                static_text(rust_i18n::t!("tui.model.tab.hourly")),
+                static_text(rust_i18n::t!("tui.model.tab.hourly_short")),
+            ),
+            Tab::Stats => (
+                static_text(rust_i18n::t!("tui.model.tab.stats")),
+                static_text(rust_i18n::t!("tui.model.tab.stats_short")),
+            ),
+            Tab::Agents => (
+                static_text(rust_i18n::t!("tui.model.tab.agents")),
+                static_text(rust_i18n::t!("tui.model.tab.agents_short")),
+            ),
+            Tab::Sessions => (
+                static_text(rust_i18n::t!("tui.model.tab.sessions")),
+                static_text(rust_i18n::t!("tui.model.tab.sessions_short")),
+            ),
         }
     }
 
@@ -196,8 +228,12 @@ pub(crate) enum StatusTone {
 fn pricing_warning(status: PricingStatus) -> Option<&'static str> {
     match status {
         PricingStatus::Available => None,
-        PricingStatus::CachedFallback => Some("Pricing refresh failed; using cached rates"),
-        PricingStatus::Unavailable => Some("Pricing unavailable; costs may be missing"),
+        PricingStatus::CachedFallback => Some(static_text(rust_i18n::t!(
+            "tui.model.pricing.cached_fallback"
+        ))),
+        PricingStatus::Unavailable => {
+            Some(static_text(rust_i18n::t!("tui.model.pricing.unavailable")))
+        }
     }
 }
 
@@ -205,6 +241,21 @@ fn pricing_warning(status: PricingStatus) -> Option<&'static str> {
 pub enum SortDirection {
     Ascending,
     Descending,
+}
+
+fn sort_field_label(field: SortField) -> Cow<'static, str> {
+    match field {
+        SortField::Cost => rust_i18n::t!("tui.model.sort.field.cost"),
+        SortField::Tokens => rust_i18n::t!("tui.model.sort.field.tokens"),
+        SortField::Date => rust_i18n::t!("tui.model.sort.field.date"),
+    }
+}
+
+fn sort_direction_label(direction: SortDirection) -> Cow<'static, str> {
+    match direction {
+        SortDirection::Ascending => rust_i18n::t!("tui.model.sort.direction.ascending"),
+        SortDirection::Descending => rust_i18n::t!("tui.model.sort.direction.descending"),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,6 +347,16 @@ fn client_ids_text(clients: &[ClientId]) -> String {
         .map(|client| client.as_str())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Parameter-free `t!` lookups always borrow from the static translation
+/// backend (or the key literal itself), so the `Cow` is always `Borrowed`;
+/// the leak arm only exists to keep the signature total.
+fn static_text(text: Cow<'static, str>) -> &'static str {
+    match text {
+        Cow::Borrowed(text) => text,
+        Cow::Owned(text) => Box::leak(text.into_boxed_str()),
+    }
 }
 
 fn sort_detail_order(
@@ -494,10 +555,10 @@ impl TuiModel {
         let dialog_stack = DialogStack::new(theme.clone());
         let requested_tab = config.initial_tab.unwrap_or(Tab::Overview);
         if !Self::tab_visible(&settings, requested_tab) {
-            anyhow::bail!(
-                "TUI tab `{}` is disabled in settings.json",
-                requested_tab.as_str().to_ascii_lowercase()
-            );
+            anyhow::bail!(rust_i18n::t!(
+                "tui.model.error.tab_disabled",
+                tab = requested_tab.as_str().to_ascii_lowercase()
+            ));
         }
         let current_tab = requested_tab;
         let (sort_field, sort_direction) = Self::default_sort_for_tab(current_tab);
@@ -743,29 +804,41 @@ impl TuiModel {
             } => match result {
                 Ok(()) => self.set_status(&success_message),
                 Err(error) => self.set_status_with_tone(
-                    &format!("{success_message} (save failed: {error})"),
+                    &rust_i18n::t!(
+                        "tui.model.status.settings_save_failed",
+                        message = success_message,
+                        error = error
+                    ),
                     StatusTone::Danger,
                 ),
             },
             EffectOutcome::TextCopied { result } => match result {
                 Ok(()) => {
-                    self.set_status_with_tone("Copied to clipboard", StatusTone::Success);
+                    self.set_status_with_tone(
+                        &rust_i18n::t!("tui.model.status.copied"),
+                        StatusTone::Success,
+                    );
                 }
-                Err(_) => self.set_status_with_tone("Failed to copy", StatusTone::Danger),
+                Err(_) => self.set_status_with_tone(
+                    &rust_i18n::t!("tui.model.status.copy_failed"),
+                    StatusTone::Danger,
+                ),
             },
             EffectOutcome::ExportWritten { path, result } => match result {
                 Ok(()) => self.set_status_with_tone(
-                    &format!("Exported to {}", path.display()),
+                    &rust_i18n::t!("tui.model.status.exported", path = path.display()),
                     StatusTone::Success,
                 ),
-                Err(error) => self
-                    .set_status_with_tone(&format!("Export failed: {error}"), StatusTone::Danger),
+                Err(error) => self.set_status_with_tone(
+                    &rust_i18n::t!("tui.model.status.export_failed", error = error),
+                    StatusTone::Danger,
+                ),
             },
             EffectOutcome::SubscriptionCachePersisted { result: Ok(()) } => {}
             EffectOutcome::SubscriptionCachePersisted { result: Err(error) } => {
                 self.subscription.record_cache_failure(error);
                 self.set_subscription_status_with_tone(
-                    "Subscription data loaded with provider errors",
+                    &rust_i18n::t!("tui.model.subscription.loaded_with_errors"),
                     StatusTone::Warning,
                 );
             }
@@ -820,13 +893,16 @@ impl TuiModel {
                 .any(|client| !self.client_universe().contains(*client))
         {
             self.set_status_with_tone(
-                "Client selection is outside the loaded client universe",
+                &rust_i18n::t!("tui.model.status.client_selection_outside_universe"),
                 StatusTone::Danger,
             );
             return;
         }
         if !self.has_installed_generation() {
-            self.set_status_with_tone("Local data is not loaded yet", StatusTone::Warning);
+            self.set_status_with_tone(
+                &rust_i18n::t!("tui.model.status.local_data_not_loaded"),
+                StatusTone::Warning,
+            );
             return;
         }
 
@@ -835,7 +911,10 @@ impl TuiModel {
                 Ok(clients) => clients,
                 Err(error) => {
                     self.set_status_with_tone(
-                        &format!("Client projection failed: {error:#}"),
+                        &rust_i18n::t!(
+                            "tui.model.status.client_projection_failed",
+                            error = format!("{error:#}")
+                        ),
                         StatusTone::Danger,
                     );
                     return;
@@ -851,11 +930,15 @@ impl TuiModel {
             Ok(projection) => projection,
             Err(error) => {
                 let operation = if client_changed && !group_changed {
-                    "Client projection"
+                    rust_i18n::t!("tui.model.status.client_projection")
                 } else {
-                    "Group By projection"
+                    rust_i18n::t!("tui.model.status.group_by_projection")
                 };
-                let diagnostic = format!("{operation} failed: {error:#}");
+                let diagnostic = rust_i18n::t!(
+                    "tui.model.status.projection_failed",
+                    operation = operation,
+                    error = format!("{error:#}")
+                );
                 self.set_status_with_tone(&diagnostic, StatusTone::Danger);
                 return;
             }
@@ -865,8 +948,9 @@ impl TuiModel {
                 Ok(update) => update,
                 Err(error) => {
                     self.set_status_with_tone(
-                        &format!(
-                            "Client projection failed while refreshing model details: {error:#}"
+                        &rust_i18n::t!(
+                            "tui.model.status.client_projection_model_details_failed",
+                            error = format!("{error:#}")
                         ),
                         StatusTone::Danger,
                     );
@@ -885,20 +969,23 @@ impl TuiModel {
                 ModelDetailClientUpdate::Ready(models) => {
                     self.model_detail_models = Some(models);
                     (
-                        "Clients filtered locally; model details updated",
+                        &rust_i18n::t!("tui.model.status.clients_filtered_details_updated"),
                         StatusTone::Success,
                     )
                 }
                 ModelDetailClientUpdate::MissingSelection => {
                     self.clear_model_detail_state(true);
                     (
-                        "Selected model is not available for the current Client filter",
+                        &rust_i18n::t!("tui.model.status.selected_model_unavailable"),
                         StatusTone::Warning,
                     )
                 }
                 ModelDetailClientUpdate::Inactive => {
                     self.clear_model_detail_state(true);
-                    ("Clients filtered locally", StatusTone::Success)
+                    (
+                        &rust_i18n::t!("tui.model.status.clients_filtered"),
+                        StatusTone::Success,
+                    )
                 }
             })
         } else {
@@ -909,7 +996,7 @@ impl TuiModel {
             self.set_generation_status_with_tone(status, tone);
         } else {
             self.set_generation_status_with_tone(
-                &format!("Regrouped by {group_by}"),
+                &rust_i18n::t!("tui.model.status.regrouped", group_by = group_by),
                 StatusTone::Success,
             );
         }
@@ -1249,7 +1336,7 @@ impl TuiModel {
             SubscriptionPoll::Disconnected => {
                 self.subscription.install_disconnected();
                 self.set_subscription_status_with_tone(
-                    "Subscription fetch failed",
+                    &rust_i18n::t!("tui.model.subscription.fetch_failed"),
                     StatusTone::Danger,
                 );
             }
@@ -1281,7 +1368,10 @@ impl TuiModel {
                 Ok(projection) => self.replace_usage_projection(projection, false),
                 Err(error) => {
                     self.set_generation_status_with_tone(
-                        &format!("Failed to advance local calendar: {error:#}"),
+                        &rust_i18n::t!(
+                            "tui.model.status.advance_calendar_failed",
+                            error = format!("{error:#}")
+                        ),
                         StatusTone::Danger,
                     );
                     return;
@@ -1300,21 +1390,21 @@ impl TuiModel {
         match self.subscription.install(batch) {
             SubscriptionInstall::Loaded => {
                 self.set_subscription_status_with_tone(
-                    "Subscription data loaded",
+                    &rust_i18n::t!("tui.model.subscription.loaded"),
                     StatusTone::Success,
                 );
             }
             SubscriptionInstall::LoadedWithErrors => self.set_subscription_status_with_tone(
-                "Subscription data loaded with provider errors",
+                &rust_i18n::t!("tui.model.subscription.loaded_with_errors"),
                 StatusTone::Warning,
             ),
             SubscriptionInstall::Empty => self.set_subscription_status_with_tone(
-                "No subscription data available",
+                &rust_i18n::t!("tui.model.subscription.no_data"),
                 StatusTone::Warning,
             ),
             SubscriptionInstall::Failed => {
                 self.set_subscription_status_with_tone(
-                    "Subscription fetch failed",
+                    &rust_i18n::t!("tui.model.subscription.fetch_failed"),
                     StatusTone::Danger,
                 );
             }
@@ -1349,11 +1439,12 @@ impl TuiModel {
             Intent::Theme => self.cycle_theme(),
             Intent::RefreshLocal if self.current_tab != Tab::Subscription => {
                 self.refresh_requests.push_back(RefreshRequest::Manual);
-                self.set_status(if self.is_background_loading() {
-                    "Refresh queued"
+                let msg = if self.is_background_loading() {
+                    rust_i18n::t!("tui.model.status.refresh_queued")
                 } else {
-                    "Refresh requested"
-                });
+                    rust_i18n::t!("tui.model.status.refresh_requested")
+                };
+                self.set_status(&msg);
             }
             Intent::ToggleAutoRefresh if self.current_tab != Tab::Subscription => {
                 self.refresh_controls
@@ -1439,14 +1530,16 @@ impl TuiModel {
     pub fn fetch_subscription(&mut self) {
         match self.subscription.request_fetch() {
             FetchRequest::AlreadyFetching => {
-                self.set_subscription_status("Subscription fetch already in progress");
+                self.set_subscription_status(&rust_i18n::t!(
+                    "tui.model.subscription.fetch_in_progress"
+                ));
             }
             FetchRequest::NoProviders => self.set_subscription_status_with_tone(
-                "No subscription providers enabled",
+                &rust_i18n::t!("tui.model.subscription.no_providers"),
                 StatusTone::Warning,
             ),
             FetchRequest::Started => {
-                self.set_subscription_status("Fetching subscription...");
+                self.set_subscription_status(&rust_i18n::t!("tui.model.subscription.fetching"));
             }
         }
     }
@@ -1962,9 +2055,10 @@ impl TuiModel {
             self.selected_graph_cell = None;
             self.reset_current_list_interaction();
         }
-        self.set_status(&format!(
-            "Sorted by {:?} {:?}",
-            self.sort_field, self.sort_direction
+        self.set_status(&rust_i18n::t!(
+            "tui.model.status.sorted_by",
+            field = sort_field_label(self.sort_field),
+            direction = sort_direction_label(self.sort_direction)
         ));
     }
 
@@ -1976,14 +2070,15 @@ impl TuiModel {
         self.effects.push_back(TuiEffect::PersistSettings {
             settings: self.settings.clone(),
             paths: self.product_paths.clone(),
-            success_message: format!("Theme: {}", new_theme.as_str()),
+            success_message: rust_i18n::t!("tui.model.status.theme", theme = new_theme.as_str())
+                .into_owned(),
         });
     }
 
     fn open_client_picker(&mut self) {
         if !self.has_installed_generation() {
             self.set_status_with_tone(
-                "Clients are unavailable until local data finishes loading",
+                &rust_i18n::t!("tui.model.status.clients_unavailable_loading"),
                 StatusTone::Warning,
             );
             return;
@@ -2016,7 +2111,7 @@ impl TuiModel {
     fn open_group_by_picker(&mut self) {
         if !self.has_installed_generation() {
             self.set_status_with_tone(
-                "Group By is unavailable until local data finishes loading",
+                &rust_i18n::t!("tui.model.status.group_by_unavailable_loading"),
                 StatusTone::Warning,
             );
             return;
@@ -2096,7 +2191,7 @@ impl TuiModel {
             let selected_clients = self.selected_clients().collect::<HashSet<_>>();
             if !self.has_installed_generation() {
                 self.set_status_with_tone(
-                    "Model details are unavailable until local data finishes loading",
+                    &rust_i18n::t!("tui.model.status.model_details_unavailable_loading"),
                     StatusTone::Warning,
                 );
                 return;
@@ -2108,7 +2203,10 @@ impl TuiModel {
                 Ok(data) => data,
                 Err(error) => {
                     self.set_status_with_tone(
-                        &format!("Model details failed: {error:#}"),
+                        &rust_i18n::t!(
+                            "tui.model.status.model_details_failed",
+                            error = format!("{error:#}")
+                        ),
                         StatusTone::Danger,
                     );
                     return;
@@ -2124,7 +2222,7 @@ impl TuiModel {
         });
         if !has_rows {
             self.set_status_with_tone(
-                "No provider details are available for the selected model",
+                &rust_i18n::t!("tui.model.status.no_provider_details"),
                 StatusTone::Warning,
             );
             return;
@@ -2134,7 +2232,10 @@ impl TuiModel {
         self.enter_model_detail_sort_context();
         self.set_selected_index(0);
         self.set_scroll_offset(0);
-        self.set_generation_status(&format!("Viewing provider details for {}", selection.model));
+        self.set_generation_status(&rust_i18n::t!(
+            "tui.model.status.viewing_provider_details",
+            model = selection.model
+        ));
         self.clamp_selection();
     }
 
@@ -2180,7 +2281,10 @@ impl TuiModel {
             visible: model_interaction.visible,
         });
 
-        self.set_generation_status(&format!("Returned to model {}", selection.model));
+        self.set_generation_status(&rust_i18n::t!(
+            "tui.model.status.returned_to_model",
+            model = selection.model
+        ));
         self.clamp_selection();
     }
 
@@ -2196,7 +2300,10 @@ impl TuiModel {
         if let Some(date) = selected_date {
             if let Err(error) = self.local_usage.materialize_daily_detail(date) {
                 self.set_generation_status_with_tone(
-                    &format!("Daily detail projection failed: {error:#}"),
+                    &rust_i18n::t!(
+                        "tui.model.status.daily_detail_failed",
+                        error = format!("{error:#}")
+                    ),
                     StatusTone::Danger,
                 );
                 return;
@@ -2205,7 +2312,10 @@ impl TuiModel {
             self.enter_daily_detail_sort_context();
             self.set_selected_index(0);
             self.set_scroll_offset(0);
-            self.set_generation_status(&format!("Viewing daily details for {}", date));
+            self.set_generation_status(&rust_i18n::t!(
+                "tui.model.status.viewing_daily_details",
+                date = date
+            ));
             self.clamp_selection();
         }
     }
@@ -2241,7 +2351,7 @@ impl TuiModel {
             visible: daily_interaction.visible,
         });
 
-        self.set_generation_status("Returned to daily usage");
+        self.set_generation_status(&rust_i18n::t!("tui.model.status.returned_to_daily"));
         self.clamp_selection();
     }
 
@@ -2259,7 +2369,11 @@ impl TuiModel {
                         start_date: period.start_date,
                         end_date: period.end_date,
                     },
-                    format!("{} {}", period.section_label, period.label),
+                    format!(
+                        "{} {}",
+                        period.section_label,
+                        format_period_label(kind, period.start_date, period.end_date, false)
+                    ),
                 )
             })
         };
@@ -2267,7 +2381,10 @@ impl TuiModel {
         if let Some((selection, label)) = selected_period {
             if let Err(error) = self.local_usage.materialize_period_detail(selection) {
                 self.set_generation_status_with_tone(
-                    &format!("Period detail projection failed: {error:#}"),
+                    &rust_i18n::t!(
+                        "tui.model.status.period_detail_failed",
+                        error = format!("{error:#}")
+                    ),
                     StatusTone::Danger,
                 );
                 return;
@@ -2276,7 +2393,10 @@ impl TuiModel {
             self.enter_period_detail_sort_context();
             self.set_selected_index(0);
             self.set_scroll_offset(0);
-            self.set_generation_status(&format!("Viewing period details for {}", label));
+            self.set_generation_status(&rust_i18n::t!(
+                "tui.model.status.viewing_period_details",
+                label = label
+            ));
             self.clamp_selection();
         }
     }
@@ -2315,10 +2435,11 @@ impl TuiModel {
             visible: period_interaction.visible,
         });
 
-        self.set_generation_status(match selection.kind {
-            PeriodKind::Monthly => "Returned to monthly usage",
-            PeriodKind::Weekly => "Returned to weekly usage",
-        });
+        let msg = match selection.kind {
+            PeriodKind::Monthly => rust_i18n::t!("tui.model.status.returned_to_monthly"),
+            PeriodKind::Weekly => rust_i18n::t!("tui.model.status.returned_to_weekly"),
+        };
+        self.set_generation_status(&msg);
         self.clamp_selection();
     }
 
@@ -2326,87 +2447,114 @@ impl TuiModel {
         match self.current_tab {
             Tab::Overview | Tab::Models => {
                 self.model_at_sorted_index(self.selected_index()).map(|m| {
-                    format!(
-                        "{}: {} tokens, ${:.4}",
-                        m.display_name,
-                        m.tokens.total(),
-                        m.cost
+                    rust_i18n::t!(
+                        "tui.model.copy.label_tokens_cost",
+                        label = m.display_name,
+                        tokens = m.tokens.total(),
+                        cost = format!("{:.4}", m.cost)
                     )
+                    .into_owned()
                 })
             }
             Tab::Agents => self
                 .get_sorted_agents()
                 .get(self.selected_index())
                 .map(|a| {
-                    format!(
-                        "{} / {}: {} tokens, ${:.4}, {} instances",
-                        a.client,
-                        a.agent,
-                        a.tokens.total(),
-                        a.cost,
-                        a.instance_count
+                    rust_i18n::t!(
+                        "tui.model.copy.agent_row",
+                        client = a.client,
+                        agent = a.agent,
+                        tokens = a.tokens.total(),
+                        cost = format!("{:.4}", a.cost),
+                        instances = a.instance_count
                     )
+                    .into_owned()
                 }),
             Tab::Daily if self.is_daily_detail_active() => self
                 .daily_detail_rows()
                 .get(self.selected_index())
                 .map(|row| {
-                    format!(
-                        "{} / {}: {} tokens, ${:.4}",
-                        client_ids_text(&row.clients),
-                        row.model,
-                        row.tokens.total(),
-                        row.cost
+                    rust_i18n::t!(
+                        "tui.model.copy.detail_row",
+                        clients = client_ids_text(&row.clients),
+                        model = row.model,
+                        tokens = row.tokens.total(),
+                        cost = format!("{:.4}", row.cost)
                     )
+                    .into_owned()
                 }),
             Tab::Monthly | Tab::Weekly if self.is_period_detail_active() => self
                 .period_detail_rows()
                 .get(self.selected_index())
                 .map(|row| {
-                    format!(
-                        "{} / {}: {} tokens, ${:.4}",
-                        client_ids_text(&row.clients),
-                        row.model,
-                        row.tokens.total(),
-                        row.cost
+                    rust_i18n::t!(
+                        "tui.model.copy.detail_row",
+                        clients = client_ids_text(&row.clients),
+                        model = row.model,
+                        tokens = row.tokens.total(),
+                        cost = format!("{:.4}", row.cost)
                     )
+                    .into_owned()
                 }),
-            Tab::Daily => self
-                .daily_at_sorted_index(self.selected_index())
-                .map(|d| format!("{}: {} tokens, ${:.4}", d.date, d.tokens.total(), d.cost)),
+            Tab::Daily => self.daily_at_sorted_index(self.selected_index()).map(|d| {
+                rust_i18n::t!(
+                    "tui.model.copy.label_tokens_cost",
+                    label = format_year_month_day(d.date),
+                    tokens = d.tokens.total(),
+                    cost = format!("{:.4}", d.cost)
+                )
+                .into_owned()
+            }),
             Tab::Monthly => self
                 .get_sorted_periods(PeriodKind::Monthly)
                 .get(self.selected_index())
                 .copied()
                 .map(|p| {
-                    format!(
-                        "{} {}: {} tokens, ${:.4}",
-                        p.section_label,
-                        p.label,
-                        p.tokens.total(),
-                        p.cost
+                    rust_i18n::t!(
+                        "tui.model.copy.period_row",
+                        section = p.section_label,
+                        label = format_period_label(
+                            PeriodKind::Monthly,
+                            p.start_date,
+                            p.end_date,
+                            false
+                        ),
+                        tokens = p.tokens.total(),
+                        cost = format!("{:.4}", p.cost)
                     )
+                    .into_owned()
                 }),
             Tab::Weekly => self
                 .get_sorted_periods(PeriodKind::Weekly)
                 .get(self.selected_index())
                 .copied()
                 .map(|p| {
-                    format!(
-                        "{} {}: {} tokens, ${:.4}",
-                        p.section_label,
-                        p.label,
-                        p.tokens.total(),
-                        p.cost
+                    rust_i18n::t!(
+                        "tui.model.copy.period_row",
+                        section = p.section_label,
+                        label = format_period_label(
+                            PeriodKind::Weekly,
+                            p.start_date,
+                            p.end_date,
+                            false
+                        ),
+                        tokens = p.tokens.total(),
+                        cost = format!("{:.4}", p.cost)
                     )
+                    .into_owned()
                 }),
             Tab::Hourly => self.hourly_at_sorted_index(self.selected_index()).map(|h| {
-                format!(
-                    "{}: {} tokens, ${:.4}",
-                    h.datetime.format("%Y-%m-%d %H:%M"),
-                    h.tokens.total(),
-                    h.cost
+                rust_i18n::t!(
+                    "tui.model.copy.label_tokens_cost",
+                    label = format!(
+                        "{} {}",
+                        format_year_month_day(h.datetime.date()),
+                        h.datetime.format("%H:%M")
+                    ),
+                    tokens = h.tokens.total(),
+                    cost = format!("{:.4}", h.cost)
                 )
+                .into_owned()
             }),
             Tab::Stats | Tab::Subscription | Tab::Sessions => None,
         }
@@ -2433,7 +2581,7 @@ impl TuiModel {
 
         let Some(health) = self.generation_health() else {
             self.set_status_with_tone(
-                "Export failed: local data is not loaded yet",
+                &rust_i18n::t!("tui.model.status.export_failed_not_loaded"),
                 StatusTone::Danger,
             );
             return;
@@ -2448,15 +2596,16 @@ impl TuiModel {
                     json,
                 });
             }
-            Err(e) => {
-                self.set_status_with_tone(&format!("Export failed: {}", e), StatusTone::Danger)
-            }
+            Err(e) => self.set_status_with_tone(
+                &rust_i18n::t!("tui.model.status.export_failed", error = e),
+                StatusTone::Danger,
+            ),
         }
     }
 
     fn handle_graph_selection(&mut self) {
         if self.current_tab == Tab::Stats && self.selected_graph_cell.is_some() {
-            self.set_status("Press ESC to deselect");
+            self.set_status(&rust_i18n::t!("tui.model.status.press_esc_deselect"));
         }
     }
 
@@ -2760,7 +2909,13 @@ impl TuiModel {
             .find(|period| {
                 period.start_date == selection.start_date && period.end_date == selection.end_date
             })
-            .map(|period| format!("{} {}", period.section_label, period.label))
+            .map(|period| {
+                format!(
+                    "{} {}",
+                    period.section_label,
+                    format_period_label(selection.kind, period.start_date, period.end_date, false)
+                )
+            })
     }
 
     fn detail_render_order(

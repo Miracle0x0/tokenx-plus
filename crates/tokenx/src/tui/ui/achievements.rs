@@ -1,72 +1,76 @@
 //! Achievement ladders for the Overview snapshot: five permanent ladders,
 //! each with five tiers plus a roast title for below the first tier.
 
+use std::borrow::Cow;
+
 use ratatui::prelude::*;
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::data::CacheRate;
 use crate::tui::themes::Theme;
 
+/// Tier names are i18n keys resolved at render time; the third tuple field is
+/// the locale-independent threshold display ("7", "0.1B", "50%").
 struct TierSet {
     roast: &'static str,
     tiers: [(u64, &'static str, &'static str); 5],
 }
 
 const STREAK: TierSet = TierSet {
-    roast: "三天打鱼",
+    roast: "tui.ui.achievements.streak.roast",
     tiers: [
-        (7, "浅尝辄止", "7"),
-        (15, "渐入佳境", "15"),
-        (30, "废寝忘食", "30"),
-        (90, "不眠不休", "90"),
-        (180, "人机合一", "180"),
+        (7, "tui.ui.achievements.streak.tier1", "7"),
+        (15, "tui.ui.achievements.streak.tier2", "15"),
+        (30, "tui.ui.achievements.streak.tier3", "30"),
+        (90, "tui.ui.achievements.streak.tier4", "90"),
+        (180, "tui.ui.achievements.streak.tier5", "180"),
     ],
 };
 const TOKENS: TierSet = TierSet {
-    roast: "养生局",
+    roast: "tui.ui.achievements.tokens.roast",
     tiers: [
-        (100_000_000, "开胃小菜", "0.1B"),
-        (1_000_000_000, "细嚼慢咽", "1B"),
-        (10_000_000_000, "大胃袋", "10B"),
-        (100_000_000_000, "饕餮", "100B"),
-        (1_000_000_000_000, "黑洞", "1T"),
+        (100_000_000, "tui.ui.achievements.tokens.tier1", "0.1B"),
+        (1_000_000_000, "tui.ui.achievements.tokens.tier2", "1B"),
+        (10_000_000_000, "tui.ui.achievements.tokens.tier3", "10B"),
+        (100_000_000_000, "tui.ui.achievements.tokens.tier4", "100B"),
+        (1_000_000_000_000, "tui.ui.achievements.tokens.tier5", "1T"),
     ],
 };
 const CACHE: TierSet = TierSet {
-    roast: "败家子",
+    roast: "tui.ui.achievements.cache.roast",
     tiers: [
-        (50, "省吃俭用", "50%"),
-        (80, "精打细算", "80%"),
-        (90, "持家有道", "90%"),
-        (95, "薅羊毛大师", "95%"),
-        (99, "infra 之神", "99%"),
+        (50, "tui.ui.achievements.cache.tier1", "50%"),
+        (80, "tui.ui.achievements.cache.tier2", "80%"),
+        (90, "tui.ui.achievements.cache.tier3", "90%"),
+        (95, "tui.ui.achievements.cache.tier4", "95%"),
+        (99, "tui.ui.achievements.cache.tier5", "99%"),
     ],
 };
 const MODELS: TierSet = TierSet {
-    roast: "从一而终",
+    roast: "tui.ui.achievements.models.roast",
     tiers: [
-        (10, "浅尝一口", "10"),
-        (20, "品石师", "20"),
-        (30, "赤石大王", "30"),
-        (100, "神农尝百草", "100"),
-        (200, "满汉全席", "200"),
+        (10, "tui.ui.achievements.models.tier1", "10"),
+        (20, "tui.ui.achievements.models.tier2", "20"),
+        (30, "tui.ui.achievements.models.tier3", "30"),
+        (100, "tui.ui.achievements.models.tier4", "100"),
+        (200, "tui.ui.achievements.models.tier5", "200"),
     ],
 };
 const CLIENTS: TierSet = TierSet {
-    roast: "光杆司令",
+    roast: "tui.ui.achievements.clients.roast",
     tiers: [
-        (1, "牧马人", "1"),
-        (5, "驯马师", "5"),
-        (10, "弼马温", "10"),
-        (15, "御马监", "15"),
-        (20, "齐天大圣", "20"),
+        (1, "tui.ui.achievements.clients.tier1", "1"),
+        (5, "tui.ui.achievements.clients.tier2", "5"),
+        (10, "tui.ui.achievements.clients.tier3", "10"),
+        (15, "tui.ui.achievements.clients.tier4", "15"),
+        (20, "tui.ui.achievements.clients.tier5", "20"),
     ],
 };
 
 const TITLE_WIDTH: usize = 10;
 
 pub(super) struct Achievement {
-    title: &'static str,
+    title: Cow<'static, str>,
     ladder: [&'static str; 5],
     /// Tier index 0..=4, or -1 when below the first tier.
     current: i8,
@@ -88,9 +92,9 @@ fn rank_when(set: &TierSet, reached: impl Fn(u64) -> bool) -> Achievement {
         }
     }
     let title = if current < 0 {
-        set.roast
+        rust_i18n::t!(set.roast)
     } else {
-        set.tiers[current as usize].1
+        rust_i18n::t!(set.tiers[current as usize].1)
     };
     Achievement {
         title,
@@ -118,7 +122,7 @@ pub(super) fn build(
 pub(super) fn lines(theme: &Theme, achievements: &[Achievement]) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(achievements.len() + 2);
     lines.push(Line::from(Span::styled(
-        "Achievements",
+        rust_i18n::t!("tui.ui.achievements.title"),
         Style::default()
             .fg(theme.text.primary)
             .add_modifier(Modifier::BOLD),
@@ -137,7 +141,7 @@ fn ladder_line(theme: &Theme, achievement: &Achievement) -> Line<'static> {
     let title_style = Style::default()
         .fg(theme.text.primary)
         .add_modifier(Modifier::BOLD);
-    let title_pad = TITLE_WIDTH.saturating_sub(text_width(achievement.title));
+    let title_pad = TITLE_WIDTH.saturating_sub(text_width(&achievement.title));
 
     let mut spans = vec![
         Span::styled(achievement.title.to_string(), title_style),
@@ -182,25 +186,59 @@ mod tests {
         Theme::from_name(ThemeName::Blue)
     }
 
+    fn en(key: &'static str) -> Cow<'static, str> {
+        rust_i18n::t!(key, locale = "en")
+    }
+
     #[test]
     fn rank_picks_the_highest_reached_tier_or_roast() {
-        assert_eq!(rank(&STREAK, 0).title, "三天打鱼");
+        assert_eq!(
+            rank(&STREAK, 0).title,
+            en("tui.ui.achievements.streak.roast")
+        );
         assert_eq!(rank(&STREAK, 0).current, -1);
-        assert_eq!(rank(&STREAK, 7).title, "浅尝辄止");
-        assert_eq!(rank(&STREAK, 179).title, "不眠不休");
-        assert_eq!(rank(&STREAK, 180).title, "人机合一");
-        assert_eq!(rank(&TOKENS, 12_000_000_000).title, "大胃袋");
-        assert_eq!(rank(&MODELS, 67).title, "赤石大王");
-        assert_eq!(rank(&CACHE, 91).title, "持家有道");
-        assert_eq!(rank(&CLIENTS, 15).title, "御马监");
-        assert_eq!(rank(&CLIENTS, 20).title, "齐天大圣");
+        assert_eq!(
+            rank(&STREAK, 7).title,
+            en("tui.ui.achievements.streak.tier1")
+        );
+        assert_eq!(
+            rank(&STREAK, 179).title,
+            en("tui.ui.achievements.streak.tier4")
+        );
+        assert_eq!(
+            rank(&STREAK, 180).title,
+            en("tui.ui.achievements.streak.tier5")
+        );
+        assert_eq!(
+            rank(&TOKENS, 12_000_000_000).title,
+            en("tui.ui.achievements.tokens.tier3")
+        );
+        assert_eq!(
+            rank(&MODELS, 67).title,
+            en("tui.ui.achievements.models.tier3")
+        );
+        assert_eq!(
+            rank(&CACHE, 91).title,
+            en("tui.ui.achievements.cache.tier3")
+        );
+        assert_eq!(
+            rank(&CLIENTS, 15).title,
+            en("tui.ui.achievements.clients.tier4")
+        );
+        assert_eq!(
+            rank(&CLIENTS, 20).title,
+            en("tui.ui.achievements.clients.tier5")
+        );
     }
 
     #[test]
     fn build_uses_the_authoritative_current_streak() {
         let achievements = build(30, 0, CacheRate::default(), 0, 0);
 
-        assert_eq!(achievements[0].title, "废寝忘食");
+        assert_eq!(
+            achievements[0].title,
+            en("tui.ui.achievements.streak.tier3")
+        );
         assert_eq!(achievements[0].current, 2);
     }
 
@@ -209,9 +247,15 @@ mod tests {
         let rounded_to_fifty = build(0, 0, CacheRate::from_tokens(4_996, 10_000), 0, 0);
         let still_below_fifty = build(0, 0, CacheRate::from_tokens(4_994, 10_000), 0, 0);
 
-        assert_eq!(rounded_to_fifty[2].title, "省吃俭用");
+        assert_eq!(
+            rounded_to_fifty[2].title,
+            en("tui.ui.achievements.cache.tier1")
+        );
         assert_eq!(rounded_to_fifty[2].current, 0);
-        assert_eq!(still_below_fifty[2].title, "败家子");
+        assert_eq!(
+            still_below_fifty[2].title,
+            en("tui.ui.achievements.cache.roast")
+        );
         assert_eq!(still_below_fifty[2].current, -1);
     }
 
@@ -222,14 +266,14 @@ mod tests {
         assert_eq!(
             achievements
                 .iter()
-                .map(|achievement| (achievement.title, achievement.current))
+                .map(|achievement| (achievement.title.clone(), achievement.current))
                 .collect::<Vec<_>>(),
             vec![
-                ("三天打鱼", -1),
-                ("养生局", -1),
-                ("败家子", -1),
-                ("从一而终", -1),
-                ("光杆司令", -1),
+                (en("tui.ui.achievements.streak.roast"), -1),
+                (en("tui.ui.achievements.tokens.roast"), -1),
+                (en("tui.ui.achievements.cache.roast"), -1),
+                (en("tui.ui.achievements.models.roast"), -1),
+                (en("tui.ui.achievements.clients.roast"), -1),
             ]
         );
     }

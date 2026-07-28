@@ -1,0 +1,30 @@
+tui:
+  ui:
+    period:
+      title:
+        monthly: " Monthly Usage "
+        weekly: " Weekly Usage "
+      detail:
+        title: " Period Detail: %{label} "
+        title_default: " Period Detail "
+        header:
+          workspace: "Workspace"
+          model: "Model"
+          provider: "Provider"
+          client: "Client"
+      header:
+        period: "Period"
+        days: "Days"
+        top_client: "Client*"
+        top_model: "Model*"
+        turn: "Turn"
+        msgs: "Msgs"
+        input: "Input"
+        output: "Output"
+        cache_read: "Cache R"
+        cache_write: "Cache W"
+        cache_rate: "Cache×"
+        total: "Total"
+        tokens: "Tokens"
+        cost: "Cost"
+        cost_per_million: "Cost/1M"

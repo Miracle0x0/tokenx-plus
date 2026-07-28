@@ -93,13 +93,17 @@ fn payload_from_parts(quota: QuotaResp, sub: Option<SubResp>) -> SubscriptionPay
                         // Rolling window of `hours` hours.
                         (Some(3), Some(hours)) => {
                             session_metric = Some(UsageMetric {
-                                label: format!("{hours} Hour"),
+                                label: rust_i18n::t!(
+                                    "subscription.metric.hour_window",
+                                    hours = hours
+                                )
+                                .into_owned(),
                                 ..metric
                             });
                         }
                         (Some(6), Some(1)) => {
                             weekly_metric = Some(UsageMetric {
-                                label: "Weekly".into(),
+                                label: rust_i18n::t!("subscription.metric.weekly").into_owned(),
                                 ..metric
                             });
                         }
@@ -107,9 +111,12 @@ fn payload_from_parts(quota: QuotaResp, sub: Option<SubResp>) -> SubscriptionPay
                     }
                 }
                 Some("TIME_LIMIT") => {
-                    let remaining_label = limit.remaining.map(|r| format!("{:.0} left", r));
+                    let remaining_label = limit.remaining.map(|r| {
+                        rust_i18n::t!("subscription.metric.left", value = format!("{r:.0}"))
+                            .into_owned()
+                    });
                     search_metric = Some(UsageMetric {
-                        label: "Web Search".into(),
+                        label: rust_i18n::t!("subscription.metric.web_search").into_owned(),
                         used_percent: pct,
                         remaining_percent: 100.0 - pct,
                         remaining_label,
@@ -153,7 +160,10 @@ async fn fetch_quota(client: &reqwest::Client, key: &str) -> Result<QuotaResp> {
         .send()
         .await?;
     if !resp.status().is_success() {
-        anyhow::bail!("Z.ai quota request failed (HTTP {})", resp.status());
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.zai_quota_failed",
+            status = resp.status().as_str()
+        ));
     }
     Ok(resp.json().await?)
 }
@@ -166,17 +176,17 @@ async fn fetch_sub(client: &reqwest::Client, key: &str) -> Result<SubResp> {
         .send()
         .await?;
     if !resp.status().is_success() {
-        anyhow::bail!("Z.ai subscription request failed (HTTP {})", resp.status());
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.zai_subscription_failed",
+            status = resp.status().as_str()
+        ));
     }
     Ok(resp.json().await?)
 }
 
 pub async fn fetch(client: &reqwest::Client) -> Result<SubscriptionPayload> {
-    let api_key = super::helpers::read_env(API_KEY_ENV).ok_or_else(|| {
-        anyhow::anyhow!(
-            "No Z.ai coding plan API key set. Configure TOKENX_USAGE_ZAI_CODING_PLAN_API_KEY."
-        )
-    })?;
+    let api_key = super::helpers::read_env(API_KEY_ENV)
+        .ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.zai_no_api_key")))?;
 
     let quota = fetch_quota(client, &api_key).await?;
     let sub = fetch_sub(client, &api_key).await.ok();

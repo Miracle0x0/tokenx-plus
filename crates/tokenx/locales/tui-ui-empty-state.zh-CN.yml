@@ -1,0 +1,16 @@
+tui:
+  ui:
+    empty_state:
+      headline:
+        usage: "当前视图没有用量数据"
+        agent_breakdown: "当前视图没有代理分布数据"
+        sessions: "当前视图没有会话"
+      date_range: "当前日期范围"
+      hint:
+        change_clients: "[s] 切换客户端"
+        rescan: "[r] 重新扫描"
+      scope:
+        all_clients: "全部客户端"
+        selected_clients: "已选择 %{count} 个客户端"
+        full: "范围：%{summary} · %{range}"
+        short: "范围：%{summary}"

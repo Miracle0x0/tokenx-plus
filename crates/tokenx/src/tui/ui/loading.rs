@@ -1,11 +1,9 @@
+use std::borrow::Cow;
+
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 
 use crate::tui::model::TuiModel;
-
-/// Canonical message stem for the cold-start acquisition state.
-pub(super) const SCANNING_LOCAL_DATA: &str = "Scanning local data";
-pub(super) const FETCHING_SUBSCRIPTION_DATA: &str = "Fetching subscription data";
 
 /// Braille spinner frames shared by every content-area loading state
 /// (cold-start scan, subscription fetch, ...).
@@ -73,7 +71,7 @@ const POND_WIDTH: u16 = 23;
 
 /// Centered "spinner + message" loading state with the fish-pond animation
 /// above it; cramped areas degrade to the spinner line, then the glyph alone.
-pub(super) fn render(frame: &mut Frame, app: &TuiModel, area: Rect, message: &str) {
+pub(super) fn render(frame: &mut Frame, app: &TuiModel, area: Rect, message: Cow<'static, str>) {
     if area.is_empty() {
         return;
     }
@@ -102,12 +100,13 @@ pub(super) fn render(frame: &mut Frame, app: &TuiModel, area: Rect, message: &st
                 Constraint::Percentage(40),
             ])
             .split(area)[1];
-        let paragraph = Paragraph::new(spinner_line(app, message)).alignment(Alignment::Center);
+        let paragraph =
+            Paragraph::new(spinner_line(app, message.as_ref())).alignment(Alignment::Center);
         frame.render_widget(paragraph, center);
         return;
     }
 
-    let spinner = spinner_line(app, message);
+    let spinner = spinner_line(app, message.as_ref());
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(9);
     let pond_frame = POND_FRAMES[POND_TIMELINE[app.spinner_frame % POND_TIMELINE.len()]];
     for row in pond_frame {
@@ -169,4 +168,30 @@ fn pond_line(app: &TuiModel, row: &str) -> Line<'static> {
         })
         .collect::<Vec<_>>();
     Line::from(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn loading_messages_are_localized() {
+        assert_eq!(
+            rust_i18n::t!("tui.ui.loading.scanning_local_data", locale = "en"),
+            "Scanning local data"
+        );
+        assert_eq!(
+            rust_i18n::t!("tui.ui.loading.scanning_local_data", locale = "zh-CN"),
+            "正在扫描本地数据"
+        );
+        assert_eq!(
+            rust_i18n::t!("tui.ui.loading.fetching_subscription_data", locale = "en"),
+            "Fetching subscription data"
+        );
+        assert_eq!(
+            rust_i18n::t!(
+                "tui.ui.loading.fetching_subscription_data",
+                locale = "zh-CN"
+            ),
+            "正在获取订阅数据"
+        );
+    }
 }

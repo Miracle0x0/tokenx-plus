@@ -52,18 +52,27 @@ fn read_credentials() -> Result<Credentials> {
     let path = credentials_path();
     if let Some(path) = path.as_ref().filter(|path| path.exists()) {
         let content = std::fs::read_to_string(path).with_context(|| {
-            format!("Failed to read Claude credentials from {}", path.display())
+            rust_i18n::t!(
+                "subscription.error.claude_read_credentials",
+                path = path.display()
+            )
+            .into_owned()
         })?;
         return serde_json::from_str::<Credentials>(&content).with_context(|| {
-            format!("Failed to parse Claude credentials from {}", path.display())
+            rust_i18n::t!(
+                "subscription.error.claude_parse_credentials",
+                path = path.display()
+            )
+            .into_owned()
         });
     }
     match read_keychain() {
         Ok(content) => Ok(serde_json::from_str(&content)?),
-        Err(error) if path.is_none() => anyhow::bail!(
-            "No Claude credentials found: the home directory is unavailable and the keychain lookup failed: {error}"
-        ),
-        Err(error) => Err(error).context("No Claude credentials found in the current provider locations"),
+        Err(error) if path.is_none() => anyhow::bail!(rust_i18n::t!(
+            "subscription.error.claude_no_home_or_keychain",
+            error = error.to_string()
+        )),
+        Err(error) => Err(error).context(rust_i18n::t!("subscription.error.claude_no_credentials")),
     }
 }
 
@@ -78,12 +87,13 @@ async fn fetch_usage(client: &reqwest::Client, token: &str) -> Result<UsageRespo
         .await?;
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        anyhow::bail!(
-            "Claude credentials were rejected. Run `claude` to refresh the provider-owned authentication."
-        );
+        anyhow::bail!(rust_i18n::t!("subscription.error.claude_rejected"));
     }
     if !status.is_success() {
-        anyhow::bail!("Claude usage request failed (HTTP {status})");
+        anyhow::bail!(rust_i18n::t!(
+            "subscription.error.claude_request_failed",
+            status = status.as_str()
+        ));
     }
     Ok(resp.json().await?)
 }
@@ -103,11 +113,10 @@ pub async fn fetch(client: &reqwest::Client) -> Result<SubscriptionPayload> {
     let creds = read_credentials()?;
     let oauth = creds
         .claude_ai_oauth
-        .ok_or_else(|| anyhow::anyhow!("No Claude OAuth credentials. Run 'claude' to log in."))?;
-    let access_token = oauth
-        .access_token
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("No Claude access token."))?;
+        .ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.claude_no_oauth")))?;
+    let access_token = oauth.access_token.clone().ok_or_else(|| {
+        anyhow::anyhow!(rust_i18n::t!("subscription.error.claude_no_access_token"))
+    })?;
     let plan = oauth.subscription_type.as_ref().map(|s| {
         let tier = oauth
             .rate_limit_tier
@@ -123,13 +132,22 @@ pub async fn fetch(client: &reqwest::Client) -> Result<SubscriptionPayload> {
 
     let mut metrics = Vec::new();
     if let Some(ref w) = resp.five_hour {
-        metrics.push(window_metric("Session", w));
+        metrics.push(window_metric(
+            rust_i18n::t!("subscription.metric.session").as_ref(),
+            w,
+        ));
     }
     if let Some(ref w) = resp.seven_day {
-        metrics.push(window_metric("Weekly", w));
+        metrics.push(window_metric(
+            rust_i18n::t!("subscription.metric.weekly").as_ref(),
+            w,
+        ));
     }
     if let Some(ref w) = resp.seven_day_opus {
-        metrics.push(window_metric("Opus", w));
+        metrics.push(window_metric(
+            rust_i18n::t!("subscription.metric.opus").as_ref(),
+            w,
+        ));
     }
 
     Ok(SubscriptionPayload {

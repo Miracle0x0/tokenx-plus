@@ -195,7 +195,10 @@ impl SubscriptionState {
             Ok(None) => (Vec::new(), Vec::new()),
             Err(error) => (
                 Vec::new(),
-                vec![SubscriptionError::global("Subscription cache", error)],
+                vec![SubscriptionError::global(
+                    rust_i18n::t!("subscription.provider.cache"),
+                    error,
+                )],
             ),
         };
         Self {
@@ -356,15 +359,17 @@ impl SubscriptionState {
     }
 
     pub(crate) fn record_cache_failure(&mut self, error: impl std::fmt::Display) {
-        self.errors
-            .push(SubscriptionError::global("Subscription cache", error));
+        self.errors.push(SubscriptionError::global(
+            rust_i18n::t!("subscription.provider.cache"),
+            error,
+        ));
     }
 
     pub(crate) fn install_disconnected(&mut self) {
         self.last_checked = Some(Instant::now());
         self.errors = vec![SubscriptionError::global(
-            "unknown",
-            "subscription fetch worker disconnected",
+            rust_i18n::t!("subscription.provider.unknown"),
+            rust_i18n::t!("subscription.error.worker_disconnected"),
         )];
     }
 
@@ -419,7 +424,7 @@ impl UsageAccount {
     pub(crate) fn short_id(&self) -> String {
         let id = self.id.trim();
         if id.is_empty() {
-            return "unknown".to_string();
+            return rust_i18n::t!("subscription.provider.unknown").into_owned();
         }
         if id.chars().count() <= 12 {
             return id.to_string();
@@ -437,9 +442,9 @@ impl UsageAccount {
     }
 
     pub(crate) fn display_name(&self) -> String {
-        self.label_name()
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("Account {}", self.short_id()))
+        self.label_name().map(str::to_string).unwrap_or_else(|| {
+            rust_i18n::t!("subscription.display.account", id = self.short_id()).into_owned()
+        })
     }
 }
 
@@ -481,7 +486,7 @@ impl SubscriptionOutput {
             None => self.provider.label().to_string(),
         };
         if self.stale {
-            format!("{display_name} (stale)")
+            rust_i18n::t!("subscription.display.stale", name = display_name).into_owned()
         } else {
             display_name
         }

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -13,16 +14,19 @@ pub struct DiagnosticPath {
 pub struct ClientDiagnostic {
     pub code: &'static str,
     pub severity: &'static str,
-    pub message: &'static str,
-    pub help: &'static str,
+    pub message: Cow<'static, str>,
+    pub help: Cow<'static, str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<DiagnosticPath>,
 }
 
-const CLAUDE_DESKTOP_MESSAGE: &str =
-    "Claude Desktop app data was detected, but Tokenx counts Claude Code JSONL transcripts only.";
+fn claude_desktop_message() -> Cow<'static, str> {
+    rust_i18n::t!("claude_diagnostics.desktop.message")
+}
 
-const CLAUDE_DESKTOP_HELP: &str = "Claude Desktop chat storage and Claude data exports do not expose a documented per-message token ledger. The TUI Subscription tab shows Claude subscription quota bars; organization/API billing requires Anthropic Admin Usage/Cost API outside local scanning.";
+fn claude_desktop_help() -> Cow<'static, str> {
+    rust_i18n::t!("claude_diagnostics.desktop.help")
+}
 
 pub fn diagnostics_for_empty_explicit_models(
     home_dir: &Path,
@@ -48,8 +52,8 @@ fn claude_diagnostics(home_dir: &Path) -> Vec<ClientDiagnostic> {
         diagnostics.push(ClientDiagnostic {
             code: "claude_desktop_not_scanned",
             severity: "warning",
-            message: CLAUDE_DESKTOP_MESSAGE,
-            help: CLAUDE_DESKTOP_HELP,
+            message: claude_desktop_message(),
+            help: claude_desktop_help(),
             paths: diagnostic_paths(home_dir, desktop_paths),
         });
     }

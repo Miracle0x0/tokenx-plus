@@ -17,12 +17,15 @@ pub(crate) async fn run_pricing_lookup(
     let spinner = if no_spinner {
         None
     } else {
-        let provider_label = pricing_source
-            .map(|value| format!(" from {}", value))
-            .unwrap_or_default();
+        let message = match pricing_source {
+            Some(source) => {
+                rust_i18n::t!("commands.pricing.fetching_from", source = source).into_owned()
+            }
+            None => rust_i18n::t!("commands.pricing.fetching").into_owned(),
+        };
         let pb = ProgressBar::new_spinner();
         pb.set_style(ProgressStyle::default_spinner());
-        pb.set_message(format!("Fetching pricing data{}...", provider_label));
+        pb.set_message(message);
         pb.enable_steady_tick(std::time::Duration::from_millis(100));
         Some(pb)
     };
@@ -89,37 +92,70 @@ pub(crate) async fn run_pricing_lookup(
                 println!("{}", serde_json::to_string_pretty(&output)?);
             }
             None => {
-                return Err(anyhow::anyhow!("Model not found: {model_id}"));
+                return Err(anyhow::anyhow!(rust_i18n::t!(
+                    "commands.pricing.model_not_found",
+                    model_id = model_id
+                )));
             }
         }
     } else {
         match result {
             Some(pricing) => {
-                println!("\n  Pricing for: {}", model_id.bold());
-                println!("  Matched key: {}", pricing.matched_key);
+                println!(
+                    "\n  {}",
+                    rust_i18n::t!("commands.pricing.lookup_for", model_id = model_id.bold())
+                );
+                println!(
+                    "  {}",
+                    rust_i18n::t!("commands.pricing.matched_key", key = pricing.matched_key)
+                );
                 let pricing_source_label = match pricing.pricing_source.to_lowercase().as_str() {
-                    "custom" => "Custom",
-                    "litellm" => "LiteLLM",
-                    "openrouter" => "OpenRouter",
-                    "models.dev" => "Models.dev",
-                    _ => pricing.pricing_source.as_str(),
+                    "custom" => rust_i18n::t!("commands.pricing.source_custom").into_owned(),
+                    "litellm" => "LiteLLM".to_string(),
+                    "openrouter" => "OpenRouter".to_string(),
+                    "models.dev" => "Models.dev".to_string(),
+                    _ => pricing.pricing_source.clone(),
                 };
-                println!("  Pricing Source: {}", pricing_source_label);
+                println!(
+                    "  {}",
+                    rust_i18n::t!(
+                        "commands.pricing.source_label",
+                        source = pricing_source_label
+                    )
+                );
                 println!();
                 let input = pricing.pricing.input_cost_per_token.unwrap_or(0.0);
                 let output = pricing.pricing.output_cost_per_token.unwrap_or(0.0);
-                println!("  Input:  ${:.2} / 1M tokens", input * 1_000_000.0);
-                println!("  Output: ${:.2} / 1M tokens", output * 1_000_000.0);
+                println!(
+                    "  {}",
+                    rust_i18n::t!(
+                        "commands.pricing.rate_input",
+                        price = format!("${:.2}", input * 1_000_000.0)
+                    )
+                );
+                println!(
+                    "  {}",
+                    rust_i18n::t!(
+                        "commands.pricing.rate_output",
+                        price = format!("${:.2}", output * 1_000_000.0)
+                    )
+                );
                 if let Some(cache_read) = pricing.pricing.cache_read_input_token_cost {
                     println!(
-                        "  Cache Read:  ${:.2} / 1M tokens",
-                        cache_read * 1_000_000.0
+                        "  {}",
+                        rust_i18n::t!(
+                            "commands.pricing.rate_cache_read",
+                            price = format!("${:.2}", cache_read * 1_000_000.0)
+                        )
                     );
                 }
                 if let Some(cache_write) = pricing.pricing.cache_creation_input_token_cost {
                     println!(
-                        "  Cache Write: ${:.2} / 1M tokens",
-                        cache_write * 1_000_000.0
+                        "  {}",
+                        rust_i18n::t!(
+                            "commands.pricing.rate_cache_write",
+                            price = format!("${:.2}", cache_write * 1_000_000.0)
+                        )
                     );
                 }
                 println!();
@@ -127,7 +163,9 @@ pub(crate) async fn run_pricing_lookup(
             None => {
                 return Err(anyhow::anyhow!(
                     "{}",
-                    format!("Model not found: {model_id}").red()
+                    rust_i18n::t!("commands.pricing.model_not_found", model_id = model_id)
+                        .into_owned()
+                        .red()
                 ));
             }
         }
@@ -206,31 +244,65 @@ pub(crate) fn run_pricing_list_overrides(
 
     if entries.is_empty() {
         println!(
-            "\n  {}\n  Tried: {}\n",
-            "No custom pricing overrides loaded".yellow(),
-            path.display()
+            "\n  {}\n  {}\n",
+            rust_i18n::t!("commands.pricing.no_overrides")
+                .into_owned()
+                .yellow(),
+            rust_i18n::t!("commands.pricing.tried_path", path = path.display())
         );
         return Ok(());
     }
 
-    println!("\n  {}", "Custom pricing overrides".bold());
-    println!("  Path: {}", path.display());
-    println!("  Read into an immutable snapshot for each Tokenx command.");
+    println!(
+        "\n  {}",
+        rust_i18n::t!("commands.pricing.overrides_title")
+            .into_owned()
+            .bold()
+    );
+    println!(
+        "  {}",
+        rust_i18n::t!("commands.pricing.overrides_path", path = path.display())
+    );
+    println!("  {}", rust_i18n::t!("commands.pricing.overrides_note"));
     println!();
 
     for entry in entries {
         println!("  {}", entry.model_id.bold());
         if let Some(input) = entry.input_cost_per_million_tokens {
-            println!("    Input:  ${:.2} / 1M tokens", input);
+            println!(
+                "    {}",
+                rust_i18n::t!(
+                    "commands.pricing.rate_input",
+                    price = format!("${:.2}", input)
+                )
+            );
         }
         if let Some(output) = entry.output_cost_per_million_tokens {
-            println!("    Output: ${:.2} / 1M tokens", output);
+            println!(
+                "    {}",
+                rust_i18n::t!(
+                    "commands.pricing.rate_output",
+                    price = format!("${:.2}", output)
+                )
+            );
         }
         if let Some(cache_read) = entry.cache_read_input_token_cost_per_million_tokens {
-            println!("    Cache Read:  ${:.2} / 1M tokens", cache_read);
+            println!(
+                "    {}",
+                rust_i18n::t!(
+                    "commands.pricing.rate_cache_read",
+                    price = format!("${:.2}", cache_read)
+                )
+            );
         }
         if let Some(cache_write) = entry.cache_creation_input_token_cost_per_million_tokens {
-            println!("    Cache Write: ${:.2} / 1M tokens", cache_write);
+            println!(
+                "    {}",
+                rust_i18n::t!(
+                    "commands.pricing.rate_cache_write",
+                    price = format!("${:.2}", cache_write)
+                )
+            );
         }
     }
     println!();

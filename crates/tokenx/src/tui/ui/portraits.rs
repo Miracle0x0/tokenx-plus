@@ -1,6 +1,8 @@
 //! Kaomoji portraits for the Overview snapshot's favorite model family:
 //! one original artwork per family, painted in the family's brand color.
 
+use std::borrow::Cow;
+
 use ratatui::prelude::*;
 use unicode_width::UnicodeWidthStr;
 
@@ -25,19 +27,25 @@ pub(super) fn display_name(family: ModelFamily) -> &'static str {
 }
 
 pub(super) fn slogan(family: ModelFamily) -> &'static str {
-    match family {
-        ModelFamily::Gpt => "最后还得找我~",
-        ModelFamily::Claude => "You are absolutely right!",
-        ModelFamily::Gemini => "你真是太棒了",
-        ModelFamily::Xai => "最大限度求真",
-        ModelFamily::Mimo => "我流口水",
-        ModelFamily::Minimax => "我不爱刷榜",
-        ModelFamily::Qwen => "我这次是真学会了",
-        ModelFamily::Kimi => "我不是区",
-        ModelFamily::Glm => "蒸馏之神,不解释",
-        ModelFamily::Deepseek => "杂鱼 杂鱼",
-        ModelFamily::Mistral => "风往哪吹？",
-        ModelFamily::Unknown => "……",
+    let key = match family {
+        ModelFamily::Gpt => "tui.ui.portraits.slogan.gpt",
+        ModelFamily::Claude => "tui.ui.portraits.slogan.claude",
+        ModelFamily::Gemini => "tui.ui.portraits.slogan.gemini",
+        ModelFamily::Xai => "tui.ui.portraits.slogan.xai",
+        ModelFamily::Mimo => "tui.ui.portraits.slogan.mimo",
+        ModelFamily::Minimax => "tui.ui.portraits.slogan.minimax",
+        ModelFamily::Qwen => "tui.ui.portraits.slogan.qwen",
+        ModelFamily::Kimi => "tui.ui.portraits.slogan.kimi",
+        ModelFamily::Glm => "tui.ui.portraits.slogan.glm",
+        ModelFamily::Deepseek => "tui.ui.portraits.slogan.deepseek",
+        ModelFamily::Mistral => "tui.ui.portraits.slogan.mistral",
+        ModelFamily::Unknown => "tui.ui.portraits.slogan.unknown",
+    };
+    // Configured translations are borrowed straight from the static backend;
+    // the owned arm only fires when a key is missing from every locale.
+    match rust_i18n::t!(key) {
+        Cow::Borrowed(text) => text,
+        Cow::Owned(text) => Box::leak(text.into_boxed_str()),
     }
 }
 

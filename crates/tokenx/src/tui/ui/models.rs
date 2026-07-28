@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, Table};
 
@@ -22,7 +24,7 @@ use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
 use tokenx_engine::GroupBy;
 
-fn workspace_label(model: &crate::tui::data::UsageModelEntry) -> &str {
+fn workspace_label(model: &crate::tui::data::UsageModelEntry) -> Cow<'_, str> {
     workspace_label_or_unknown(
         model
             .workspace_label
@@ -51,7 +53,7 @@ fn workspace_content_width<'a>(
     models: impl Iterator<Item = &'a crate::tui::data::UsageModelEntry>,
 ) -> u16 {
     models
-        .map(|model| display_width(workspace_label(model)))
+        .map(|model| display_width(workspace_label(model).as_ref()))
         .max()
         .unwrap_or(WORKSPACE_MIN_WIDTH)
 }
@@ -88,24 +90,30 @@ fn model_column_header(
     column: ModelsColumn,
     group_by: &GroupBy,
     density: ModelsTableDensity,
-) -> &'static str {
+) -> std::borrow::Cow<'static, str> {
     match column {
-        ModelsColumn::Workspace => "Workspace",
-        ModelsColumn::Model => "Model",
-        ModelsColumn::Messages => "Msgs",
-        ModelsColumn::Provider => "Provider",
-        ModelsColumn::Client => "Client",
-        ModelsColumn::Input => "Input",
-        ModelsColumn::Output => "Output",
-        ModelsColumn::CacheRead if *group_by == GroupBy::WorkspaceModel => "Cache Read",
-        ModelsColumn::CacheRead => "Cache R",
-        ModelsColumn::CacheWrite if *group_by == GroupBy::WorkspaceModel => "Cache Write",
-        ModelsColumn::CacheWrite => "Cache W",
-        ModelsColumn::CacheRate => "Cache×",
-        ModelsColumn::Total if density == ModelsTableDensity::Full => "Total",
-        ModelsColumn::Total => "Tokens",
-        ModelsColumn::Cost => "Cost",
-        ModelsColumn::CostPerMillion => "Cost/1M",
+        ModelsColumn::Workspace => rust_i18n::t!("tui.ui.models.header.workspace"),
+        ModelsColumn::Model => rust_i18n::t!("tui.ui.models.header.model"),
+        ModelsColumn::Messages => rust_i18n::t!("tui.ui.models.header.messages"),
+        ModelsColumn::Provider => rust_i18n::t!("tui.ui.models.header.provider"),
+        ModelsColumn::Client => rust_i18n::t!("tui.ui.models.header.client"),
+        ModelsColumn::Input => rust_i18n::t!("tui.ui.models.header.input"),
+        ModelsColumn::Output => rust_i18n::t!("tui.ui.models.header.output"),
+        ModelsColumn::CacheRead if *group_by == GroupBy::WorkspaceModel => {
+            rust_i18n::t!("tui.ui.models.header.cache_read_full")
+        }
+        ModelsColumn::CacheRead => rust_i18n::t!("tui.ui.models.header.cache_read_short"),
+        ModelsColumn::CacheWrite if *group_by == GroupBy::WorkspaceModel => {
+            rust_i18n::t!("tui.ui.models.header.cache_write_full")
+        }
+        ModelsColumn::CacheWrite => rust_i18n::t!("tui.ui.models.header.cache_write_short"),
+        ModelsColumn::CacheRate => rust_i18n::t!("tui.ui.models.header.cache_rate"),
+        ModelsColumn::Total if density == ModelsTableDensity::Full => {
+            rust_i18n::t!("tui.ui.models.header.total_full")
+        }
+        ModelsColumn::Total => rust_i18n::t!("tui.ui.models.header.total_short"),
+        ModelsColumn::Cost => rust_i18n::t!("tui.ui.models.header.cost"),
+        ModelsColumn::CostPerMillion => rust_i18n::t!("tui.ui.models.header.cost_per_million"),
     }
 }
 
@@ -128,14 +136,19 @@ pub fn render(
 ) {
     let title = match &app.selected_model_detail {
         Some(selection) => match selection.client {
-            Some(client) => format!(
-                " Model Details · {} · {} ",
-                get_client_display_name(client),
-                selection.model
-            ),
-            None => format!(" Model Details · {} ", selection.model),
+            Some(client) => rust_i18n::t!(
+                "tui.ui.models.title.client_model_detail",
+                client = get_client_display_name(client),
+                model = selection.model.as_str()
+            )
+            .into_owned(),
+            None => rust_i18n::t!(
+                "tui.ui.models.title.model_detail",
+                model = selection.model.as_str()
+            )
+            .into_owned(),
         },
-        None => " Models ".to_string(),
+        None => rust_i18n::t!("tui.ui.models.title.models").to_string(),
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -267,7 +280,7 @@ pub fn render(
             let cell_for_column = |column: ModelsColumn| -> Cell {
                 match column {
                     ModelsColumn::Workspace => Cell::from(truncate_display_width(
-                        workspace_label(model),
+                        workspace_label(model).as_ref(),
                         table_layout.width_for(ModelsColumn::Workspace),
                     ))
                     .style(Style::default().fg(theme_secondary)),
@@ -375,6 +388,31 @@ mod tests {
             Constraint::Length(width) => width,
             other => panic!("expected Length at index {index}, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn model_headers_and_titles_translate_to_zh_cn() {
+        assert_eq!(
+            rust_i18n::t!("tui.ui.models.header.workspace", locale = "zh-CN"),
+            "工作区"
+        );
+        assert_eq!(
+            rust_i18n::t!("tui.ui.models.header.cost_per_million", locale = "zh-CN"),
+            "费用/1M"
+        );
+        assert_eq!(
+            rust_i18n::t!(
+                "tui.ui.models.title.client_model_detail",
+                locale = "zh-CN",
+                client = "Claude",
+                model = "shared-model"
+            ),
+            " 模型详情 · Claude · shared-model "
+        );
+        assert_eq!(
+            rust_i18n::t!("tui.ui.models.title.models", locale = "en"),
+            " Models "
+        );
     }
 
     fn model_layout(table_width: u16, model: u16, provider: u16, client: u16) -> ModelsTableLayout {

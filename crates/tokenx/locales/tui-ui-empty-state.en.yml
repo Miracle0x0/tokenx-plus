@@ -1,0 +1,16 @@
+tui:
+  ui:
+    empty_state:
+      headline:
+        usage: "No usage in the current view"
+        agent_breakdown: "No agent breakdown in the current view"
+        sessions: "No sessions in the current view"
+      date_range: "Current date range"
+      hint:
+        change_clients: "[s] Change clients"
+        rescan: "[r] Rescan"
+      scope:
+        all_clients: "All clients"
+        selected_clients: "%{count} selected clients"
+        full: "Scope: %{summary} · %{range}"
+        short: "Scope: %{summary}"
