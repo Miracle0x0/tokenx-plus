@@ -1,0 +1,45 @@
+cache:
+  failure:
+    read: "read failure"
+    decode: "decode failure"
+    clock: "clock failure"
+  error:
+    read: "failed to read generation cache `%{path}`: %{error}"
+    inspect: "failed to inspect generation cache `%{path}`: %{error}"
+    not_regular_file: "failed to read generation cache `%{path}`: cache path is not a regular file"
+    invalid: "generation cache `%{path}` is invalid: %{error}"
+    clock_check: "generation cache clock check failed: %{error}"
+    future_timestamp: "generation cache `%{path}` was saved at timestamp %{saved_at_ms}, later than current timestamp %{now}"
+    retry_health_without_metadata: "generation cache `%{path}` has retryable input health without retry metadata"
+    persist: "failed to persist generation cache `%{path}`"
+
+main:
+  error:
+    runtime_init: "Error: failed to initialize async runtime: %{error}"
+    prefix_invalid: "error"
+    prefix_operational: "Error"
+
+paths:
+  error:
+    home_unavailable: "could not determine the Tokenx product directory because the user home is unavailable"
+    relative_product_root: "resolved Tokenx product root `%{path}` must be absolute"
+    relative_override: "%{variable} path `%{path}` must be absolute"
+
+settings:
+  error:
+    read: "failed to read settings file `%{path}`: %{source}"
+    parse: "failed to parse settings JSON `%{path}`: %{source}"
+    invalid: "invalid settings in `%{path}`: %{source}"
+    create_dir: "failed to create settings directory `%{path}`"
+    auto_refresh_range: "invalid autoRefreshMs %{value}; expected %{min}..=%{max}"
+    invalid_scanner: "invalid scanner settings: %{source}"
+    duplicate_subscription_provider: "duplicate subscription provider `%{provider}` in subscription.providers"
+
+shared:
+  client:
+    invalid_id: "invalid client id `%{raw}`; use one of: %{valid_ids}"
+
+theme:
+  error:
+    invalid_theme: "invalid theme `%{name}`; expected one of: %{valid}"
+    unknown_theme: "unknown theme `%{name}`; expected one of: %{valid}"

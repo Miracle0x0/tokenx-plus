@@ -1,5 +1,0 @@
-cli:
-  error:
-    tui_requires_terminal: "TUI requires an interactive terminal\nhint: use `tokenx models --json` for structured output"
-    tui_tab_disabled: "TUI tab `subscription` is disabled in settings.json"
-    reversed_date_range: "--since (%{since}) must not be later than --until (%{until})"

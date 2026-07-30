@@ -16,6 +16,7 @@ tui:
       activity:
         scanning: "正在扫描"
         fetching: "正在获取"
+        elapsed: "%{secs}秒"
       cold_failed:
         scan_failed: "扫描失败"
         retry: "[r] 重试"
@@ -56,14 +57,14 @@ tui:
         enter_details: "[enter:详情]"
         back: "[esc:返回]"
         clients: "[s:客户端]"
-        auto_refresh_on: "[R:本地自动 %{secs} 秒]"
-        auto_refresh_off: "[R:本地自动关闭]"
+        auto_refresh_on: "[R:自动刷新 %{secs} 秒]"
+        auto_refresh_off: "[R:关闭自动刷新]"
         rescan: "[r:重新扫描]"
       toggle:
         hourly: "小时"
         daily: "天"
         view: "视图"
-        profile: "分布"
+        profile: "概览"
         table: "表格"
       status:
         refreshing: "正在后台刷新缓存数据..."
@@ -79,3 +80,7 @@ tui:
         cached_no_providers: "正在显示缓存的订阅数据；未启用远程提供商"
         no_providers: "未启用远程订阅提供商；请配置 subscription.providers"
         press_u: "按 u 刷新订阅数据"
+    loading:
+      scanning_local_data: "正在扫描本地数据"
+      fetching_subscription_data: "正在获取订阅数据"
+      load_failed_title: "无法加载本地数据"

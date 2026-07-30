@@ -1,6 +1,6 @@
 cli:
   about:
-    root: "AI token 用量分析"
+    root: "AI 令牌用量分析"
     tui: "启动交互式终端界面"
     models: "查看模型用量"
     pricing: "查询模型定价"
@@ -80,8 +80,16 @@ cli:
     invalid_year: "无效年份 `%{raw}`；应为 YYYY"
     invalid_refresh: "无效刷新间隔 `%{raw}`"
     refresh_not_positive: "--refresh 必须大于零"
+    tui_requires_terminal: "TUI 需要交互式终端\n提示：使用 `tokenx models --json` 获取结构化输出"
+    tui_tab_disabled: "TUI 标签页 `subscription` 已在 settings.json 中禁用"
+    reversed_date_range: "--since（%{since}）不能晚于 --until（%{until}）"
   date_label:
     today: "今天"
     last_7_days: "最近 7 天"
     from: "自 %{since}"
     to: "至 %{until}"
+
+claude_diagnostics:
+  desktop:
+    message: "检测到 Claude Desktop 应用数据，但 Tokenx 只统计 Claude Code 的 JSONL 会话记录。"
+    help: "Claude Desktop 的聊天存储和 Claude 数据导出均未提供有文档说明的逐条消息令牌账本。TUI 的 Subscription 标签页会显示 Claude 订阅额度条；组织/API 账单需要使用 Anthropic Admin Usage/Cost API，不在本地扫描范围内。"

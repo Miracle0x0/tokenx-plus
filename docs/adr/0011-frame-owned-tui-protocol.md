@@ -69,7 +69,7 @@ page state when the dialog closes.
 
 `TuiModel` owns durable TUI product and shell state: installed-generation
 projection state, sort choices, detail selections, refresh requests, theme,
-settings snapshots, status, and subscription lifecycle.
+language, settings snapshots, status, and subscription lifecycle.
 
 `PageStates` owns modes and interaction state meaningful only to a particular
 page, including profile text viewports and Sessions selection. Generic table

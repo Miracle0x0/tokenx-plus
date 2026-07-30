@@ -7,7 +7,7 @@ mod minimax_tokenplan;
 mod zai;
 
 pub(super) use super::model::SubscriptionPayload;
-pub(super) use super::{UsageAccount, UsageMetric};
+pub(super) use super::{SubscriptionIssue, SubscriptionIssueCode, UsageAccount, UsageMetric};
 
 use anyhow::Result;
 

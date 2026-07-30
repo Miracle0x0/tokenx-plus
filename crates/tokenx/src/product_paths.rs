@@ -29,30 +29,21 @@ pub(crate) enum ProductPathsError {
 impl std::fmt::Display for ProductPathsError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::HomeUnavailable => {
-                write!(
-                    formatter,
-                    "{}",
-                    rust_i18n::t!("paths.error.home_unavailable")
-                )
-            }
+            Self::HomeUnavailable => formatter.write_str(
+                "could not determine the Tokenx product directory because the user home is unavailable",
+            ),
             Self::RelativeProductRoot { path } => write!(
                 formatter,
-                "{}",
-                rust_i18n::t!(
-                    "paths.error.relative_product_root",
-                    path = path.display().to_string()
-                )
+                "resolved Tokenx product root `{}` must be absolute",
+                path.display()
             ),
-            Self::RelativeOverride { variable, path } => write!(
-                formatter,
-                "{}",
-                rust_i18n::t!(
-                    "paths.error.relative_override",
-                    variable = *variable,
-                    path = path.display().to_string()
+            Self::RelativeOverride { variable, path } => {
+                write!(
+                    formatter,
+                    "{variable} path `{}` must be absolute",
+                    path.display()
                 )
-            ),
+            }
         }
     }
 }

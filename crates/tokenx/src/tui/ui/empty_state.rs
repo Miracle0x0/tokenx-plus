@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
-use unicode_width::UnicodeWidthStr;
 
+use crate::terminal_text::width as text_width;
 use crate::tui::actions::{Action, ActionSet};
 use crate::tui::model::TuiModel;
 use crate::tui::presentation::EmptySubject;
@@ -115,7 +115,7 @@ fn scope_text(app: &TuiModel, width: usize) -> String {
         summary = summary.as_str(),
         range = date_range.as_ref()
     );
-    if UnicodeWidthStr::width(full.as_ref()) <= width {
+    if text_width(full.as_ref()) <= width {
         return full.into_owned();
     }
 
@@ -177,7 +177,6 @@ mod tests {
 
     use ratatui::{backend::TestBackend, Terminal};
     use tokenx_engine::{ClientId, FrozenUsageIndex};
-    use unicode_width::UnicodeWidthStr;
 
     use super::*;
     use crate::tui::model::TuiConfig;
@@ -269,7 +268,7 @@ mod tests {
         let fitted = truncate_display_width("模型客户端名称非常长 · Current date range", 11);
 
         assert_eq!(fitted, "模型客户...");
-        assert!(UnicodeWidthStr::width(fitted.as_str()) <= 11);
+        assert!(text_width(fitted.as_str()) <= 11);
     }
 
     #[test]

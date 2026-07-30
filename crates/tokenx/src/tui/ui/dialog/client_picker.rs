@@ -10,6 +10,7 @@ use ratatui::{
 };
 use tokenx_engine::ClientId;
 
+use crate::terminal_text::width;
 use crate::tui::interaction::{InteractionOutcome, ListInteraction};
 use crate::tui::themes::Theme;
 
@@ -254,7 +255,7 @@ impl DialogContent for ClientPickerDialog {
 
             let usable = list_area.width.saturating_sub(4) as usize;
             let left = format!("{} {}", checkbox, name);
-            let padding = usable.saturating_sub(left.chars().count());
+            let padding = usable.saturating_sub(width(&left));
 
             let base_style = if is_selected {
                 theme.selection_style()

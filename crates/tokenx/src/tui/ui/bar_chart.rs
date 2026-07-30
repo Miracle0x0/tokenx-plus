@@ -1,4 +1,4 @@
-//! Chromeless stacked bar chart for the Overview "Tokens per Day" panel.
+//! Chromeless stacked bar chart for the Overview "Token per Day" panel.
 //!
 //! Rendering contract (implemented in this module):
 //! - `area` is the whole chart content area inside a bordered box drawn by the
@@ -13,10 +13,10 @@
 //!   right-aligned, middle date centered when there is room.
 
 use ratatui::prelude::*;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::widgets::format_tokens;
-use crate::tui::date::month_name;
+use crate::date_display::month_name;
+use crate::terminal_text::{char_width, width_u16};
 use crate::tui::model::TuiModel;
 
 /// 8-level block characters for sub-cell precision (matching OpenTUI)
@@ -136,7 +136,7 @@ pub fn render_stacked_bar_chart(
             max = compact_tokens(max_value as u64)
         )
         .into_owned();
-        let peak_width = UnicodeWidthStr::width(peak_label.as_str()) as u16;
+        let peak_width = width_u16(peak_label.as_str());
         if area.width >= peak_width + 2 {
             let peak_x = area.x + area.width - peak_width;
             buf.set_string(
@@ -164,17 +164,17 @@ fn render_date_labels(buf: &mut Buffer, app: &TuiModel, area: Rect, data: &[Stac
     let bar_count = data.len();
 
     let first_label = format_date_label(&data[0].date, is_very_narrow);
-    let first_width = UnicodeWidthStr::width(first_label.as_str()) as u16;
+    let first_width = width_u16(first_label.as_str());
 
     let mut labels: Vec<(String, u16)> = vec![(first_label, area.x)];
 
     if bar_count > 1 {
         let last_label = format_date_label(&data[bar_count - 1].date, is_very_narrow);
-        let last_width = UnicodeWidthStr::width(last_label.as_str()) as u16;
+        let last_width = width_u16(last_label.as_str());
 
         if !is_very_narrow && bar_count > 2 {
             let middle_label = format_date_label(&data[bar_count / 2].date, is_very_narrow);
-            let middle_width = UnicodeWidthStr::width(middle_label.as_str()) as u16;
+            let middle_width = width_u16(middle_label.as_str());
             // Keep the middle label only when all three fit with a gap each.
             if first_width + middle_width + last_width + 2 <= area.width {
                 let middle_x = area.x + (area.width - middle_width) / 2;
@@ -190,7 +190,7 @@ fn render_date_labels(buf: &mut Buffer, app: &TuiModel, area: Rect, data: &[Stac
         } else {
             last_label
         };
-        let last_width = UnicodeWidthStr::width(last_label.as_str()) as u16;
+        let last_width = width_u16(last_label.as_str());
         if last_width > 0 {
             labels.push((last_label, area.x + area.width - last_width));
         }
@@ -210,7 +210,7 @@ fn truncate_left_to_width(label: &str, max_width: usize) -> String {
     let mut width = 0;
     let mut kept = Vec::new();
     for ch in label.chars().rev() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        let ch_width = char_width(ch);
         if width + ch_width > max_width {
             break;
         }

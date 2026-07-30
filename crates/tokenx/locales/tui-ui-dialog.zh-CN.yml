@@ -1,0 +1,30 @@
+tui:
+  ui:
+    dialog:
+      client_picker:
+        title: " 客户端 "
+        filter_label: "筛选："
+        filter_placeholder: "输入以筛选…"
+        no_results: "  无结果"
+        hint_full: "↑↓ • 空格 • * 反选匹配项 • 回车 • Esc"
+        hint_medium: "* 反选匹配项 • 空格 • 回车 • Esc"
+        hint_short: "* 反选匹配项"
+        error_empty_selection: "请至少选择一个客户端"
+      group_by:
+        title: " 分组方式 "
+        current_label: "当前："
+        current_suffix: "  当前"
+        hint: "↑↓ 移动 • 回车 选择 • Esc 关闭"
+        option:
+          model:
+            label: "模型"
+            description: "每个模型一行；合并客户端与提供商（默认）"
+          client_model:
+            label: "客户端 + 模型"
+            description: "每个客户端-模型组合一行"
+          client_provider_model:
+            label: "客户端 + 提供商 + 模型"
+            description: "保留提供商身份；不合并模型"
+          workspace_model:
+            label: "工作区 + 模型"
+            description: "先按工作区、再按模型分组本地用量"

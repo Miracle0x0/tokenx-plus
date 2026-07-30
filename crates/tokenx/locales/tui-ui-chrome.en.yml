@@ -8,7 +8,7 @@ tui:
       sort:
         date: "Date"
         cost: "Cost"
-        tokens: "Tokens"
+        tokens: "Token"
         active: "Active"
         sessions: "Sessions"
         space: "Space"
@@ -16,6 +16,7 @@ tui:
       activity:
         scanning: "Scanning"
         fetching: "Fetching"
+        elapsed: "%{secs}s"
       cold_failed:
         scan_failed: "Scan failed"
         retry: "[r] Retry"
@@ -23,7 +24,7 @@ tui:
         compact: "r:retry · q:quit"
         keys: "[r] [q]"
         minimal: "r q"
-      tokens_suffix: " tokens"
+      tokens_suffix: " token"
       summary:
         no_providers_configured: "No providers configured"
         configured_suffix: " configured"
@@ -79,3 +80,7 @@ tui:
         cached_no_providers: "Showing cached subscription data; no remote providers enabled"
         no_providers: "No remote subscription providers enabled; configure subscription.providers"
         press_u: "Press u to refresh subscription data"
+    loading:
+      scanning_local_data: "Scanning local data"
+      fetching_subscription_data: "Fetching subscription data"
+      load_failed_title: "Could not load local data"

@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use tokenx_engine::{normalize_provider_for_grouping, ClientId};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+use crate::terminal_text::truncate_with_suffix;
 
 pub(crate) fn format_tokens_compact(tokens: u64) -> String {
     if tokens >= 1_000_000_000 {
@@ -72,50 +73,8 @@ pub(crate) fn format_cache_hit_rate(cache_read: u64, input: u64, cache_write: u6
 
 pub(crate) const MODEL_DISPLAY_MAX_WIDTH: usize = 29;
 
-fn char_display_width(ch: char) -> usize {
-    ch.width().unwrap_or(0)
-}
-
 pub(crate) fn truncate_display_width(s: &str, max_width: usize) -> String {
-    if max_width == 0 {
-        return String::new();
-    }
-
-    if s.width() <= max_width {
-        return s.to_string();
-    }
-
-    let ellipsis = "...";
-    let ellipsis_width = ellipsis.width();
-    if max_width <= ellipsis_width {
-        return s
-            .chars()
-            .scan(0usize, |width, ch| {
-                let next_width = *width + char_display_width(ch);
-                if next_width > max_width {
-                    None
-                } else {
-                    *width = next_width;
-                    Some(ch)
-                }
-            })
-            .collect();
-    }
-
-    let head_width = max_width - ellipsis_width;
-    let head: String = s
-        .chars()
-        .scan(0usize, |width, ch| {
-            let next_width = *width + char_display_width(ch);
-            if next_width > head_width {
-                None
-            } else {
-                *width = next_width;
-                Some(ch)
-            }
-        })
-        .collect();
-    format!("{}{}", head, ellipsis)
+    truncate_with_suffix(s, max_width, "...")
 }
 
 pub(crate) fn truncate_model_display_name(model: &str) -> String {

@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 pub(crate) use tokenx_engine::SessionUsage as SessionEntry;
 use tokenx_engine::{ClientId, InputFootprint};
-use unicode_width::UnicodeWidthStr;
+
+use crate::terminal_text::{width, width_u16};
 
 static NEXT_SNAPSHOT_REVISION: AtomicU64 = AtomicU64::new(1);
 
@@ -174,13 +175,13 @@ impl SessionSnapshot {
 }
 
 fn display_width(value: &str) -> u16 {
-    value.width().min(usize::from(u16::MAX)) as u16
+    width_u16(value)
 }
 
 fn models_display_width<'a>(models: impl ExactSizeIterator<Item = &'a Arc<str>>) -> u16 {
     let separators = models.len().saturating_sub(1).saturating_mul(2);
     let width = models.fold(separators, |total, model| {
-        total.saturating_add(model.width())
+        total.saturating_add(width(model))
     });
     width.min(usize::from(u16::MAX)) as u16
 }

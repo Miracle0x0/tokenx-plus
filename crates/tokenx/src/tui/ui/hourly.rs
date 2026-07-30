@@ -13,8 +13,8 @@ use super::widgets::{
     format_cache_hit_rate, format_cost, format_cost_per_million, format_tokens,
     get_client_display_name, total_tokens_cell, truncate_display_width, viewport_scrollbar_state,
 };
+use crate::date_display::format_numeric_month_day;
 use crate::tui::actions::ActionSet;
-use crate::tui::date::format_numeric_month_day;
 use crate::tui::model::{HourlyViewMode, SortDirection, SortField, TuiModel};
 use crate::tui::page_state::PageStates;
 use crate::tui::presentation::EmptySubject;

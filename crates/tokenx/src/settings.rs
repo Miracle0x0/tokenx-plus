@@ -17,6 +17,15 @@ pub(crate) const MIN_AUTO_REFRESH_MS: u64 = 30_000;
 pub(crate) const MAX_AUTO_REFRESH_MS: u64 = 3_600_000;
 pub(crate) const AUTO_REFRESH_STEP_MS: u64 = 10_000;
 
+fn create_settings_dir_message_for_locale(path: &Path, locale: &str) -> String {
+    rust_i18n::t!(
+        "settings.error.create_dir",
+        locale = locale,
+        path = path.display().to_string()
+    )
+    .into_owned()
+}
+
 #[derive(Debug)]
 pub(crate) enum SettingsLoadError {
     Read {
@@ -36,33 +45,27 @@ pub(crate) enum SettingsLoadError {
 impl std::fmt::Display for SettingsLoadError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Read { path, source } => write!(
-                formatter,
-                "{}",
-                rust_i18n::t!(
-                    "settings.error.read",
-                    path = path.display().to_string(),
-                    source = source.to_string()
+            Self::Read { path, source } => {
+                write!(
+                    formatter,
+                    "failed to read settings file `{}`: {source}",
+                    path.display()
                 )
-            ),
-            Self::Parse { path, source } => write!(
-                formatter,
-                "{}",
-                rust_i18n::t!(
-                    "settings.error.parse",
-                    path = path.display().to_string(),
-                    source = source.to_string()
+            }
+            Self::Parse { path, source } => {
+                write!(
+                    formatter,
+                    "failed to parse settings JSON `{}`: {source}",
+                    path.display()
                 )
-            ),
-            Self::Invalid { path, source } => write!(
-                formatter,
-                "{}",
-                rust_i18n::t!(
-                    "settings.error.invalid",
-                    path = path.display().to_string(),
-                    source = source.to_string()
+            }
+            Self::Invalid { path, source } => {
+                write!(
+                    formatter,
+                    "invalid settings in `{}`: {source}",
+                    path.display()
                 )
-            ),
+            }
         }
     }
 }
@@ -99,31 +102,16 @@ impl From<ScannerSettingsError> for SettingsValidationError {
 impl std::fmt::Display for SettingsValidationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AutoRefreshRange { value, min, max } => write!(
-                formatter,
-                "{}",
-                rust_i18n::t!(
-                    "settings.error.auto_refresh_range",
-                    value = value.to_string(),
-                    min = min.to_string(),
-                    max = max.to_string()
+            Self::AutoRefreshRange { value, min, max } => {
+                write!(
+                    formatter,
+                    "invalid autoRefreshMs {value}; expected {min}..={max}"
                 )
-            ),
-            Self::Scanner(source) => write!(
-                formatter,
-                "{}",
-                rust_i18n::t!(
-                    "settings.error.invalid_scanner",
-                    source = source.to_string()
-                )
-            ),
+            }
+            Self::Scanner(source) => write!(formatter, "invalid scanner settings: {source}"),
             Self::DuplicateSubscriptionProvider { provider } => write!(
                 formatter,
-                "{}",
-                rust_i18n::t!(
-                    "settings.error.duplicate_subscription_provider",
-                    provider = *provider
-                )
+                "duplicate subscription provider `{provider}` in subscription.providers"
             ),
         }
     }
@@ -246,10 +234,7 @@ impl Settings {
             .parent()
             .expect("settings path must have a configuration directory");
         fs::create_dir_all(parent).with_context(|| {
-            rust_i18n::t!(
-                "settings.error.create_dir",
-                path = parent.display().to_string()
-            )
+            create_settings_dir_message_for_locale(parent, &rust_i18n::locale())
         })?;
         Ok(path)
     }
@@ -337,6 +322,10 @@ impl Settings {
         self.color_palette = theme;
     }
 
+    pub fn set_language(&mut self, language: Language) {
+        self.language = Some(language);
+    }
+
     pub fn configured_auto_refresh_interval(&self) -> Duration {
         Duration::from_millis(self.auto_refresh_ms)
     }
@@ -346,6 +335,19 @@ impl Settings {
 mod tests {
     use super::*;
     use std::error::Error as _;
+
+    #[test]
+    fn create_settings_directory_context_uses_the_requested_locale() {
+        let path = Path::new("/tmp/tokenx-settings");
+        assert_eq!(
+            create_settings_dir_message_for_locale(path, "en"),
+            "failed to create settings directory `/tmp/tokenx-settings`"
+        );
+        assert_eq!(
+            create_settings_dir_message_for_locale(path, "zh-CN"),
+            "无法创建设置目录 `/tmp/tokenx-settings`"
+        );
+    }
 
     fn load_test_path(path: &Path) -> std::result::Result<Settings, SettingsLoadError> {
         Settings::load_from_path(path)

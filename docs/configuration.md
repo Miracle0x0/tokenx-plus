@@ -50,11 +50,13 @@ cross-platform product root:
 | `timeZone` | IANA timezone string | Optional calendar authority such as `Asia/Shanghai` or `America/New_York`. When absent, Tokenx resolves the operating system's configured IANA timezone once at startup. Per-shell `TZ` is deliberately ignored. |
 | `subscription.enabled` | boolean | Show the remote Subscription tab in the TUI. |
 | `subscription.providers` | string[] | Explicit allowlist of subscription providers the TUI may fetch. Empty means cache-display mode. |
-| `language` | string | Optional interface language: `en` or `zh-CN`. When absent, the environment (`LC_ALL`, then `LANG`) decides, with `zh*` values mapping to `zh-CN` and everything else to English. An explicit `--language` flag overrides this value; unknown spellings are parse errors. |
+| `language` | string | Optional interface language: `en` or `zh-CN`. When absent, the environment (`LC_ALL`, then `LANG`) decides, with `zh*` values mapping to `zh-CN` and everything else to English. In the TUI, `Shift+L` switches immediately between English and Chinese and persists the selected language. On later invocations, an explicit `--language` flag still overrides this saved value; unknown spellings are parse errors. |
 | `scanner.opencodeDbPaths` | string[] | Authoritative absolute paths to additional current-format OpenCode SQLite database files. Missing, unreadable, relative, or invalid entries fail explicitly. This is the only custom OpenCode scan setting. |
 | `scanner.extraScanPaths` | object | Persistent absolute extra scan roots by client id. Relative paths are rejected so acquisition identity cannot depend on the process working directory. |
 
-CLI flags override matching config values for a single invocation.
+CLI flags override matching config values for a single invocation. TUI settings
+changed interactively, including the language selected with `Shift+L`, are
+persisted for future invocations.
 
 Settings are strict typed input. Unknown top-level keys and unknown keys inside
 `subscription` are parse errors.

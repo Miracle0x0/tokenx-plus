@@ -1,0 +1,22 @@
+tui:
+  ui:
+    sessions:
+      panel_title: " 会话 "
+      detail_title: " 会话 / %{client} "
+      header:
+        client: "客户端"
+        main: "主会话"
+        total: "总计"
+        workspaces: "工作区"
+        active: "活跃时间"
+        space: "空间"
+        session: "  会话"
+        workspace: "工作区"
+        models: "模型"
+        messages: "消息"
+        turns: "轮次"
+        tokens: "令牌"
+        cost: "费用"
+      status:
+        degraded: "已降级"
+        degraded_message: "上次刷新失败；正在显示最近一次成功的数据"

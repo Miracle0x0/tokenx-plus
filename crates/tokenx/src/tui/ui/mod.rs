@@ -27,8 +27,8 @@ pub(crate) mod widgets;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use unicode_width::UnicodeWidthStr;
 
+use crate::terminal_text::width as text_width;
 use crate::tui::actions::ActionSet;
 use crate::tui::model::{Tab, TuiModel};
 use crate::tui::page_state::PageStates;
@@ -141,7 +141,7 @@ fn render_cold_failed(frame: &mut Frame, app: &TuiModel, area: Rect) {
 
     let lines = vec![
         Line::from(Span::styled(
-            rust_i18n::t!("tui.ui.load_failed_title"),
+            rust_i18n::t!("tui.ui.loading.load_failed_title"),
             Style::default()
                 .fg(app.theme.status.danger)
                 .add_modifier(Modifier::BOLD),
@@ -180,7 +180,7 @@ fn wrapped_line_count(text: &str, width: usize) -> usize {
             let mut rows = 1;
             let mut column = 0;
             for word in line.split_whitespace() {
-                let word_width = UnicodeWidthStr::width(word);
+                let word_width = text_width(word);
                 let separator = usize::from(column > 0);
                 if column + separator + word_width <= width {
                     column += separator + word_width;
@@ -352,15 +352,15 @@ mod tests {
         );
         let first_wave = centered_row.find("~ ~").unwrap();
         let last_wave = centered_row.rfind("~ ~").unwrap() + "~ ~".len();
-        let left_width = UnicodeWidthStr::width(&centered_row[..first_wave]);
-        let right_width = UnicodeWidthStr::width(&centered_row[last_wave..]);
+        let left_width = text_width(&centered_row[..first_wave]);
+        let right_width = text_width(&centered_row[last_wave..]);
         assert!(
             left_width.abs_diff(right_width) <= 1,
             "cold scan footer status must be horizontally centered: {}",
             centered_row
         );
         assert!(!screen.contains("No usage in the current view"));
-        assert!(!screen.contains("Total Tokens"));
+        assert!(!screen.contains("Total Token"));
         assert!(!screen.contains("Scope:"), "{screen}");
     }
 
@@ -485,7 +485,7 @@ mod tests {
         app.replace_subscription_errors_for_test(vec![crate::subscription::SubscriptionError {
             provider_id: Some(crate::subscription::ProviderId::Claude),
             provider: "Claude".to_string(),
-            message: "credential expired".to_string(),
+            issue: crate::subscription::SubscriptionIssue::unexpected("credential expired"),
         }]);
 
         let lines = render_screen(&mut app, width, 32);
@@ -521,6 +521,7 @@ mod tests {
         assert_eq!(summary_row.chars().nth(width as usize - 1), Some('│'));
         assert!(footer.contains("[u:refresh]"), "{footer}");
         assert!(footer.contains("[p:theme]"), "{footer}");
+        assert!(footer.contains("[L:English]"), "{footer}");
         assert!(!footer.contains("tokens"), "{footer}");
         assert!(!footer.contains("$0.00"), "{footer}");
         for local_hint in ["r:local", "R:local", "e:local"] {
@@ -587,7 +588,7 @@ mod tests {
         assert!(footer.contains("[q] Quit"), "{footer}");
         // successful empty/zero tab states stay behind the Oops page
         assert!(!screen.contains("No usage in the current view"), "{screen}");
-        assert!(!screen.contains("Total Tokens"), "{screen}");
+        assert!(!screen.contains("Total Token"), "{screen}");
         // long diagnostics wrap across rows instead of clipping at the edge
         let head_row = lines
             .iter()
@@ -600,7 +601,7 @@ mod tests {
         // Diagnostics stay in the content area while footer actions remain concise.
         assert!(!footer.contains("injected cold failure"), "{footer}");
         assert!(!footer.contains("Scope:"), "{footer}");
-        assert!(!footer.contains("0 tokens"), "{footer}");
+        assert!(!footer.contains("0 token"), "{footer}");
     }
 
     #[test]
@@ -684,7 +685,7 @@ mod tests {
         // Snapshot header and hero total are the stable evidence that the
         // installed generation remains visible behind a warm refresh.
         assert!(
-            screen.contains("Snapshot") && screen.contains("77 tokens"),
+            screen.contains("Snapshot") && screen.contains("77 token"),
             "installed generation must keep the tab content visible: {screen}"
         );
         assert!(

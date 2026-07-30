@@ -1,8 +1,10 @@
 use chrono::NaiveDate;
 use ratatui::prelude::*;
+use std::borrow::Cow;
 
 use super::widgets::{format_cost, format_tokens};
-use crate::tui::date::format_year_month_day;
+use crate::date_display::format_year_month_day;
+use crate::terminal_text::{pad_left, pad_right, truncate};
 use crate::tui::model::TuiModel;
 
 const PROFILE_MAX_BAR_WIDTH: usize = 80;
@@ -78,17 +80,17 @@ pub(crate) fn bar_row(app: &TuiModel, row: &ProfileBarRow, width: usize) -> Line
         LABEL_W.min(width.saturating_sub(GAP + PCT_W))
     };
 
-    let label: String = row.label.chars().take(label_w).collect();
-    let detail: String = row.detail.chars().take(DETAIL_W).collect();
+    let label = truncate(&row.label, label_w);
+    let detail = truncate(&row.detail, DETAIL_W);
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     if label_w > 0 {
-        spans.push(Span::styled(format!("{label:<label_w$}"), label_style));
+        spans.push(Span::styled(pad_right(&label, label_w), label_style));
     }
     if show_detail {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            format!("{detail:>12}"),
+            pad_left(&detail, DETAIL_W),
             Style::default().fg(app.theme.text.secondary),
         ));
     }
@@ -167,14 +169,14 @@ where
 
 pub(crate) fn peak_line(
     app: &TuiModel,
-    label: &'static str,
+    label: impl Into<Cow<'static, str>>,
     period: String,
     tokens: u64,
     cost: f64,
 ) -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            label,
+            label.into(),
             Style::default()
                 .fg(app.theme.chrome.heading)
                 .add_modifier(Modifier::BOLD),
@@ -446,7 +448,7 @@ mod tests {
         let summary = line_text(&lines[1]);
 
         assert!(summary.contains("174 active days"));
-        assert!(summary.contains("36.4B tokens"));
+        assert!(summary.contains("36.4B token"));
         assert!(summary.contains("$20.5K"));
     }
 }

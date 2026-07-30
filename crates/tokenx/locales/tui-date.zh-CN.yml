@@ -41,11 +41,9 @@ tui:
     day_weekday: "%{day} %{weekday}"
     full_date: "%{year}年%{month}%{day}日（%{weekday}）"
     year_month_day: "%{year}年%{month}月%{day}日"
-    date_range: "%{start} 至 %{end}"
-    timestamp: "%{month}月%{day}日 %{hour}:%{minute}"
+    timestamp: "%{month}/%{day} %{hour}:%{minute}"
     time:
       format: "%{period}%{hour}点"
       am: "上午"
       pm: "下午"
-    week_range: "第%{week}周 %{start} - %{end}"
-    week_short: "第%{week}周"
+    week_range: "第%{week}周  %{start}–%{end}"

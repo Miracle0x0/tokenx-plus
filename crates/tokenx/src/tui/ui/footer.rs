@@ -3,11 +3,12 @@ use std::collections::BTreeSet;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Padding, Paragraph};
-use unicode_width::UnicodeWidthStr;
 
 use super::widgets::{format_cost, format_tokens, truncate_display_width};
+use crate::terminal_text::{pad_left, width as text_width, width_u16};
 use crate::tui::actions::{Action, ActionSet};
 use crate::tui::data::PeriodKind;
+use crate::tui::display_labels::{group_by_label, theme_label};
 use crate::tui::intent::Intent;
 use crate::tui::model::{SortField, StatusTone, Tab, TuiModel};
 use crate::tui::page_state::PageStates;
@@ -119,11 +120,11 @@ impl HelpLine {
 
     fn progressive_line(&self, width: usize) -> Option<Line<'static>> {
         let separator = "·";
-        let separator_width = separator.width() * self.items.len().saturating_sub(1);
+        let separator_width = text_width(separator) * self.items.len().saturating_sub(1);
         let compact_width = self
             .items
             .iter()
-            .map(|item| item.compact.width())
+            .map(|item| text_width(&item.compact))
             .sum::<usize>()
             + separator_width;
         let mut remaining = width.checked_sub(compact_width)?;
@@ -132,10 +133,8 @@ impl HelpLine {
         // Preserve display order while letting smaller later expansions use
         // space that an earlier full label cannot consume.
         for item in &self.items {
-            let expansion_width = item
-                .full
-                .width()
-                .checked_sub(item.compact.width())
+            let expansion_width = text_width(&item.full)
+                .checked_sub(text_width(&item.compact))
                 .expect("full help label must not be narrower than compact label");
             let label = if expansion_width <= remaining {
                 remaining -= expansion_width;
@@ -160,19 +159,19 @@ impl HelpLine {
         let Some(last) = self.items.last() else {
             return Line::default();
         };
-        if self.items.len() == 1 || width < "…·".width() + last.compact.width() {
+        if self.items.len() == 1 || width < text_width("…·") + text_width(&last.compact) {
             return Line::from(Span::styled(
                 truncate_display_width(&last.compact, width),
                 last.style,
             ));
         }
 
-        let suffix_width = "·…·".width() + last.compact.width();
-        let separator_width = "·".width();
+        let suffix_width = text_width("·…·") + text_width(&last.compact);
+        let separator_width = text_width("·");
         let mut prefix_width = 0;
         let mut kept = Vec::new();
         for item in &self.items[..self.items.len() - 1] {
-            let item_width = item.compact.width();
+            let item_width = text_width(&item.compact);
             let next_width =
                 prefix_width + separator_width * usize::from(!kept.is_empty()) + item_width;
             if next_width + suffix_width > width {
@@ -466,13 +465,13 @@ fn timed_activity_line(
     const MIN_WAVE_WIDTH: usize = 56;
     const TIMER_WIDTH: usize = 4;
 
-    let elapsed = format!("{elapsed_secs}s");
-    let elapsed = format!("{elapsed:>TIMER_WIDTH$}");
+    let elapsed = elapsed_label_for_locale(elapsed_secs, &rust_i18n::locale());
+    let elapsed = pad_left(elapsed.as_ref(), TIMER_WIDTH);
     let plain = format!("{message} ·{elapsed}");
     let decorated = format!("{WAVE}  {plain}  {WAVE}");
     let available = width as usize;
 
-    if available >= MIN_WAVE_WIDTH && UnicodeWidthStr::width(decorated.as_str()) <= available {
+    if available >= MIN_WAVE_WIDTH && text_width(decorated.as_str()) <= available {
         return Line::from(vec![
             Span::styled(
                 WAVE.to_string(),
@@ -495,7 +494,7 @@ fn timed_activity_line(
         ]);
     }
 
-    if UnicodeWidthStr::width(plain.as_str()) <= available {
+    if text_width(plain.as_str()) <= available {
         return Line::from(vec![
             Span::styled(message, Style::default().fg(app.theme.text.secondary)),
             Span::styled(" ·", Style::default().fg(app.theme.text.secondary)),
@@ -515,6 +514,14 @@ fn timed_activity_line(
     ))
 }
 
+fn elapsed_label_for_locale(elapsed_secs: u64, locale: &str) -> Cow<'static, str> {
+    rust_i18n::t!(
+        "tui.ui.footer.activity.elapsed",
+        locale = locale,
+        secs = elapsed_secs.to_string()
+    )
+}
+
 fn cold_failed_line(app: &TuiModel, width: u16) -> Line<'static> {
     let scan_failed = rust_i18n::t!("tui.ui.footer.cold_failed.scan_failed");
     let retry = rust_i18n::t!("tui.ui.footer.cold_failed.retry");
@@ -522,7 +529,10 @@ fn cold_failed_line(app: &TuiModel, width: u16) -> Line<'static> {
     let separator = " · ";
     let available = width as usize;
 
-    let full_width = scan_failed.width() + separator.width() * 2 + retry.width() + quit.width();
+    let full_width = text_width(scan_failed.as_ref())
+        + text_width(separator) * 2
+        + text_width(retry.as_ref())
+        + text_width(quit.as_ref());
     if full_width <= available {
         return Line::from(vec![
             Span::styled(
@@ -538,7 +548,8 @@ fn cold_failed_line(app: &TuiModel, width: u16) -> Line<'static> {
         ]);
     }
 
-    let actions_width = retry.width() + separator.width() + quit.width();
+    let actions_width =
+        text_width(retry.as_ref()) + text_width(separator) + text_width(quit.as_ref());
     if actions_width <= available {
         return Line::from(vec![
             Span::styled(retry, Style::default().fg(app.theme.chrome.focus)),
@@ -548,7 +559,7 @@ fn cold_failed_line(app: &TuiModel, width: u16) -> Line<'static> {
     }
 
     let compact_label = rust_i18n::t!("tui.ui.footer.cold_failed.compact");
-    let compact = if UnicodeWidthStr::width(compact_label.as_ref()) <= available {
+    let compact = if text_width(compact_label.as_ref()) <= available {
         compact_label.into_owned()
     } else if available >= 7 {
         rust_i18n::t!("tui.ui.footer.cold_failed.keys").into_owned()
@@ -574,7 +585,7 @@ fn render_main_row(
     summary: ResponsiveLine,
 ) {
     let left_width = if sort_controls.is_empty() {
-        leading.as_deref().map_or(0, UnicodeWidthStr::width)
+        leading.as_deref().map_or(0, text_width)
     } else {
         sort_controls_width(sort_controls)
     };
@@ -623,10 +634,10 @@ fn render_main_row(
 }
 
 fn sort_controls_width(sort_controls: &[SortControl]) -> usize {
-    rust_i18n::t!("tui.ui.footer.sort_prefix").width()
+    text_width(rust_i18n::t!("tui.ui.footer.sort_prefix").as_ref())
         + sort_controls
             .iter()
-            .map(|control| control.label.width())
+            .map(|control| text_width(control.label.as_ref()))
             .sum::<usize>()
         + sort_controls.len().saturating_sub(1)
 }
@@ -643,7 +654,7 @@ fn render_sort_controls(
         sort_prefix.clone(),
         Style::default().fg(app.theme.text.secondary),
     )];
-    let mut x_offset = area.x.saturating_add(sort_prefix.width() as u16);
+    let mut x_offset = area.x.saturating_add(width_u16(sort_prefix.as_ref()));
 
     for (index, control) in sort_controls.iter().enumerate() {
         if index > 0 {
@@ -659,7 +670,7 @@ fn render_sort_controls(
         };
         spans.push(Span::styled(control.label.clone(), style));
 
-        let label_width = control.label.width() as u16;
+        let label_width = width_u16(control.label.as_ref());
         artifacts.add_hit_target(
             Rect::new(x_offset, area.y, label_width, 1),
             Intent::Sort(control.field),
@@ -901,6 +912,13 @@ fn subscription_help_line(app: &TuiModel, actions: &ActionSet) -> HelpLine {
             Style::default().fg(app.theme.chrome.focus),
         ));
     }
+    if actions.contains(Action::Language) {
+        items.push(HelpItem::new(
+            format!("[L:{}]", app.language().native_name()),
+            "[L]",
+            Style::default().fg(app.theme.chrome.focus),
+        ));
+    }
     if actions.contains(Action::Quit) {
         items.push(HelpItem::new(
             "q",
@@ -977,10 +995,17 @@ pub(super) fn action_help_row_line(
                 rust_i18n::t!("tui.ui.footer.help.clients").into_owned(),
                 "[s]".to_string(),
             ),
-            Action::GroupBy => (format!("[g:{}]", app.group_by()), "[g]".to_string()),
+            Action::GroupBy => (
+                format!("[g:{}]", group_by_label(app.group_by())),
+                "[g]".to_string(),
+            ),
             Action::Theme => (
-                format!("[p:{}]", app.theme.name.as_str()),
+                format!("[p:{}]", theme_label(app.theme.name)),
                 "[p]".to_string(),
+            ),
+            Action::Language => (
+                format!("[L:{}]", app.language().native_name()),
+                "[L]".to_string(),
             ),
             Action::ToggleAutoRefresh => (
                 if app.auto_refresh_enabled() {
@@ -1050,7 +1075,9 @@ fn toggle_action_labels(
 fn action_style(app: &TuiModel, action: Action) -> Style {
     let color = match action {
         Action::Sort(_) => app.theme.chrome.current,
-        Action::Clients | Action::GroupBy | Action::Theme => app.theme.chrome.focus,
+        Action::Clients | Action::GroupBy | Action::Theme | Action::Language => {
+            app.theme.chrome.focus
+        }
         Action::ToggleAutoRefresh if app.auto_refresh_enabled() => app.theme.status.success,
         Action::OpenDetails | Action::Back | Action::ToggleView | Action::RefreshLocal => {
             app.theme.chrome.focus
@@ -1227,6 +1254,12 @@ mod tests {
     use crate::tui::model::TuiConfig;
     use chrono::NaiveDate;
 
+    #[test]
+    fn elapsed_timer_unit_uses_the_requested_locale() {
+        assert_eq!(elapsed_label_for_locale(12, "en"), "12s");
+        assert_eq!(elapsed_label_for_locale(12, "zh-CN"), "12秒");
+    }
+
     fn make_cold_app_on(tab: Tab) -> TuiModel {
         let config = TuiConfig {
             theme: Some(crate::theme::ThemeName::Blue),
@@ -1274,10 +1307,10 @@ mod tests {
     #[test]
     fn help_line_progressively_expands_labels_with_available_width() {
         let help = progressive_help_line();
-        let compact_width = "a·b·q".width();
-        let first_expanded_width = "alpha·b·q".width();
-        let tight_full_width = "alpha·bravo·q".width();
-        let full_width = "alpha • bravo • q".width();
+        let compact_width = text_width("a·b·q");
+        let first_expanded_width = text_width("alpha·b·q");
+        let tight_full_width = text_width("alpha·bravo·q");
+        let full_width = text_width("alpha • bravo • q");
 
         assert_eq!(
             line_text(help.for_width(compact_width.saturating_sub(1))),
@@ -1306,7 +1339,7 @@ mod tests {
             style,
         );
 
-        assert_eq!(line_text(help.for_width("x·mid·q".width())), "x·mid·q");
+        assert_eq!(line_text(help.for_width(text_width("x·mid·q"))), "x·mid·q");
     }
 
     #[test]
@@ -1320,7 +1353,7 @@ mod tests {
             " • ",
             style,
         );
-        let width = "操作·q".width();
+        let width = text_width("操作·q");
         let line = help.for_width(width);
 
         assert_eq!(line_text(line.clone()), "操作·q");
@@ -1330,12 +1363,20 @@ mod tests {
     #[test]
     fn help_line_never_exceeds_its_width_budget() {
         let help = progressive_help_line();
-        let full_width = "alpha • bravo • q".width();
+        let full_width = text_width("alpha • bravo • q");
 
         for width in 0..=full_width {
             let line = help.for_width(width);
             assert!(line.width() <= width, "width {width}: {}", line_text(line));
         }
+    }
+
+    #[test]
+    fn chinese_profile_toggle_matches_the_profile_page_name() {
+        assert_eq!(
+            rust_i18n::t!("tui.ui.footer.toggle.profile", locale = "zh-CN"),
+            "概览"
+        );
     }
 
     fn installed_app_on(tab: Tab) -> TuiModel {
@@ -1399,6 +1440,10 @@ mod tests {
         );
         assert_eq!(
             action_style(&app, Action::Theme).fg,
+            Some(app.theme.chrome.focus)
+        );
+        assert_eq!(
+            action_style(&app, Action::Language).fg,
             Some(app.theme.chrome.focus)
         );
         assert_eq!(
@@ -1505,6 +1550,7 @@ mod tests {
         assert!(text.contains("[u:refresh]"));
         assert!(text.contains("←→/tab view"));
         assert!(text.contains("[p:theme]"));
+        assert!(text.contains("[L:English]"));
         assert!(text.ends_with('q'));
         for local in ["[r:", "[R:", "[e:"] {
             assert!(!text.contains(local), "{text}");
@@ -1522,6 +1568,7 @@ mod tests {
         assert!(!text.contains("[u:refresh]"));
         assert!(text.contains("←→/tab view"));
         assert!(text.contains("[p:theme]"));
+        assert!(text.contains("[L:English]"));
         assert!(text.ends_with('q'));
         assert!(!text.contains("local"));
     }
@@ -1538,6 +1585,7 @@ mod tests {
         assert!(!text.contains("[u]"));
         assert!(text.contains("←→/tab view"));
         assert!(text.contains("[p:theme]"));
+        assert!(text.contains("[L:English]"));
         assert!(text.ends_with('q'));
         assert!(!text.contains("local"));
     }

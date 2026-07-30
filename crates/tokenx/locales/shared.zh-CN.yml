@@ -1,3 +1,0 @@
-shared:
-  client:
-    invalid_id: "无效的客户端 ID `%{raw}`；可选值：%{valid_ids}"

@@ -1,4 +1,0 @@
-claude_diagnostics:
-  desktop:
-    message: "检测到 Claude Desktop 应用数据，但 Tokenx 只统计 Claude Code 的 JSONL 会话记录。"
-    help: "Claude Desktop 的聊天存储和 Claude 数据导出均未提供有文档说明的逐条消息 token 账本。TUI 的 Subscription 标签页会显示 Claude 订阅额度条；组织/API 账单需要使用 Anthropic Admin Usage/Cost API，不在本地扫描范围内。"

@@ -5,11 +5,14 @@
 User-facing strings in this crate are localized with `rust-i18n` (v3). The
 engine crate (`tokenx-engine`) stays English.
 
-- Locale files live in `crates/tokenx/locales/`, one file pair per module
-  scope: `<scope>.en.yml` and `<scope>.zh-CN.yml` (e.g. `cli.en.yml`,
-  `cli.zh-CN.yml`). rust-i18n derives the locale from the file stem's last
-  dot segment, so the locale MUST be the suffix; names like `en.cli.yml`
-  silently register under a bogus locale.
+- Locale files live in `crates/tokenx/locales/`, one file per locale for each
+  stable product surface: `<scope>.<locale>.yml` (e.g.
+  `subscription.en.yml`, `subscription.zh-CN.yml`). Small related namespaces
+  may share one surface catalog only when its allowed prefixes are declared
+  explicitly in `build.rs`; do not create mixed catalogs that span unrelated
+  UI surfaces. rust-i18n derives the locale from the file stem's last dot
+  segment, so the locale MUST be the suffix; names like `en.cli.yml` silently
+  register under a bogus locale.
 - Files use rust-i18n v1 format: nested keys WITHOUT a top-level locale
   wrapper. Nested maps flatten to dot keys, so `cli:` → `error:` → `x` in
   `cli.en.yml` becomes the key `cli.error.x`.
@@ -24,6 +27,10 @@ engine crate (`tokenx-engine`) stays English.
 - Call sites use `rust_i18n::t!("key")`. The `i18n!` macro is invoked once at
   the crate root in `main.rs` (with `fallback = "en"`); `build.rs` tracks the
   locales directory so translation edits trigger a rebuild.
+- `build.rs` rejects incomplete catalogs before Rust compilation. Every scope
+  must provide the same locale set, every non-English catalog must match the
+  English leaf-key tree and interpolation names, and keys must remain under
+  the owning product-surface prefix.
 - Language selection priority: `--language` flag > `language` in
   settings.json > environment (`LC_ALL`, then `LANG`; any `zh*` value maps to
   `zh-CN`) > English. Both the flag and the settings key are typed
@@ -35,6 +42,6 @@ engine crate (`tokenx-engine`) stays English.
   `--language en` in subprocess tests that assert English output so they do
   not depend on the host locale.
 
-To add translations for a new module, create `<scope>.en.yml` and
-`<scope>.zh-CN.yml` with the same nested key tree, then replace literals with
-`t!()` calls.
+To add translations for a product surface, create one `<scope>.<locale>.yml`
+for every supported locale with the same nested key tree, then replace
+literals with `t!()` calls.

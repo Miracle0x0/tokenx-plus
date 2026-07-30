@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
-use unicode_width::UnicodeWidthChar;
 
 use super::achievements;
 use super::portraits;
@@ -10,6 +9,9 @@ use super::sessions::format_bytes;
 use super::widgets::{
     format_cost, format_tokens, format_tokens_with_commas, get_client_display_name,
 };
+#[cfg(test)]
+use crate::terminal_text::width as terminal_width;
+use crate::terminal_text::{char_width, pad_right, truncate_with_ellipsis};
 use crate::tui::actions::ActionSet;
 use crate::tui::data::OverviewSummary;
 use crate::tui::model::TuiModel;
@@ -539,7 +541,7 @@ fn split_cells(text: &str, width: usize) -> (String, String) {
     let mut second_width = 0;
     let mut filling_second = false;
     for ch in text.chars() {
-        let cell = UnicodeWidthChar::width(ch).unwrap_or_default();
+        let cell = char_width(ch);
         if !filling_second && first_width + cell <= width {
             first.push(ch);
             first_width += cell;
@@ -812,7 +814,7 @@ fn left_lines(
 fn metric_line(app: &TuiModel, label: &str, value: String, color: Color) -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            format!("{label:<METRIC_LABEL_WIDTH$}"),
+            pad_right(label, METRIC_LABEL_WIDTH),
             Style::default().fg(app.theme.text.secondary),
         ),
         Span::styled(value, Style::default().fg(color)),
@@ -863,13 +865,7 @@ fn generation_health(app: &TuiModel) -> &tokenx_engine::input_health::HealthSumm
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        value.to_string()
-    } else if max_chars <= 1 {
-        "…".to_string()
-    } else {
-        format!("{}…", value.chars().take(max_chars - 1).collect::<String>())
-    }
+    truncate_with_ellipsis(value, max_chars)
 }
 
 #[cfg(test)]
@@ -884,7 +880,6 @@ mod tests {
     use chrono::NaiveDate;
     use ratatui::{backend::TestBackend, Terminal};
     use tokenx_engine::{ClientId, SessionUsage};
-    use unicode_width::UnicodeWidthStr;
 
     fn make_app(width: u16) -> TuiModel {
         make_app_with_theme(width, "blue")
@@ -1019,7 +1014,7 @@ mod tests {
     fn line_width(line: &Line<'_>) -> usize {
         line.spans
             .iter()
-            .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+            .map(|span| terminal_width(span.content.as_ref()))
             .sum()
     }
 
@@ -1036,8 +1031,8 @@ mod tests {
 
         assert_eq!(first, "a\u{301}");
         assert_eq!(second, "中");
-        assert!(UnicodeWidthStr::width(first.as_str()) <= 2);
-        assert!(UnicodeWidthStr::width(second.as_str()) <= 2);
+        assert!(terminal_width(first.as_str()) <= 2);
+        assert!(terminal_width(second.as_str()) <= 2);
     }
 
     #[test]
@@ -1414,7 +1409,7 @@ mod tests {
 
         let lines = buffer_lines(&terminal);
         let screen = lines.join("\n");
-        assert!(screen.contains("Total Tokens"), "{screen}");
+        assert!(screen.contains("Total Token"), "{screen}");
         assert!(
             !screen.contains("Inputs Healthy"),
             "text fallback drops the Inputs Healthy fact: {screen}"
@@ -1425,7 +1420,7 @@ mod tests {
         );
         let metric_row = lines
             .iter()
-            .find(|line| line.contains("Total Tokens"))
+            .find(|line| line.contains("Total Token"))
             .expect("snapshot metric row should render");
         assert_eq!(metric_row.matches('│').count(), 2, "{metric_row}");
     }
@@ -1470,7 +1465,7 @@ mod tests {
         for index in [2, 5, 8, 11] {
             assert_eq!(text[index], "-".repeat(54), "separator at {index}");
         }
-        assert!(text[0].starts_with("Total Tokens"));
+        assert!(text[0].starts_with("Total Token"));
         assert!(text[6].starts_with("Input Data"));
         assert!(text[7].starts_with("Active Days"));
         assert!(text[9].starts_with("Models Eaten"));
@@ -1498,7 +1493,7 @@ mod tests {
             2,
             "separators should be dropped bottom-up first"
         );
-        assert!(text.iter().any(|line| line.starts_with("Total Tokens")));
+        assert!(text.iter().any(|line| line.starts_with("Total Token")));
         assert!(text.iter().any(|line| line.starts_with("Favorite Client")));
 
         let lines = left_lines(&app, &data, 54, 10);
@@ -1510,7 +1505,7 @@ mod tests {
         let lines = left_lines(&app, &data, 54, 8);
         let text = lines.iter().map(line_text).collect::<Vec<_>>();
         assert_eq!(text.len(), 8);
-        assert!(text[0].starts_with("Total Tokens"));
+        assert!(text[0].starts_with("Total Token"));
         assert!(text.iter().any(|line| line.starts_with("Active Days")));
         assert!(text.iter().all(|line| !line.contains("Favorite Client")));
     }

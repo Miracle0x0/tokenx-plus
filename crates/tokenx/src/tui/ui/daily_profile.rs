@@ -25,15 +25,6 @@ fn weekday_labels() -> [Cow<'static, str>; 7] {
     ]
 }
 
-/// Compile-time-embedded rust-i18n translations always resolve to a borrowed
-/// `&'static str`; unwrap the `Cow` for APIs that require `&'static str`.
-fn borrowed_static(text: Cow<'static, str>) -> &'static str {
-    match text {
-        Cow::Borrowed(text) => text,
-        Cow::Owned(text) => Box::leak(text.into_boxed_str()),
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct WeekdayUsage {
     label: Cow<'static, str>,
@@ -179,7 +170,7 @@ pub(crate) fn build_daily_profile_lines(app: &TuiModel, area_width: u16) -> Vec<
     if let Some(peak) = peak {
         lines.push(usage_profile::peak_line(
             app,
-            borrowed_static(rust_i18n::t!("tui.ui.daily.peak_day")),
+            rust_i18n::t!("tui.ui.daily.peak_day"),
             peak.label.to_string(),
             peak.tokens,
             peak.cost,
@@ -334,14 +325,14 @@ mod tests {
 
         assert!(text[0].contains("2026-07-13 to 2026-07-17"));
         assert!(text[1].contains("2 active days"));
-        assert!(text[1].contains("1K tokens"));
+        assert!(text[1].contains("1K token"));
         assert!(text[1].contains("$10.00"));
         assert!(text[3].starts_with("Monday"));
         assert!(text[7].starts_with("Friday"));
         assert!(text[7].contains("600"));
         assert!(text[7].contains("60.0%"));
         assert!(text[11].contains("Peak day Friday"));
-        assert!(text[11].contains("600 tokens"));
+        assert!(text[11].contains("600 token"));
         assert!(text[11].contains("$6.00"));
         assert!(text[13].contains("[v]"));
     }

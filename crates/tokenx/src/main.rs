@@ -2,6 +2,7 @@ mod acquisition;
 mod claude_diagnostics;
 mod cli;
 mod commands;
+mod date_display;
 mod failure;
 mod formatting;
 mod generation_cache;
@@ -10,6 +11,7 @@ mod product_paths;
 mod report;
 mod settings;
 mod subscription;
+mod terminal_text;
 mod theme;
 mod tui;
 

@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{TimeZone, Utc};
 use serde::Deserialize;
 
-use super::{SubscriptionPayload, UsageMetric};
+use super::{SubscriptionIssue, SubscriptionIssueCode, SubscriptionPayload, UsageMetric};
 
 const TOKEN_PLAN_PATH: &str = "/v1/token_plan/remains";
 
@@ -82,7 +82,7 @@ fn build_metrics(remains: &[ModelRemains]) -> Vec<UsageMetric> {
             .model_name
             .as_deref()
             .map(ToString::to_string)
-            .unwrap_or_else(|| rust_i18n::t!("subscription.metric.model_fallback").into_owned());
+            .unwrap_or_else(|| "model".to_string());
 
         if let Some(percent) = remain.current_interval_remaining_percent {
             let remaining = percent.clamp(0, 100) as f64;
@@ -102,8 +102,7 @@ fn build_metrics(remains: &[ModelRemains]) -> Vec<UsageMetric> {
             if let Some(percent) = remain.current_weekly_remaining_percent {
                 let remaining = percent.clamp(0, 100) as f64;
                 metrics.push(UsageMetric {
-                    label: rust_i18n::t!("subscription.metric.weekly_suffix", name = name)
-                        .into_owned(),
+                    label: format!("{name}-wk"),
                     used_percent: 100.0 - remaining,
                     remaining_percent: remaining,
                     remaining_label: None,
@@ -127,16 +126,28 @@ async fn fetch_site_api(client: &reqwest::Client, site: &Site, key: &str) -> Res
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        anyhow::bail!(rust_i18n::t!(
-            "subscription.error.minimax_session_expired",
-            site = site.label
+        return Err(anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::MiniMaxSessionExpired,
+                format!(
+                    "MiniMax Token Plan ({}) session expired; check your API key",
+                    site.label
+                ),
+            )
+            .with_field("site", site.label),
         ));
     }
     if !status.is_success() {
-        anyhow::bail!(rust_i18n::t!(
-            "subscription.error.minimax_request_failed",
-            site = site.label,
-            status = status.as_str()
+        return Err(anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::MiniMaxRequestFailed,
+                format!(
+                    "MiniMax Token Plan ({}) request failed (HTTP {status})",
+                    site.label
+                ),
+            )
+            .with_field("site", site.label)
+            .with_field("status", status),
         ));
     }
     Ok(resp.json().await?)
@@ -144,9 +155,15 @@ async fn fetch_site_api(client: &reqwest::Client, site: &Site, key: &str) -> Res
 
 fn payload_from_response(site: &Site, resp: ApiResponse) -> Result<SubscriptionPayload> {
     if is_auth_error(&resp) {
-        anyhow::bail!(rust_i18n::t!(
-            "subscription.error.minimax_session_expired",
-            site = site.label
+        return Err(anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::MiniMaxSessionExpired,
+                format!(
+                    "MiniMax Token Plan ({}) session expired; check your API key",
+                    site.label
+                ),
+            )
+            .with_field("site", site.label),
         ));
     }
     if is_api_error(&resp) {
@@ -154,21 +171,28 @@ fn payload_from_response(site: &Site, resp: ApiResponse) -> Result<SubscriptionP
             .base_resp
             .as_ref()
             .and_then(|base| base.status_msg.clone())
-            .unwrap_or_else(|| {
-                rust_i18n::t!("subscription.error.minimax_unknown_error").into_owned()
-            });
-        anyhow::bail!(rust_i18n::t!(
-            "subscription.error.minimax_api_error",
-            site = site.label,
-            message = message
+            .unwrap_or_else(|| "unknown error".to_string());
+        return Err(anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::MiniMaxApiError,
+                format!("MiniMax Token Plan ({}): {message}", site.label),
+            )
+            .with_field("site", site.label)
+            .with_field("message", message),
         ));
     }
 
     let metrics = build_metrics(resp.model_remains.as_deref().unwrap_or(&[]));
     if metrics.is_empty() {
-        anyhow::bail!(rust_i18n::t!(
-            "subscription.error.minimax_no_usage",
-            site = site.label
+        return Err(anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::MiniMaxNoUsage,
+                format!(
+                    "MiniMax Token Plan ({}) returned no parseable usage",
+                    site.label
+                ),
+            )
+            .with_field("site", site.label),
         ));
     }
 
@@ -182,10 +206,13 @@ fn payload_from_response(site: &Site, resp: ApiResponse) -> Result<SubscriptionP
 
 async fn fetch_site(client: &reqwest::Client, site: &Site) -> Result<SubscriptionPayload> {
     let key = read_key(site).ok_or_else(|| {
-        anyhow::anyhow!(rust_i18n::t!(
-            "subscription.error.minimax_no_env",
-            env = site.key_env
-        ))
+        anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::MiniMaxNoEnv,
+                format!("No {} set.", site.key_env),
+            )
+            .with_field("env", site.key_env),
+        )
     })?;
     let resp = fetch_site_api(client, site, &key).await?;
     payload_from_response(site, resp)

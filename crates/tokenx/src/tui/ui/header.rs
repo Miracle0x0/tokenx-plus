@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Tabs};
-use unicode_width::UnicodeWidthStr;
 
+use crate::terminal_text::{width, width_u16};
 use crate::tui::intent::Intent;
 use crate::tui::model::{Tab, TuiModel};
 use crate::tui::render_artifacts::RenderArtifacts;
@@ -28,10 +28,7 @@ pub fn render(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifacts
         .map(|t| {
             let name = tab_label(app, *t, label_mode);
             let style = if *t == app.current_tab {
-                Style::default()
-                    .fg(app.theme.surface.canvas)
-                    .bg(app.theme.chrome.nav_active)
-                    .add_modifier(Modifier::BOLD)
+                active_tab_style(app)
             } else {
                 Style::default().fg(app.theme.text.secondary)
             };
@@ -47,18 +44,19 @@ pub fn render(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifacts
     let tabs = Tabs::new(titles)
         .block(block)
         .select(selected)
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.surface.canvas)
-                .bg(app.theme.chrome.nav_active)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(active_tab_style(app))
         .padding(TAB_PADDING_LEFT, TAB_PADDING_RIGHT)
         .divider(tab_divider(app));
 
     frame.render_widget(tabs, area);
 
     register_tab_hit_targets(app, artifacts, tabs_area);
+}
+
+fn active_tab_style(app: &TuiModel) -> Style {
+    Style::default()
+        .fg(app.theme.chrome.nav_active)
+        .add_modifier(Modifier::BOLD)
 }
 
 fn header_block(app: &TuiModel) -> Block<'static> {
@@ -96,8 +94,8 @@ fn tab_divider(app: &TuiModel) -> Span<'static> {
 
 fn tab_label(_app: &TuiModel, tab: Tab, mode: TabLabelMode) -> Cow<'static, str> {
     match mode {
-        TabLabelMode::Full => Cow::Borrowed(tab.as_str()),
-        TabLabelMode::Short => Cow::Borrowed(tab.short_name()),
+        TabLabelMode::Full => tab.as_str(),
+        TabLabelMode::Short => tab.short_name(),
     }
 }
 
@@ -106,12 +104,12 @@ fn tab_row_width(app: &TuiModel, tabs: &[Tab], mode: TabLabelMode) -> u16 {
         return 0;
     }
 
-    let padding_width = TAB_PADDING_LEFT.width() + TAB_PADDING_RIGHT.width();
+    let padding_width = width(TAB_PADDING_LEFT) + width(TAB_PADDING_RIGHT);
     let labels_width: usize = tabs
         .iter()
-        .map(|tab| tab_label(app, *tab, mode).width() + padding_width)
+        .map(|tab| width(tab_label(app, *tab, mode).as_ref()) + padding_width)
         .sum();
-    let dividers_width = TAB_DIVIDER.width() * tabs.len().saturating_sub(1);
+    let dividers_width = width(TAB_DIVIDER) * tabs.len().saturating_sub(1);
     labels_width
         .saturating_add(dividers_width)
         .min(u16::MAX as usize) as u16
@@ -159,9 +157,9 @@ fn tab_hit_targets(app: &TuiModel, tabs_area: Rect) -> Vec<(Rect, Tab)> {
     let mut x = tab_row.x;
     let right = tab_row.right();
 
-    let left_padding_width = TAB_PADDING_LEFT.width() as u16;
-    let right_padding_width = TAB_PADDING_RIGHT.width() as u16;
-    let divider_width = TAB_DIVIDER.width() as u16;
+    let left_padding_width = width_u16(TAB_PADDING_LEFT);
+    let right_padding_width = width_u16(TAB_PADDING_RIGHT);
+    let divider_width = width_u16(TAB_DIVIDER);
 
     for (index, tab) in visible_tabs.iter().enumerate() {
         let tab_start = x;
@@ -177,7 +175,7 @@ fn tab_hit_targets(app: &TuiModel, tabs_area: Rect) -> Vec<(Rect, Tab)> {
         }
 
         let name = tab_label(app, *tab, label_mode);
-        let width = (name.width() as u16).min(remaining_width);
+        let width = width_u16(name.as_ref()).min(remaining_width);
         if width == 0 {
             break;
         }
@@ -388,7 +386,7 @@ mod tests {
 
         assert_eq!(ThemeName::all().len(), 12);
 
-        let mut active_tab_colors = Vec::with_capacity(ThemeName::all().len());
+        let mut active_tab_accents = Vec::with_capacity(ThemeName::all().len());
         for &theme_name in ThemeName::all() {
             let mut app = make_app(120);
             app.theme = Theme::from_name(theme_name);
@@ -396,7 +394,6 @@ mod tests {
             let panel = app.theme.surface.panel;
             let heading = app.theme.chrome.heading;
             let nav_active = app.theme.chrome.nav_active;
-            let active_tab_foreground = app.theme.surface.canvas;
             let buffer = render_header_buffer(&mut app, Rect::new(0, 0, 120, 3), 120, 4);
 
             let panel_cell = buffer.cell((110, 1)).unwrap();
@@ -414,18 +411,18 @@ mod tests {
                 "{theme_name:?} active tab sample"
             );
             assert_eq!(
-                active_tab_cell.fg, active_tab_foreground,
+                active_tab_cell.fg, nav_active,
                 "{theme_name:?} active tab foreground"
             );
             assert_eq!(
-                active_tab_cell.bg, nav_active,
-                "{theme_name:?} active tab background"
+                active_tab_cell.bg, panel,
+                "{theme_name:?} active tab must keep the panel background"
             );
-            active_tab_colors.push((theme_name, active_tab_cell.bg));
+            active_tab_accents.push((theme_name, active_tab_cell.fg));
         }
 
-        for (index, &(theme_name, color)) in active_tab_colors.iter().enumerate() {
-            for &(other_theme_name, other_color) in &active_tab_colors[index + 1..] {
+        for (index, &(theme_name, color)) in active_tab_accents.iter().enumerate() {
+            for &(other_theme_name, other_color) in &active_tab_accents[index + 1..] {
                 let (Color::Rgb(red, green, blue), Color::Rgb(other_red, other_green, other_blue)) =
                     (color, other_color)
                 else {

@@ -24,6 +24,7 @@ pub(crate) enum Intent {
     Clients,
     GroupBy,
     Theme,
+    Language,
     ToggleAutoRefresh,
     IncreaseRefreshInterval,
     DecreaseRefreshInterval,
@@ -61,6 +62,9 @@ impl Intent {
             KeyCode::Char('s') => Some(Self::Clients),
             KeyCode::Char('g') => Some(Self::GroupBy),
             KeyCode::Char('p') => Some(Self::Theme),
+            KeyCode::Char('L') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                Some(Self::Language)
+            }
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 Some(Self::ToggleAutoRefresh)
             }
@@ -87,6 +91,7 @@ impl Intent {
             Self::Clients => Some(Action::Clients),
             Self::GroupBy => Some(Action::GroupBy),
             Self::Theme => Some(Action::Theme),
+            Self::Language => Some(Action::Language),
             Self::ToggleAutoRefresh => Some(Action::ToggleAutoRefresh),
             Self::IncreaseRefreshInterval => Some(Action::IncreaseRefreshInterval),
             Self::DecreaseRefreshInterval => Some(Action::DecreaseRefreshInterval),
@@ -96,5 +101,23 @@ impl Intent {
             Self::Export => Some(Action::Export),
             Self::SelectTab(_) | Self::SelectGraphCell { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uppercase_l_is_the_only_language_shortcut() {
+        let uppercase = KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT);
+        let lowercase = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
+
+        assert_eq!(
+            Intent::from_key(Tab::Overview, uppercase),
+            Some(Intent::Language)
+        );
+        assert_eq!(Intent::from_key(Tab::Overview, lowercase), None);
+        assert_eq!(Intent::Language.action(), Some(Action::Language));
     }
 }

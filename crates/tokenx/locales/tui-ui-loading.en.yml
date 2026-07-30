@@ -1,5 +1,0 @@
-tui:
-  ui:
-    loading:
-      scanning_local_data: "Scanning local data"
-      fetching_subscription_data: "Fetching subscription data"

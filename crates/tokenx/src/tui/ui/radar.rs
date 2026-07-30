@@ -4,6 +4,7 @@ use ratatui::widgets::canvas::{Canvas, Line as CanvasLine, Points};
 use ratatui::widgets::Paragraph;
 
 use super::widgets::truncate_model_display_name_to;
+use crate::terminal_text::{width, width_u16};
 
 /// One axis of the day radar: a display label plus its 0..=1 share of the day.
 #[derive(Debug)]
@@ -61,7 +62,7 @@ pub fn render_radar(
 
     // The chart is square (two cells per row of height keeps braille dots
     // square) and centered in the zone; the side captions occupy the flanks.
-    let text_w = |text: &str| text.chars().count() as f64;
+    let text_w = |text: &str| width(text) as f64;
     let flank = text_w(&names[1])
         .max(text_w(&pcts[1]))
         .max(text_w(&names[3]))
@@ -164,18 +165,14 @@ pub fn render_radar(
         if !text.is_empty() {
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(text.to_string(), label_style))),
-                Rect::new(x, y, text.chars().count() as u16, 1),
+                Rect::new(x, y, width_u16(text), 1),
             );
         }
     };
     let tip_x = |logical_x: f64| chart.x + (logical_x / BOUNDS * f64::from(chart.width)) as u16;
     let center_x = chart.x + chart.width / 2;
     let mid_y = chart.y + chart.height / 2;
-    let centered = |text: &str| {
-        center_x
-            .saturating_sub(text.chars().count() as u16 / 2)
-            .max(area.x)
-    };
+    let centered = |text: &str| center_x.saturating_sub(width_u16(text) / 2).max(area.x);
 
     // Top: pct over name, both centered above the tip. Bottom: pct under the
     // tip, name at the very bottom. Axes without a name are skipped.
@@ -206,21 +203,16 @@ pub fn render_radar(
         if name.is_empty() {
             return;
         }
-        let block_w = name.chars().count().max(pct.chars().count()) as u16;
+        let block_w = width_u16(name).max(width_u16(pct));
+        print(frame, block_x + (block_w - width_u16(pct)) / 2, pct_y, pct);
         print(
             frame,
-            block_x + (block_w - pct.chars().count() as u16) / 2,
-            pct_y,
-            pct,
-        );
-        print(
-            frame,
-            block_x + (block_w - name.chars().count() as u16) / 2,
+            block_x + (block_w - width_u16(name)) / 2,
             name_y,
             name,
         );
     };
-    let block_w = |name: &str, pct: &str| name.chars().count().max(pct.chars().count()) as u16;
+    let block_w = |name: &str, pct: &str| width_u16(name).max(width_u16(pct));
 
     let left_x = tip_x(CENTER - x_arm)
         .saturating_sub(block_w(&names[3], &pcts[3]) + 1)
@@ -297,6 +289,37 @@ mod tests {
         // Side names straddle the horizontal axis row.
         assert_eq!(find_row(buf, area, "beta"), Some(13));
         assert_eq!(find_row(buf, area, "Others"), Some(13));
+    }
+
+    #[test]
+    fn cjk_side_labels_reserve_terminal_cells_for_square_chart_geometry() {
+        let area = Rect::new(0, 0, 36, 24);
+        let mut axes = sample_axes();
+        axes[1].label = "中文模型".to_string();
+        axes[3].label = "其他模型".to_string();
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        let frame = terminal
+            .draw(|f| {
+                render_radar(
+                    f,
+                    area,
+                    &axes,
+                    Color::Cyan,
+                    Color::DarkGray,
+                    Color::Green,
+                    Color::Black,
+                )
+            })
+            .unwrap();
+        let buf = frame.buffer;
+
+        // Each side label is eight terminal cells, so nine-cell flanks
+        // constrain the chart to 18x9 and center its top caption at row 8.
+        assert_eq!(find_row(buf, area, "alpha"), Some(8));
+        // Wide glyph continuation cells prevent direct whole-label matching
+        // against the raw ratatui buffer, so locate each caption by its head.
+        assert_eq!(find_row(buf, area, "中"), Some(12));
+        assert_eq!(find_row(buf, area, "其"), Some(12));
     }
 
     #[test]

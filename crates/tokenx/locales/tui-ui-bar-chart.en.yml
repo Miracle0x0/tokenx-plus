@@ -1,4 +1,0 @@
-tui:
-  ui:
-    bar_chart:
-      peak: "peak %{max}"

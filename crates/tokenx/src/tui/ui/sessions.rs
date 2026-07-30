@@ -12,8 +12,9 @@ use super::widgets::{
     format_cost, format_tokens, get_client_display_name, truncate_display_width,
     viewport_scrollbar_state,
 };
+use crate::date_display::format_timestamp as format_local_timestamp;
+use crate::terminal_text::pad_left;
 use crate::tui::actions::ActionSet;
-use crate::tui::date::format_timestamp as format_local_timestamp;
 use crate::tui::local_usage::LocalUsageStatus;
 use crate::tui::model::TuiModel;
 use crate::tui::page_state::PageStates;
@@ -117,7 +118,11 @@ fn session_table_layout(
 }
 
 fn right_aligned_cell(value: impl AsRef<str>, width: usize) -> Cell<'static> {
-    Cell::from(format!("{:>width$}", value.as_ref()))
+    Cell::from(right_aligned_text(value.as_ref(), width))
+}
+
+fn right_aligned_text(value: &str, width: usize) -> String {
+    pad_left(value, width)
 }
 
 fn client_column_label(column: ClientColumn) -> std::borrow::Cow<'static, str> {
@@ -576,6 +581,14 @@ mod tests {
     #[test]
     fn client_header_has_no_duplicate_left_padding() {
         assert_eq!(client_column_label(ClientColumn::Client).as_ref(), "Client");
+    }
+
+    #[test]
+    fn right_aligned_headers_measure_terminal_cells() {
+        assert_eq!(right_aligned_text("Main", 6), "  Main");
+        assert_eq!(right_aligned_text("主会话", 6), "主会话");
+        assert_eq!(right_aligned_text("总计", 6), "  总计");
+        assert_eq!(right_aligned_text("活跃时间", 12), "    活跃时间");
     }
 
     #[test]

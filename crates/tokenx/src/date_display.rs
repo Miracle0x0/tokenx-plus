@@ -73,8 +73,13 @@ pub(crate) fn format_month_year(date: NaiveDate) -> String {
 }
 
 pub(crate) fn format_month_separator(date: NaiveDate) -> String {
+    format_month_separator_for_locale(date, &rust_i18n::locale())
+}
+
+pub(crate) fn format_month_separator_for_locale(date: NaiveDate, locale: &str) -> String {
     rust_i18n::t!(
         "tui.date.month_separator",
+        locale = locale,
         month = format!("{:02}", date.month()),
         year = date.year()
     )
@@ -112,8 +117,13 @@ pub(crate) fn format_year_month_day(date: NaiveDate) -> String {
 }
 
 pub(crate) fn format_timestamp(datetime: NaiveDateTime) -> String {
+    format_timestamp_for_locale(datetime, &rust_i18n::locale())
+}
+
+fn format_timestamp_for_locale(datetime: NaiveDateTime, locale: &str) -> String {
     rust_i18n::t!(
         "tui.date.timestamp",
+        locale = locale,
         month = format!("{:02}", datetime.month()),
         day = format!("{:02}", datetime.day()),
         hour = format!("{:02}", datetime.hour()),
@@ -142,23 +152,35 @@ pub(crate) fn format_period_label(
 ) -> String {
     match kind {
         PeriodKind::Monthly => month_name(start.month(), short).into_owned(),
-        PeriodKind::Weekly if short => rust_i18n::t!(
-            "tui.date.week_short",
-            week = format!("{:02}", start.iso_week().week())
-        )
-        .into_owned(),
-        PeriodKind::Weekly => rust_i18n::t!(
-            "tui.date.week_range",
-            week = format!("{:02}", start.iso_week().week()),
-            start = format_month_day(start),
-            end = format_month_day(end)
-        )
-        .into_owned(),
+        PeriodKind::Weekly => {
+            format_weekly_period_label_for_locale(start, end, short, &rust_i18n::locale())
+        }
     }
+}
+
+fn format_weekly_period_label_for_locale(
+    start: NaiveDate,
+    end: NaiveDate,
+    _short: bool,
+    locale: &str,
+) -> String {
+    let compact_month_day = |date: NaiveDate| format!("{:02}/{:02}", date.month(), date.day());
+
+    rust_i18n::t!(
+        "tui.date.week_range",
+        locale = locale,
+        week = format!("{:02}", start.iso_week().week()),
+        start = compact_month_day(start),
+        end = compact_month_day(end)
+    )
+    .into_owned()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::terminal_text::width_u16;
+
     #[test]
     fn chinese_full_date_has_only_one_month_suffix() {
         let rendered = rust_i18n::t!(
@@ -182,5 +204,45 @@ mod tests {
             period = period
         );
         assert_eq!(rendered, "上午9点");
+    }
+
+    #[test]
+    fn weekly_period_labels_share_one_compact_numeric_contract() {
+        let start = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 8, 2).unwrap();
+
+        for short in [false, true] {
+            assert_eq!(
+                format_weekly_period_label_for_locale(start, end, short, "en"),
+                "Week31  07/27–08/02"
+            );
+            assert_eq!(
+                format_weekly_period_label_for_locale(start, end, short, "zh-CN"),
+                "第31周  07/27–08/02"
+            );
+        }
+    }
+
+    #[test]
+    fn timestamps_share_one_compact_numeric_contract() {
+        let datetime = NaiveDate::from_ymd_opt(2026, 7, 29)
+            .unwrap()
+            .and_hms_opt(20, 35, 0)
+            .unwrap();
+
+        for locale in ["en", "zh-CN"] {
+            let rendered = format_timestamp_for_locale(datetime, locale);
+            assert_eq!(rendered, "07/29 20:35");
+            assert_eq!(width_u16(&rendered), 11);
+        }
+    }
+
+    #[test]
+    fn chinese_month_separator_width_includes_both_suffixes() {
+        let date = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let rendered = format_month_separator_for_locale(date, "zh-CN");
+
+        assert_eq!(rendered, "2026年07月");
+        assert_eq!(width_u16(&rendered), 10);
     }
 }

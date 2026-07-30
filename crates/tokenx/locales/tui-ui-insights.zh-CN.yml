@@ -37,3 +37,27 @@ tui:
         tier3: "弼马温"
         tier4: "御马监"
         tier5: "齐天大圣"
+    bar_chart:
+      peak: "峰值 %{max}"
+    portraits:
+      slogan:
+        gpt: "最后还得找我~"
+        claude: "你说得完全正确！"
+        gemini: "你真是太棒了"
+        xai: "最大限度求真"
+        mimo: "我流口水"
+        minimax: "我不爱刷榜"
+        qwen: "我这次是真学会了"
+        kimi: "我不是区（我去，真的不是区）"
+        glm: "蒸馏之神,不解释"
+        deepseek: "杂鱼 杂鱼"
+        mistral: "风往哪吹？"
+        unknown: "……"
+    profile:
+      heading: "工作最活跃的时段"
+      no_data: "暂无数据"
+      date_range: "%{start} 至 %{end}"
+      summary_tokens: "%{count} 个令牌"
+      tokens_unit: " 个令牌"
+      switch_press: "按 "
+      switch_to_table: " 切换到表格视图"

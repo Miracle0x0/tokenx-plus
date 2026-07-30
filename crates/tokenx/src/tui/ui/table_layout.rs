@@ -1,6 +1,7 @@
 use ratatui::layout::Flex;
 use ratatui::prelude::{Constraint, Margin, Rect};
-use unicode_width::UnicodeWidthStr;
+
+use crate::terminal_text::width_u16;
 
 pub(crate) const TABLE_COLUMN_SPACING: u16 = 1;
 pub(crate) const TABLE_EDGE_PADDING: u16 = 1;
@@ -106,7 +107,7 @@ pub(crate) fn width_for_column<C: Copy + PartialEq>(
 }
 
 pub(crate) fn display_width(s: &str) -> u16 {
-    s.width().min(usize::from(u16::MAX)) as u16
+    width_u16(s)
 }
 
 pub(crate) fn spaced_width(widths: &[u16]) -> u16 {

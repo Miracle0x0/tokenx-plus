@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use unicode_width::UnicodeWidthStr;
 
 use super::bar_chart::{render_stacked_bar_chart, ModelSegment, StackedBarData};
 use super::empty_state;
+use crate::date_display::format_numeric_month_day;
+use crate::terminal_text::{truncate_with_ellipsis, width};
 use crate::tui::actions::ActionSet;
-use crate::tui::date::format_numeric_month_day;
 use crate::tui::model::{ChartGranularity, TuiModel};
 use crate::tui::page_state::PageStates;
 use crate::tui::presentation::EmptySubject;
@@ -277,12 +277,12 @@ fn visible_legend_count<'a>(
 
     for model in models.iter().copied().take(limit) {
         let display_name = truncate_string(model, name_width);
-        let item_width = "■".width() + 1 + display_name.width();
-        let gap_width = if visible_count == 0 { 0 } else { "  ".width() };
+        let item_width = width("■") + 1 + width(&display_name);
+        let gap_width = if visible_count == 0 { 0 } else { width("  ") };
         // While accepting this item would still leave hidden models, reserve
         // room for the `+N` suffix so it too renders completely.
         let suffix_width = if visible_count + 1 < models.len() {
-            "  ".width() + format!("+{}", models.len() - visible_count - 1).width()
+            width("  ") + width(&format!("+{}", models.len() - visible_count - 1))
         } else {
             0
         };
@@ -298,17 +298,8 @@ fn visible_legend_count<'a>(
     visible_count
 }
 
-fn truncate_string(value: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    if max_chars == 1 {
-        return "…".to_string();
-    }
-    format!("{}…", value.chars().take(max_chars - 1).collect::<String>())
+fn truncate_string(value: &str, max_width: usize) -> String {
+    truncate_with_ellipsis(value, max_width)
 }
 
 #[cfg(test)]
@@ -494,7 +485,7 @@ mod tests {
         let lines = buffer_lines(&terminal);
         let title_row = lines
             .iter()
-            .position(|line| line.contains("Tokens per Day"))
+            .position(|line| line.contains("Token per Day"))
             .expect("chart box title should render");
         let top_border = &lines[title_row];
         assert!(top_border.starts_with('┌'), "{top_border}");

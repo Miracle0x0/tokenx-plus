@@ -64,7 +64,7 @@ The TUI lifecycle is:
 - entering Subscription starts at most one automatic fetch in a TUI session;
 - `u` explicitly starts a Subscription Usage fetch;
 - Subscription accepts only subscription actions plus shell navigation, theme,
-  and quit actions;
+  language, and quit actions;
 - local-usage `r`, `R`, `+`, `-`, and `e` actions are unavailable while Subscription
   is active; and
 - Subscription Usage is never polled in the background.
@@ -153,6 +153,13 @@ service dispatch attaches the requested `ProviderId` to each successful
 payload, and presentation derives the human-readable provider label from that
 typed identity. Provider parsers therefore cannot create a second display-name
 identity that diverges from settings, cache, or dispatch.
+
+The cache payload and cache identity are locale-neutral. Provider adapters
+retain canonical metric labels, raw reset timestamps, and semantic diagnostic
+codes with structured fields. The TUI presentation adapter alone translates
+known labels, relative reset prose, stale/account decoration, and diagnostics.
+Changing the interface locale neither invalidates nor rewrites an otherwise
+fresh cache.
 
 The envelope and nested normalized types reject unknown fields. Wrong schema or
 version, malformed data, and cache I/O failures are explicit Subscription-tab cache

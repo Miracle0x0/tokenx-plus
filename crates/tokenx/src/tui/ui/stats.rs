@@ -1,13 +1,14 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use chrono::{Datelike, Timelike, Weekday};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::date_display::{format_full_date, month_name, weekday_name};
+use crate::terminal_text::{truncate as truncate_terminal_text, width as text_width, width_u16};
 use crate::tui::actions::ActionSet;
 use crate::tui::data::{ContributionDay, ContributionGrade, DailyClientInfo, DailyUsage};
-use crate::tui::date::{format_full_date, month_name, weekday_name};
 use crate::tui::intent::Intent;
 use crate::tui::model::TuiModel;
 use crate::tui::presentation::EmptySubject;
@@ -31,28 +32,25 @@ const CONTRIBUTION_GRADES: [ContributionGrade; 5] = [
 /// Display width of the legend row: labels plus one separating space each,
 /// the grade cells, and the gaps between them.
 fn legend_width(less_label: &str, more_label: &str) -> u16 {
-    UnicodeWidthStr::width(less_label) as u16
+    width_u16(less_label)
         + 1
-        + UnicodeWidthStr::width(more_label) as u16
+        + width_u16(more_label)
         + 1
         + CELL_WIDTH * CONTRIBUTION_GRADES.len() as u16
         + CONTRIBUTION_GRADES.len() as u16
         - 1
 }
 
+fn streak_days_for_locale(count: u32, locale: &str) -> Cow<'static, str> {
+    rust_i18n::t!(
+        "tui.ui.stats.metrics_days",
+        locale = locale,
+        count = count.to_string()
+    )
+}
+
 fn truncate_to_display_width(label: &str, max_width: usize) -> String {
-    let mut width = 0;
-    label
-        .chars()
-        .take_while(|ch| {
-            let ch_width = UnicodeWidthChar::width(*ch).unwrap_or(0);
-            if width + ch_width > max_width {
-                return false;
-            }
-            width += ch_width;
-            true
-        })
-        .collect()
+    truncate_terminal_text(label, max_width)
 }
 
 const GRAPH_PANEL_H: u16 = 14;
@@ -274,7 +272,7 @@ fn render_graph(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifac
                 continue;
             }
             let month_label = month_name((month_idx + 1) as u32, true);
-            let month_width = UnicodeWidthStr::width(month_label.as_ref()) as u16;
+            let month_width = width_u16(month_label.as_ref());
             if month_width == 0 {
                 continue;
             }
@@ -330,7 +328,7 @@ fn render_graph_metrics(
                 Style::default().fg(app.theme.text.secondary),
             ),
             Span::styled(
-                format!("{}d", app.usage().current_streak),
+                streak_days_for_locale(app.usage().current_streak, &rust_i18n::locale()),
                 Style::default().fg(app.theme.metrics.total),
             ),
             Span::styled(
@@ -338,7 +336,7 @@ fn render_graph_metrics(
                 Style::default().fg(app.theme.text.secondary),
             ),
             Span::styled(
-                format!("{}d", app.usage().longest_streak),
+                streak_days_for_locale(app.usage().longest_streak, &rust_i18n::locale()),
                 Style::default().fg(app.theme.metrics.total),
             ),
             Span::styled(
@@ -384,7 +382,7 @@ fn render_graph_metrics(
         );
 
         let hint = rust_i18n::t!("tui.ui.stats.graph_hint");
-        let hint_width = UnicodeWidthStr::width(hint.as_ref()) as u16;
+        let hint_width = width_u16(hint.as_ref());
         let legend_end = content
             .x
             .saturating_add(legend_width(&less_label, &more_label));
@@ -639,7 +637,7 @@ fn render_day_stats_lines(
         let percentage = model.tokens.saturating_mul(100) / denominator;
         let value = format!("{} ({}%)", format_tokens(model.tokens), percentage);
         let name_budget = (area.width as usize)
-            .saturating_sub(UnicodeWidthStr::width(value.as_str()) + 12)
+            .saturating_sub(text_width(value.as_str()) + 12)
             .max(4);
         let model_color = app.model_color(&model.canonical_id);
         rows.push(StatRow::KeyVal(
@@ -675,7 +673,7 @@ fn render_day_stats_lines(
             let value = format!("{} ({}%)", format_tokens(client_tokens), percentage);
             let display_name = get_client_display_name(client);
             let name_budget = (area.width as usize)
-                .saturating_sub(UnicodeWidthStr::width(value.as_str()) + 14)
+                .saturating_sub(text_width(value.as_str()) + 14)
                 .max(4);
             rows.push(StatRow::KeyVal(
                 Line::from(vec![
@@ -761,7 +759,7 @@ fn render_day_stats_lines(
             }
             StatRow::KeyVal(left, value) => {
                 frame.render_widget(Paragraph::new(left), Rect::new(area.x, y, area.width, 1));
-                let value_width = UnicodeWidthStr::width(value.as_str()) as u16;
+                let value_width = width_u16(value.as_str());
                 if area.width > value_width {
                     frame.render_widget(
                         Paragraph::new(Line::from(Span::styled(
@@ -842,6 +840,12 @@ mod tests {
     use chrono::NaiveDate;
     use ratatui::{backend::TestBackend, Terminal};
     use std::collections::BTreeSet;
+
+    #[test]
+    fn streak_day_unit_uses_the_requested_locale() {
+        assert_eq!(streak_days_for_locale(31, "en"), "31d");
+        assert_eq!(streak_days_for_locale(31, "zh-CN"), "31天");
+    }
 
     fn make_app(width: u16) -> TuiModel {
         let mut app = TuiModel::new_for_test(TuiConfig {

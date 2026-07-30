@@ -4,8 +4,8 @@
 use std::borrow::Cow;
 
 use ratatui::prelude::*;
-use unicode_width::UnicodeWidthStr;
 
+use crate::terminal_text::width;
 use crate::tui::model::TuiModel;
 use crate::tui::model_family::ModelFamily;
 
@@ -26,7 +26,7 @@ pub(super) fn display_name(family: ModelFamily) -> &'static str {
     }
 }
 
-pub(super) fn slogan(family: ModelFamily) -> &'static str {
+pub(super) fn slogan(family: ModelFamily) -> Cow<'static, str> {
     let key = match family {
         ModelFamily::Gpt => "tui.ui.portraits.slogan.gpt",
         ModelFamily::Claude => "tui.ui.portraits.slogan.claude",
@@ -41,12 +41,7 @@ pub(super) fn slogan(family: ModelFamily) -> &'static str {
         ModelFamily::Mistral => "tui.ui.portraits.slogan.mistral",
         ModelFamily::Unknown => "tui.ui.portraits.slogan.unknown",
     };
-    // Configured translations are borrowed straight from the static backend;
-    // the owned arm only fires when a key is missing from every locale.
-    match rust_i18n::t!(key) {
-        Cow::Borrowed(text) => text,
-        Cow::Owned(text) => Box::leak(text.into_boxed_str()),
-    }
+    rust_i18n::t!(key)
 }
 
 /// Fixed brand color per family (logo primary colors), adapted through the
@@ -99,13 +94,9 @@ pub(super) fn lines(app: &TuiModel, family: ModelFamily) -> [Line<'static>; PORT
 
 fn styled_lines(family: ModelFamily, color: Color) -> [Line<'static>; PORTRAIT_HEIGHT] {
     let art = portrait(family);
-    let block_width = art
-        .iter()
-        .map(|row| UnicodeWidthStr::width(*row))
-        .max()
-        .unwrap_or(0);
+    let block_width = art.iter().map(|row| width(row)).max().unwrap_or(0);
     art.map(|row| {
-        let padding_width = block_width - UnicodeWidthStr::width(row);
+        let padding_width = block_width - width(row);
         Line::from(vec![
             Span::styled(row, Style::default().fg(color)),
             Span::raw(&ROW_PADDING[..padding_width]),
@@ -134,11 +125,7 @@ mod tests {
             ModelFamily::Unknown,
         ] {
             let art = portrait(family);
-            let width = art
-                .iter()
-                .map(|row| UnicodeWidthStr::width(*row))
-                .max()
-                .unwrap();
+            let width = art.iter().map(|row| width(row)).max().unwrap();
             assert!(width <= 16, "portrait too wide for the column: {width}");
 
             let lines = styled_lines(family, Color::White);
@@ -153,7 +140,7 @@ mod tests {
         assert!(
             portrait(ModelFamily::Qwen)
                 .iter()
-                .any(|row| row.chars().count() != UnicodeWidthStr::width(*row)),
+                .any(|row| row.chars().count() != width(row)),
             "fixture must retain a combining-mark row that exercises display width"
         );
     }

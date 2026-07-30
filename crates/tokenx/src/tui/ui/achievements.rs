@@ -4,8 +4,8 @@
 use std::borrow::Cow;
 
 use ratatui::prelude::*;
-use unicode_width::UnicodeWidthStr;
 
+use crate::terminal_text::width;
 use crate::tui::data::CacheRate;
 use crate::tui::themes::Theme;
 
@@ -174,7 +174,7 @@ fn ladder_line(theme: &Theme, achievement: &Achievement) -> Line<'static> {
 
 /// Display width limited to what the ladders need (CJK counts double).
 fn text_width(text: &str) -> usize {
-    UnicodeWidthStr::width(text)
+    width(text)
 }
 
 #[cfg(test)]

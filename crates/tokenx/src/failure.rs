@@ -3,7 +3,7 @@ use std::fmt;
 use tokenx_engine::AcquisitionError;
 
 use crate::product_paths::ProductPathsError;
-use crate::settings::SettingsLoadError;
+use crate::settings::{SettingsLoadError, SettingsValidationError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FailureClass {
@@ -76,6 +76,12 @@ impl From<ProductPathsError> for CliFailure {
 
 impl fmt::Display for CliFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(error) = self.error.downcast_ref::<SettingsLoadError>() {
+            return formatter.write_str(&localized_settings_error(error));
+        }
+        if let Some(error) = self.error.downcast_ref::<ProductPathsError>() {
+            return formatter.write_str(&localized_product_paths_error(error));
+        }
         if self.error.is::<AcquisitionError>() {
             for (index, cause) in self.error.chain().enumerate() {
                 if index > 0 {
@@ -89,6 +95,70 @@ impl fmt::Display for CliFailure {
             return Ok(());
         }
         write!(formatter, "{:#}", self.error)
+    }
+}
+
+fn localized_settings_error(error: &SettingsLoadError) -> String {
+    match error {
+        SettingsLoadError::Read { path, source } => rust_i18n::t!(
+            "settings.error.read",
+            path = path.display().to_string(),
+            source = source.to_string()
+        )
+        .into_owned(),
+        SettingsLoadError::Parse { path, source } => rust_i18n::t!(
+            "settings.error.parse",
+            path = path.display().to_string(),
+            source = source.to_string()
+        )
+        .into_owned(),
+        SettingsLoadError::Invalid { path, source } => rust_i18n::t!(
+            "settings.error.invalid",
+            path = path.display().to_string(),
+            source = localized_settings_validation_error(source)
+        )
+        .into_owned(),
+    }
+}
+
+fn localized_settings_validation_error(error: &SettingsValidationError) -> String {
+    match error {
+        SettingsValidationError::AutoRefreshRange { value, min, max } => rust_i18n::t!(
+            "settings.error.auto_refresh_range",
+            value = value.to_string(),
+            min = min.to_string(),
+            max = max.to_string()
+        )
+        .into_owned(),
+        SettingsValidationError::Scanner(source) => rust_i18n::t!(
+            "settings.error.invalid_scanner",
+            source = source.to_string()
+        )
+        .into_owned(),
+        SettingsValidationError::DuplicateSubscriptionProvider { provider } => rust_i18n::t!(
+            "settings.error.duplicate_subscription_provider",
+            provider = *provider
+        )
+        .into_owned(),
+    }
+}
+
+fn localized_product_paths_error(error: &ProductPathsError) -> String {
+    match error {
+        ProductPathsError::HomeUnavailable => {
+            rust_i18n::t!("paths.error.home_unavailable").into_owned()
+        }
+        ProductPathsError::RelativeProductRoot { path } => rust_i18n::t!(
+            "paths.error.relative_product_root",
+            path = path.display().to_string()
+        )
+        .into_owned(),
+        ProductPathsError::RelativeOverride { variable, path } => rust_i18n::t!(
+            "paths.error.relative_override",
+            variable = *variable,
+            path = path.display().to_string()
+        )
+        .into_owned(),
     }
 }
 

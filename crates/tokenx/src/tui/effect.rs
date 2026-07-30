@@ -47,7 +47,7 @@ pub(crate) enum EffectOutcome {
         result: Result<(), String>,
     },
     SubscriptionCachePersisted {
-        result: Result<(), String>,
+        result: anyhow::Result<()>,
     },
 }
 
@@ -85,8 +85,7 @@ fn execute(effect: TuiEffect) -> EffectOutcome {
         }
         TuiEffect::PersistSubscriptionCache { path, outputs } => {
             EffectOutcome::SubscriptionCachePersisted {
-                result: crate::subscription::cache::save(&path, &outputs)
-                    .map_err(|error| format!("{error:#}")),
+                result: crate::subscription::cache::save(&path, &outputs),
             }
         }
     }

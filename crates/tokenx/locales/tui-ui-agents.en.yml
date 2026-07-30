@@ -5,7 +5,7 @@ tui:
       column:
         agent: "Agent"
         client: "Client"
-        tokens: "Tokens"
+        tokens: "Token"
         cost: "Cost"
         messages: "Msgs"
         instances: "Instances"

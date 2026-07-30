@@ -9,6 +9,8 @@ use ratatui::{
 
 use tokenx_engine::GroupBy;
 
+use crate::terminal_text::width;
+use crate::tui::display_labels::group_by_label;
 use crate::tui::interaction::{HitMap, InteractionOutcome, ListInteraction, MoveCommand, WrapMode};
 use crate::tui::themes::Theme;
 
@@ -165,7 +167,7 @@ impl DialogContent for GroupByPickerDialog {
                 Style::default().fg(theme.text.secondary),
             ),
             Span::styled(
-                self.current.to_string(),
+                group_by_label(self.current),
                 Style::default().fg(theme.chrome.current),
             ),
         ]));
@@ -210,13 +212,13 @@ impl DialogContent for GroupByPickerDialog {
                 Style::default().fg(theme.text.secondary)
             };
 
-            let padding = usable.saturating_sub(left.chars().count());
+            let padding = usable.saturating_sub(width(&left));
             items.push(ListItem::new(Line::from(vec![
                 Span::styled(format!("  {}", left), base_style),
                 Span::styled(" ".repeat(padding), base_style),
             ])));
 
-            let desc_padding = usable.saturating_sub(desc.chars().count());
+            let desc_padding = usable.saturating_sub(width(&desc));
             items.push(ListItem::new(Line::from(vec![
                 Span::styled(format!("  {}", desc), desc_style),
                 Span::styled(" ".repeat(desc_padding), desc_style),

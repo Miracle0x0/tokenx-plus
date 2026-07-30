@@ -24,11 +24,30 @@ tui:
     sort:
       field:
         cost: "Cost"
-        tokens: "Tokens"
+        tokens: "Token"
         date: "Date"
       direction:
         ascending: "Ascending"
         descending: "Descending"
+    display:
+      group_by:
+        model: "model"
+        client_model: "client,model"
+        client_provider_model: "client,provider,model"
+        workspace_model: "workspace,model"
+      theme:
+        green: "green"
+        halloween: "halloween"
+        teal: "teal"
+        blue: "blue"
+        pink: "pink"
+        purple: "purple"
+        orange: "orange"
+        monochrome: "monochrome"
+        ylgnbu: "ylgnbu"
+        graphite: "graphite"
+        lagoon: "lagoon"
+        dusk: "dusk"
     unknown_workspace: "Unknown workspace"
     pricing:
       cached_fallback: "Pricing refresh failed; using cached rates"
@@ -55,6 +74,7 @@ tui:
       refresh_requested: "Refresh requested"
       sorted_by: "Sorted by %{field} %{direction}"
       theme: "Theme: %{theme}"
+      language: "Language: %{language}"
       clients_unavailable_loading: "Clients are unavailable until local data finishes loading"
       group_by_unavailable_loading: "Group By is unavailable until local data finishes loading"
       model_details_unavailable_loading: "Model details are unavailable until local data finishes loading"
@@ -82,7 +102,7 @@ tui:
       no_providers: "No subscription providers enabled"
       fetching: "Fetching subscription..."
     copy:
-      label_tokens_cost: "%{label}: %{tokens} tokens, $%{cost}"
-      agent_row: "%{client} / %{agent}: %{tokens} tokens, $%{cost}, %{instances} instances"
-      detail_row: "%{clients} / %{model}: %{tokens} tokens, $%{cost}"
-      period_row: "%{section} %{label}: %{tokens} tokens, $%{cost}"
+      label_tokens_cost: "%{label}: %{tokens} token, $%{cost}"
+      agent_row: "%{client} / %{agent}: %{tokens} token, $%{cost}, %{instances} instances"
+      detail_row: "%{clients} / %{model}: %{tokens} token, $%{cost}"
+      period_row: "%{section} %{label}: %{tokens} token, $%{cost}"

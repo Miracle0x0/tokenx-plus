@@ -1,5 +1,0 @@
-main:
-  error:
-    runtime_init: "Error: failed to initialize async runtime: %{error}"
-    prefix_invalid: "error"
-    prefix_operational: "Error"

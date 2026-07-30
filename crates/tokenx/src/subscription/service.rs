@@ -1,5 +1,8 @@
 use super::providers;
-use super::{ProviderId, SubscriptionBatch, SubscriptionError, SubscriptionOutput};
+use super::{
+    ProviderId, SubscriptionBatch, SubscriptionError, SubscriptionIssue, SubscriptionIssueCode,
+    SubscriptionOutput,
+};
 
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
@@ -14,7 +17,12 @@ pub(crate) async fn fetch_enabled(enabled: &[ProviderId]) -> SubscriptionBatch {
                 errors: enabled
                     .iter()
                     .copied()
-                    .map(|provider| SubscriptionError::provider(provider, &error))
+                    .map(|provider| {
+                        SubscriptionError::provider(
+                            provider,
+                            SubscriptionIssue::unexpected(format!("{error:#}")),
+                        )
+                    })
                     .collect(),
             };
         }
@@ -33,8 +41,11 @@ pub(crate) async fn fetch_enabled(enabled: &[ProviderId]) -> SubscriptionBatch {
             Ok(Ok(output)) => batch.outputs.push(output),
             Ok(Err(error)) => batch.errors.push(error),
             Err(_) => batch.errors.push(SubscriptionError::global(
-                rust_i18n::t!("subscription.provider.unknown"),
-                rust_i18n::t!("subscription.error.fetch_panicked"),
+                "unknown",
+                SubscriptionIssue::new(
+                    SubscriptionIssueCode::FetchPanicked,
+                    "provider fetch panicked",
+                ),
             )),
         }
     }
@@ -65,10 +76,19 @@ where
     F: std::future::Future<Output = anyhow::Result<SubscriptionOutput>>,
 {
     match tokio::time::timeout(timeout, fetch).await {
-        Ok(result) => result.map_err(|error| SubscriptionError::provider(provider, error)),
+        Ok(result) => result.map_err(|error| {
+            SubscriptionError::provider(provider, SubscriptionIssue::from_anyhow(&error))
+        }),
         Err(_) => Err(SubscriptionError::provider(
             provider,
-            rust_i18n::t!("subscription.error.fetch_timeout", secs = timeout.as_secs()),
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::FetchTimeout,
+                format!(
+                    "provider fetch exceeded the {}s overall timeout",
+                    timeout.as_secs()
+                ),
+            )
+            .with_field("secs", timeout.as_secs()),
         )),
     }
 }
@@ -112,7 +132,7 @@ mod tests {
 
         assert_eq!(error.provider_id, Some(ProviderId::Claude));
         assert_eq!(error.provider, ProviderId::Claude.label());
-        assert!(error.message.contains("overall timeout"));
+        assert!(error.issue.message().contains("overall timeout"));
     }
 
     #[test]

@@ -37,3 +37,27 @@ tui:
         tier3: "Stableman"
         tier4: "Equerry"
         tier5: "Great Sage"
+    bar_chart:
+      peak: "peak %{max}"
+    portraits:
+      slogan:
+        gpt: "You always come back~"
+        claude: "You are absolutely right!"
+        gemini: "You're absolutely amazing"
+        xai: "Maximum truth-seeking"
+        mimo: "I'm drooling"
+        minimax: "I don't chase benchmarks"
+        qwen: "I really learned it this time"
+        kimi: "I'm not a nobody"
+        glm: "God of distillation, period"
+        deepseek: "Small fry, small fry"
+        mistral: "Which way does the wind blow?"
+        unknown: "..."
+    profile:
+      heading: "When You Work Most"
+      no_data: "No data"
+      date_range: "%{start} to %{end}"
+      summary_tokens: "%{count} token"
+      tokens_unit: " token"
+      switch_press: "Press "
+      switch_to_table: " to switch to table view"

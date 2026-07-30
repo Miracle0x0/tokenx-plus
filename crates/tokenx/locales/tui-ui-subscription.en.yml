@@ -1,0 +1,12 @@
+tui:
+  ui:
+    subscription:
+      panel_title: " Subscription "
+      prompt_fetch: "Press 'u' to fetch subscription data"
+      prompt_no_providers: "No remote subscription providers enabled; configure subscription.providers"
+      cache_notice: "Showing cached subscription data; no remote providers enabled"
+      empty: "No subscription data available"
+      percent_left: "%{percent}% left"
+      account_label: "Account"
+      plan_label: "Plan"
+      provider_errors: " Provider errors "

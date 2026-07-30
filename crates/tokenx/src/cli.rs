@@ -10,11 +10,11 @@ use clap::{
 use tokenx_engine::{CalendarContext, ClientId, ClientUniverse, DateRange, GroupBy};
 
 use crate::commands::shared::{parse_client_id_arg, resolve_client_universe};
+use crate::date_display::format_month_year;
 use crate::failure::CliFailure;
 use crate::product_paths::ProductPaths;
 use crate::settings::Settings;
 use crate::theme::ThemeName;
-use crate::tui::date::format_month_year;
 use crate::tui::Tab;
 
 #[derive(Parser, Debug)]

@@ -21,11 +21,11 @@ use super::widgets::{
     total_tokens_cell, truncate_display_width, truncate_model_display_name_to,
     viewport_scrollbar_state, workspace_label_or_unknown, MODEL_DISPLAY_MAX_WIDTH,
 };
-use crate::tui::actions::ActionSet;
-use crate::tui::data::DailyUsage;
-use crate::tui::date::{
+use crate::date_display::{
     format_day_weekday, format_month_separator as localized_month_separator, format_year_month_day,
 };
+use crate::tui::actions::ActionSet;
+use crate::tui::data::DailyUsage;
 use crate::tui::model::{SortDirection, SortField, TuiModel};
 use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
@@ -33,7 +33,7 @@ use crate::tui::render_artifacts::RenderArtifacts;
 use tokenx_engine::ClientId;
 use tokenx_engine::GroupBy;
 
-const DATE_WIDTH: u16 = 7;
+const DATE_MIN_WIDTH: u16 = 7;
 const TURN_WIDTH: u16 = 6;
 const MSGS_WIDTH: u16 = 6;
 const NUMERIC_WIDTH: u16 = 10;
@@ -131,6 +131,7 @@ fn daily_column_order(column: DailyColumn) -> u16 {
 }
 
 fn daily_columns(
+    date_content_width: u16,
     has_turn_data: bool,
     top_client_content_width: u16,
     top_model_content_width: u16,
@@ -155,7 +156,7 @@ fn daily_columns(
         ResponsiveColumn::fixed_required(
             DailyColumn::Date,
             daily_column_order(DailyColumn::Date),
-            DATE_WIDTH,
+            date_content_width.max(DATE_MIN_WIDTH),
         ),
         ResponsiveColumn::fixed_required(
             DailyColumn::Total,
@@ -241,11 +242,13 @@ fn daily_columns(
 
 fn daily_table_layout(
     table_width: u16,
+    date_content_width: u16,
     has_turn_data: bool,
     top_client_content_width: u16,
     top_model_content_width: u16,
 ) -> DailyTableLayout {
     let specs = daily_columns(
+        date_content_width,
         has_turn_data,
         top_client_content_width,
         top_model_content_width,
@@ -499,6 +502,16 @@ pub fn render(
         .filter_map(|day| top_daily_model(day).map(|model| display_width(&model.label)))
         .max()
         .unwrap_or(MODEL_TOP_MIN_WIDTH);
+    let date_content_width = ordered_daily()
+        .flat_map(|day| {
+            [
+                display_width(&format_daily_row_date(day.date)),
+                display_width(&format_month_separator(day.date)),
+            ]
+        })
+        .max()
+        .unwrap_or(DATE_MIN_WIDTH)
+        .max(DATE_MIN_WIDTH);
     let sort_field = app.sort_field;
     let sort_direction = app.sort_direction;
     let scroll_offset = interaction.scroll;
@@ -515,6 +528,7 @@ pub fn render(
     let today = app.effective_date();
     let table_layout = daily_table_layout(
         table_area.width,
+        date_content_width,
         has_turn_data,
         top_client_content_width,
         top_model_content_width,
@@ -1081,7 +1095,13 @@ mod tests {
 
     #[test]
     fn narrow_daily_layout_keeps_date_tokens_and_cost_without_cache_columns() {
-        let layout = daily_table_layout(36, false, CLIENT_TOP_MIN_WIDTH, MODEL_TOP_MIN_WIDTH);
+        let layout = daily_table_layout(
+            36,
+            DATE_MIN_WIDTH,
+            false,
+            CLIENT_TOP_MIN_WIDTH,
+            MODEL_TOP_MIN_WIDTH,
+        );
 
         assert_eq!(layout.density, DailyTableDensity::Core);
         assert_eq!(
@@ -1096,12 +1116,18 @@ mod tests {
         assert!(!layout.columns.contains(&DailyColumn::CacheRead));
         assert!(!layout.columns.contains(&DailyColumn::CacheWrite));
         assert!(!layout.columns.contains(&DailyColumn::CacheRate));
-        assert_eq!(length_at(&layout.widths, 0), DATE_WIDTH);
+        assert_eq!(length_at(&layout.widths, 0), DATE_MIN_WIDTH);
     }
 
     #[test]
     fn narrow_daily_layout_preserves_turn_after_date_when_available() {
-        let layout = daily_table_layout(43, true, CLIENT_TOP_MIN_WIDTH, MODEL_TOP_MIN_WIDTH);
+        let layout = daily_table_layout(
+            43,
+            DATE_MIN_WIDTH,
+            true,
+            CLIENT_TOP_MIN_WIDTH,
+            MODEL_TOP_MIN_WIDTH,
+        );
 
         assert_eq!(layout.density, DailyTableDensity::Core);
         assert_eq!(
@@ -1118,7 +1144,13 @@ mod tests {
 
     #[test]
     fn daily_layout_with_turn_uses_original_priority_prefix() {
-        let layout = daily_table_layout(36, true, CLIENT_TOP_MIN_WIDTH, MODEL_TOP_MIN_WIDTH);
+        let layout = daily_table_layout(
+            36,
+            DATE_MIN_WIDTH,
+            true,
+            CLIENT_TOP_MIN_WIDTH,
+            MODEL_TOP_MIN_WIDTH,
+        );
 
         assert_eq!(
             layout.columns,
@@ -1135,7 +1167,13 @@ mod tests {
 
     #[test]
     fn portrait_daily_layout_prioritizes_top_client_and_model_before_token_details() {
-        let layout = daily_table_layout(74, false, CLIENT_TOP_MIN_WIDTH, MODEL_TOP_MIN_WIDTH);
+        let layout = daily_table_layout(
+            74,
+            DATE_MIN_WIDTH,
+            false,
+            CLIENT_TOP_MIN_WIDTH,
+            MODEL_TOP_MIN_WIDTH,
+        );
 
         assert_eq!(layout.density, DailyTableDensity::Detail);
         assert_eq!(
@@ -1158,7 +1196,13 @@ mod tests {
 
     #[test]
     fn narrow_daily_layout_uses_same_priority_algorithm() {
-        let layout = daily_table_layout(54, true, CLIENT_TOP_MIN_WIDTH, MODEL_TOP_MIN_WIDTH);
+        let layout = daily_table_layout(
+            54,
+            DATE_MIN_WIDTH,
+            true,
+            CLIENT_TOP_MIN_WIDTH,
+            MODEL_TOP_MIN_WIDTH,
+        );
 
         assert_eq!(layout.density, DailyTableDensity::Core);
         assert_eq!(
@@ -1172,13 +1216,25 @@ mod tests {
                 DailyColumn::Cost,
             ]
         );
-        assert_eq!(length_at(&layout.widths, 0), DATE_WIDTH);
+        assert_eq!(length_at(&layout.widths, 0), DATE_MIN_WIDTH);
     }
 
     #[test]
     fn cache_columns_only_appear_in_full_daily_layout() {
-        let detail = daily_table_layout(74, false, CLIENT_TOP_MIN_WIDTH, MODEL_TOP_MIN_WIDTH);
-        let full = daily_table_layout(130, false, CLIENT_TOP_MIN_WIDTH, MODEL_TOP_MIN_WIDTH);
+        let detail = daily_table_layout(
+            74,
+            DATE_MIN_WIDTH,
+            false,
+            CLIENT_TOP_MIN_WIDTH,
+            MODEL_TOP_MIN_WIDTH,
+        );
+        let full = daily_table_layout(
+            130,
+            DATE_MIN_WIDTH,
+            false,
+            CLIENT_TOP_MIN_WIDTH,
+            MODEL_TOP_MIN_WIDTH,
+        );
 
         assert_eq!(detail.density, DailyTableDensity::Detail);
         assert_eq!(full.density, DailyTableDensity::Full);
@@ -1186,6 +1242,25 @@ mod tests {
         assert!(full.columns.contains(&DailyColumn::CacheWrite));
         assert!(full.columns.contains(&DailyColumn::CacheRate));
         assert!(full.columns.contains(&DailyColumn::CostPerMillion));
+    }
+
+    #[test]
+    fn daily_layout_preserves_localized_month_separator_width() {
+        let date = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let label = crate::date_display::format_month_separator_for_locale(date, "zh-CN");
+        let label_width = display_width(&label);
+        let layout = daily_table_layout(
+            80,
+            label_width,
+            false,
+            CLIENT_TOP_MIN_WIDTH,
+            MODEL_TOP_MIN_WIDTH,
+        );
+
+        assert_eq!(
+            layout.width_for(DailyColumn::Date),
+            usize::from(label_width)
+        );
     }
 
     #[test]

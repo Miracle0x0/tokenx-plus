@@ -151,7 +151,7 @@ Usage, or processing metadata. Row sorting, details, copying a row, and row hit
 areas are absent when there is no row to operate on.
 
 Subscription accepts subscription refresh and scrolling plus shell-level tab
-navigation, theme, and quit. Local-generation refresh, auto-refresh control,
+navigation, theme, language, and quit. Local-generation refresh, auto-refresh control,
 refresh-interval adjustment, and export are unavailable while Subscription is active;
 the user switches to a local-usage tab to invoke them. Subscription footer summaries
 and status never substitute constructor-default local totals or local

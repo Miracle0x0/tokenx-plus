@@ -1,0 +1,22 @@
+tui:
+  ui:
+    sessions:
+      panel_title: " Sessions "
+      detail_title: " Sessions / %{client} "
+      header:
+        client: "Client"
+        main: "Main"
+        total: "Total"
+        workspaces: "Workspaces"
+        active: "Active"
+        space: "Space"
+        session: "  Session"
+        workspace: "Workspace"
+        models: "Models"
+        messages: "Msg"
+        turns: "Turns"
+        tokens: "Token"
+        cost: "Cost"
+      status:
+        degraded: "Degraded"
+        degraded_message: "last refresh failed; showing last successful data"

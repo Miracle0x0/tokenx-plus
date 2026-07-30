@@ -1,0 +1,12 @@
+tui:
+  ui:
+    subscription:
+      panel_title: " 订阅 "
+      prompt_fetch: "按 'u' 获取订阅数据"
+      prompt_no_providers: "未启用远程订阅提供商；请配置 subscription.providers"
+      cache_notice: "正在显示缓存的订阅数据；未启用远程提供商"
+      empty: "暂无订阅数据"
+      percent_left: "剩余 %{percent}%"
+      account_label: "账户"
+      plan_label: "套餐"
+      provider_errors: " 提供商错误 "

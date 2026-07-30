@@ -4,6 +4,7 @@ subscription:
     cache: "订阅缓存"
   display:
     account: "账户 %{id}"
+    provider_account: "%{provider}（%{account}）"
     stale: "%{name}（数据已过期）"
   metric:
     session: "会话"
@@ -41,7 +42,6 @@ subscription:
     cache_unsupported_schema: "订阅缓存 `%{path}` 使用了不支持的 schema `%{schema}`"
     cache_unsupported_version: "订阅缓存 `%{path}` 使用了不支持的版本 %{version}"
     cache_future_timestamp: "订阅缓存 `%{path}` 的时间戳 %{timestamp} 来自未来（当前时间 %{now}）"
-    cache_missing_locale: "订阅缓存 `%{path}` 缺少语言环境标记"
     claude_read_credentials: "无法从 %{path} 读取 Claude 凭据"
     claude_parse_credentials: "无法解析 %{path} 中的 Claude 凭据"
     claude_no_home_or_keychain: "未找到 Claude 凭据：主目录不可用且钥匙串查询失败：%{error}"

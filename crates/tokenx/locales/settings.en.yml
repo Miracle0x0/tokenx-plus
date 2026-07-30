@@ -1,9 +1,0 @@
-settings:
-  error:
-    read: "failed to read settings file `%{path}`: %{source}"
-    parse: "failed to parse settings JSON `%{path}`: %{source}"
-    invalid: "invalid settings in `%{path}`: %{source}"
-    create_dir: "failed to create settings directory `%{path}`"
-    auto_refresh_range: "invalid autoRefreshMs %{value}; expected %{min}..=%{max}"
-    invalid_scanner: "invalid scanner settings: %{source}"
-    duplicate_subscription_provider: "duplicate subscription provider `%{provider}` in subscription.providers"

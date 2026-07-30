@@ -1,12 +1,13 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation};
 
-use crate::subscription::providers::helpers;
 use crate::subscription::{SubscriptionError, SubscriptionOutput};
+use crate::terminal_text::pad_right;
 use crate::tui::model::TuiModel;
 use crate::tui::page_state::PageStates;
 use crate::tui::presentation::SubscriptionPresentation;
 use crate::tui::render_artifacts::RenderArtifacts;
+use crate::tui::subscription_display;
 use crate::tui::themes::Theme;
 use crate::tui::ui::widgets::viewport_scrollbar_state;
 
@@ -119,37 +120,44 @@ pub(crate) fn build_subscription_lines(
         }
 
         lines.push(Line::from(Span::styled(
-            format!(" {} ", output.display_name()),
+            format!(" {} ", subscription_display::output_name(output)),
             Style::default()
                 .fg(theme.text.primary)
                 .add_modifier(Modifier::BOLD),
         )));
 
         for m in &output.metrics {
-            let remaining = m.remaining_label.clone().unwrap_or_else(|| {
-                rust_i18n::t!(
-                    "tui.ui.subscription.percent_left",
-                    percent = format!("{:.0}", m.remaining_percent)
-                )
-                .into_owned()
-            });
-            let bar = helpers::render_ascii_bar(m.remaining_percent, BAR_WIDTH);
+            let remaining = m
+                .remaining_label
+                .as_deref()
+                .map(subscription_display::remaining_label)
+                .unwrap_or_else(|| {
+                    rust_i18n::t!(
+                        "tui.ui.subscription.percent_left",
+                        percent = format!("{:.0}", m.remaining_percent)
+                    )
+                    .into_owned()
+                });
+            let bar = subscription_display::render_ascii_bar(m.remaining_percent, BAR_WIDTH);
             let reset = m
                 .resets_at
                 .as_ref()
-                .map(|r| helpers::format_reset_time(r))
+                .map(|r| subscription_display::format_reset_time(r))
                 .unwrap_or_default();
 
             let label = Span::styled(
-                format!(" {:<14}", m.label),
+                format!(
+                    " {}",
+                    pad_right(&subscription_display::metric_label(&m.label), 14)
+                ),
                 Style::default().fg(theme.text.primary),
             );
             let value = Span::styled(
-                format!("{:<11}", remaining),
+                pad_right(&remaining, 11),
                 Style::default().fg(theme.text.primary),
             );
             let bar_span = Span::styled(
-                format!("{:<24}", bar),
+                pad_right(&bar, 24),
                 Style::default().fg(if m.remaining_percent < 10.0 {
                     theme.status.danger
                 } else if m.remaining_percent < 25.0 {
@@ -164,20 +172,16 @@ pub(crate) fn build_subscription_lines(
         }
 
         if let Some(ref email) = output.email {
+            let label = rust_i18n::t!("tui.ui.subscription.account_label");
             lines.push(Line::from(Span::styled(
-                format!(
-                    " {:<12}{email}",
-                    rust_i18n::t!("tui.ui.subscription.account_label")
-                ),
+                format!(" {}{email}", pad_right(label.as_ref(), 12)),
                 Style::default().fg(theme.text.secondary),
             )));
         }
         if let Some(ref plan) = output.plan {
+            let label = rust_i18n::t!("tui.ui.subscription.plan_label");
             lines.push(Line::from(Span::styled(
-                format!(
-                    " {:<12}{plan}",
-                    rust_i18n::t!("tui.ui.subscription.plan_label")
-                ),
+                format!(" {}{plan}", pad_right(label.as_ref(), 12)),
                 Style::default().fg(theme.text.secondary),
             )));
         }
@@ -194,13 +198,14 @@ pub(crate) fn build_subscription_lines(
                 .add_modifier(Modifier::BOLD),
         )));
         for error in errors {
+            let provider = subscription_display::error_provider(error);
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!(" {:<14}", error.provider),
+                    format!(" {}", pad_right(&provider, 14)),
                     Style::default().fg(theme.text.primary),
                 ),
                 Span::styled(
-                    error.message.clone(),
+                    subscription_display::error_message(error),
                     Style::default().fg(theme.text.secondary),
                 ),
             ]));
@@ -350,7 +355,7 @@ mod tests {
         let errors = vec![SubscriptionError {
             provider_id: Some(ProviderId::MiniMaxTokenPlanCn),
             provider: "MiniMax Token Plan CN".to_string(),
-            message: "session expired".to_string(),
+            issue: crate::subscription::SubscriptionIssue::unexpected("session expired"),
         }];
 
         let lines = build_subscription_lines(&theme, &[], &errors);

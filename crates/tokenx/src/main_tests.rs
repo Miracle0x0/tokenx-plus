@@ -5,6 +5,41 @@ use crate::tui::Tab;
 use clap::Parser;
 use tokenx_engine::ClientId;
 
+/// Isolate tests that resolve product state from process environment.
+///
+/// Callers must also use `#[serial_test::serial]` because environment
+/// variables are process-global.
+struct ProductRootEnvGuard {
+    previous: Option<std::ffi::OsString>,
+    root: tempfile::TempDir,
+}
+
+impl ProductRootEnvGuard {
+    fn new() -> Self {
+        let root = tempfile::TempDir::new().unwrap();
+        let previous = std::env::var_os("TOKENX_CONFIG_DIR");
+        unsafe {
+            std::env::set_var("TOKENX_CONFIG_DIR", root.path());
+        }
+        Self { previous, root }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        self.root.path()
+    }
+}
+
+impl Drop for ProductRootEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("TOKENX_CONFIG_DIR", value),
+                None => std::env::remove_var("TOKENX_CONFIG_DIR"),
+            }
+        }
+    }
+}
+
 #[test]
 fn process_runtime_uses_bounded_worker_pool() {
     let runtime = super::build_process_runtime().expect("process runtime must build");
@@ -460,7 +495,9 @@ fn misplaced_and_equals_form_options_remain_parse_errors() {
 }
 
 #[test]
+#[serial_test::serial]
 fn models_execution_plan_does_not_depend_on_terminal_state() {
+    let _product_root = ProductRootEnvGuard::new();
     for terminal in [
         TerminalState {
             stdin: true,
@@ -493,25 +530,8 @@ fn models_execution_plan_does_not_depend_on_terminal_state() {
 #[test]
 #[serial_test::serial]
 fn early_settings_language_loader_preserves_optional_values_and_errors() {
-    struct ConfigDirGuard(Option<std::ffi::OsString>);
-    impl Drop for ConfigDirGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match self.0.take() {
-                    Some(value) => std::env::set_var("TOKENX_CONFIG_DIR", value),
-                    None => std::env::remove_var("TOKENX_CONFIG_DIR"),
-                }
-            }
-        }
-    }
-
-    let product_root = tempfile::TempDir::new().unwrap();
+    let product_root = ProductRootEnvGuard::new();
     let settings_path = product_root.path().join("settings.json");
-    let previous_config_dir = std::env::var_os("TOKENX_CONFIG_DIR");
-    unsafe {
-        std::env::set_var("TOKENX_CONFIG_DIR", product_root.path());
-    }
-    let _guard = ConfigDirGuard(previous_config_dir);
 
     assert_eq!(super::load_settings_language().unwrap(), None);
 
@@ -538,26 +558,9 @@ fn early_settings_language_loader_preserves_optional_values_and_errors() {
 #[test]
 #[serial_test::serial]
 fn one_startup_snapshot_resolves_all_settings_driven_policy() {
-    struct ConfigDirGuard(Option<std::ffi::OsString>);
-    impl Drop for ConfigDirGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match self.0.take() {
-                    Some(value) => std::env::set_var("TOKENX_CONFIG_DIR", value),
-                    None => std::env::remove_var("TOKENX_CONFIG_DIR"),
-                }
-            }
-        }
-    }
-
     let input_home = tempfile::TempDir::new().unwrap();
-    let product_root = tempfile::TempDir::new().unwrap();
+    let product_root = ProductRootEnvGuard::new();
     let settings_path = product_root.path().join("settings.json");
-    let previous_config_dir = std::env::var_os("TOKENX_CONFIG_DIR");
-    unsafe {
-        std::env::set_var("TOKENX_CONFIG_DIR", product_root.path());
-    }
-    let _guard = ConfigDirGuard(previous_config_dir);
 
     let decoy_settings = input_home.path().join(".tokenx").join("settings.json");
     std::fs::create_dir_all(decoy_settings.parent().unwrap()).unwrap();
@@ -672,7 +675,9 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
 }
 
 #[test]
+#[serial_test::serial]
 fn json_models_plan_preserves_explicit_no_spinner() {
+    let _product_root = ProductRootEnvGuard::new();
     let home = tempfile::TempDir::new().unwrap();
     let home = home.path().to_str().unwrap();
     let resolve = |explicit_no_spinner: bool| {
@@ -754,7 +759,9 @@ fn tui_tab_accepts_every_tui_tab_name() {
 }
 
 #[test]
+#[serial_test::serial]
 fn tui_execution_plan_rejects_disabled_optional_tab() {
+    let _product_root = ProductRootEnvGuard::new();
     let home = tempfile::TempDir::new().unwrap();
     let cli = Cli::try_parse_from([
         "tokenx",
@@ -778,7 +785,9 @@ fn tui_execution_plan_rejects_disabled_optional_tab() {
 }
 
 #[test]
+#[serial_test::serial]
 fn resolve_rejects_reversed_custom_date_range() {
+    let _product_root = ProductRootEnvGuard::new();
     let cli = Cli::try_parse_from([
         "tokenx",
         "models",

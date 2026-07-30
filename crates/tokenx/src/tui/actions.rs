@@ -19,6 +19,7 @@ pub(crate) enum Action {
     Clients,
     GroupBy,
     Theme,
+    Language,
     ToggleAutoRefresh,
     IncreaseRefreshInterval,
     DecreaseRefreshInterval,
@@ -58,6 +59,7 @@ impl ActionSet {
                 Action::NextTab,
                 Action::Theme,
                 Action::ToggleAutoRefresh,
+                Action::Language,
                 Action::IncreaseRefreshInterval,
                 Action::DecreaseRefreshInterval,
                 Action::Export,
@@ -89,7 +91,7 @@ impl ActionSet {
             }
         }
 
-        actions.extend([Action::Theme, Action::ToggleAutoRefresh]);
+        actions.extend([Action::Theme, Action::ToggleAutoRefresh, Action::Language]);
         actions.extend([
             Action::IncreaseRefreshInterval,
             Action::DecreaseRefreshInterval,
@@ -128,7 +130,12 @@ impl ActionSet {
         if matches!(presentation, SubscriptionPresentation::Results { .. }) {
             actions.push(Action::Scroll);
         }
-        actions.extend([Action::PreviousTab, Action::NextTab, Action::Theme]);
+        actions.extend([
+            Action::PreviousTab,
+            Action::NextTab,
+            Action::Theme,
+            Action::Language,
+        ]);
         if app.has_enabled_subscription_providers() && !presentation.is_refreshing() {
             actions.push(Action::RefreshSubscription);
         }
@@ -311,6 +318,7 @@ mod tests {
             Action::NextTab,
             Action::Theme,
             Action::ToggleAutoRefresh,
+            Action::Language,
             Action::IncreaseRefreshInterval,
             Action::DecreaseRefreshInterval,
             Action::Export,
@@ -379,7 +387,7 @@ mod tests {
         app.replace_subscription_errors_for_test(vec![crate::subscription::SubscriptionError {
             provider_id: Some(crate::subscription::ProviderId::Claude),
             provider: "Claude".to_string(),
-            message: "credential expired".to_string(),
+            issue: crate::subscription::SubscriptionIssue::unexpected("credential expired"),
         }]);
 
         let set = action_set(&app, &PageStates::default());
@@ -389,6 +397,7 @@ mod tests {
             Action::PreviousTab,
             Action::NextTab,
             Action::Theme,
+            Action::Language,
             Action::RefreshSubscription,
             Action::Quit,
         ] {

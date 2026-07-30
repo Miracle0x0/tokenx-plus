@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+use super::{SubscriptionIssue, SubscriptionIssueCode};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) enum ProviderId {
     #[serde(rename = "claude")]
@@ -96,23 +98,23 @@ pub(crate) struct UsageAccount {
 pub(crate) struct SubscriptionError {
     pub provider_id: Option<ProviderId>,
     pub provider: String,
-    pub message: String,
+    pub issue: SubscriptionIssue,
 }
 
 impl SubscriptionError {
-    pub(crate) fn global(provider: impl Into<String>, error: impl std::fmt::Display) -> Self {
+    pub(crate) fn global(provider: impl Into<String>, issue: SubscriptionIssue) -> Self {
         Self {
             provider_id: None,
             provider: provider.into(),
-            message: error.to_string(),
+            issue,
         }
     }
 
-    pub(crate) fn provider(provider: ProviderId, error: impl std::fmt::Display) -> Self {
+    pub(crate) fn provider(provider: ProviderId, issue: SubscriptionIssue) -> Self {
         Self {
             provider_id: Some(provider),
             provider: provider.label().to_string(),
-            message: error.to_string(),
+            issue,
         }
     }
 
@@ -196,8 +198,8 @@ impl SubscriptionState {
             Err(error) => (
                 Vec::new(),
                 vec![SubscriptionError::global(
-                    rust_i18n::t!("subscription.provider.cache"),
-                    error,
+                    "Subscription cache",
+                    SubscriptionIssue::from_anyhow(&error),
                 )],
             ),
         };
@@ -358,18 +360,21 @@ impl SubscriptionState {
         }
     }
 
-    pub(crate) fn record_cache_failure(&mut self, error: impl std::fmt::Display) {
+    pub(crate) fn record_cache_failure(&mut self, error: anyhow::Error) {
         self.errors.push(SubscriptionError::global(
-            rust_i18n::t!("subscription.provider.cache"),
-            error,
+            "Subscription cache",
+            SubscriptionIssue::from_anyhow(&error),
         ));
     }
 
     pub(crate) fn install_disconnected(&mut self) {
         self.last_checked = Some(Instant::now());
         self.errors = vec![SubscriptionError::global(
-            rust_i18n::t!("subscription.provider.unknown"),
-            rust_i18n::t!("subscription.error.worker_disconnected"),
+            "unknown",
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::WorkerDisconnected,
+                "subscription fetch worker disconnected",
+            ),
         )];
     }
 
@@ -421,13 +426,13 @@ impl UsageAccount {
             .filter(|label| !label.is_empty())
     }
 
-    pub(crate) fn short_id(&self) -> String {
+    pub(crate) fn short_id(&self) -> Option<String> {
         let id = self.id.trim();
         if id.is_empty() {
-            return rust_i18n::t!("subscription.provider.unknown").into_owned();
+            return None;
         }
         if id.chars().count() <= 12 {
-            return id.to_string();
+            return Some(id.to_string());
         }
         let head = id.chars().take(6).collect::<String>();
         let tail = id
@@ -438,13 +443,7 @@ impl UsageAccount {
             .into_iter()
             .rev()
             .collect::<String>();
-        format!("{head}...{tail}")
-    }
-
-    pub(crate) fn display_name(&self) -> String {
-        self.label_name().map(str::to_string).unwrap_or_else(|| {
-            rust_i18n::t!("subscription.display.account", id = self.short_id()).into_owned()
-        })
+        Some(format!("{head}...{tail}"))
     }
 }
 
@@ -457,38 +456,6 @@ impl SubscriptionOutput {
             plan: payload.plan,
             email: payload.email,
             metrics: payload.metrics,
-        }
-    }
-
-    pub(crate) fn account_display_name(&self) -> Option<String> {
-        let account = self.account.as_ref()?;
-        if let Some(label) = account.label_name() {
-            return Some(label.to_string());
-        }
-        if let Some(email) = self
-            .email
-            .as_deref()
-            .map(str::trim)
-            .filter(|email| !email.is_empty())
-        {
-            return Some(email.to_string());
-        }
-        Some(account.display_name())
-    }
-
-    pub(crate) fn display_name(&self) -> String {
-        let display_name = match self.account {
-            Some(_) => format!(
-                "{} ({})",
-                self.provider.label(),
-                self.account_display_name().unwrap_or_default()
-            ),
-            None => self.provider.label().to_string(),
-        };
-        if self.stale {
-            rust_i18n::t!("subscription.display.stale", name = display_name).into_owned()
-        } else {
-            display_name
         }
     }
 }
@@ -539,7 +506,6 @@ mod state_tests {
         );
 
         assert_eq!(output.provider, ProviderId::Codex);
-        assert_eq!(output.display_name(), ProviderId::Codex.label());
         assert_eq!(output.plan.as_deref(), Some("Pro"));
     }
 
@@ -675,7 +641,7 @@ mod state_tests {
             outputs: vec![refreshed_codex],
             errors: vec![SubscriptionError::provider(
                 ProviderId::Claude,
-                "credential expired",
+                SubscriptionIssue::unexpected("credential expired"),
             )],
         });
 
@@ -685,6 +651,5 @@ mod state_tests {
         assert!(!state.outputs[0].stale);
         assert_eq!(state.outputs[1].plan.as_deref(), Some("Old Claude"));
         assert!(state.outputs[1].stale);
-        assert_eq!(state.outputs[1].display_name(), "Claude (stale)");
     }
 }

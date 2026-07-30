@@ -6,6 +6,7 @@ tui:
       metrics_current: "Current"
       metrics_longest: "Longest"
       metrics_active: "Active"
+      metrics_days: "%{count}d"
       legend_less: "Less"
       legend_more: "More"
       graph_hint: "click a day to inspect details"

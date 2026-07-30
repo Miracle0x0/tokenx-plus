@@ -275,7 +275,7 @@ mod tests {
             crate::subscription::SubscriptionError {
                 provider_id: Some(crate::subscription::ProviderId::Codex),
                 provider: "Codex".to_string(),
-                message: "credential expired".to_string(),
+                issue: crate::subscription::SubscriptionIssue::unexpected("credential expired"),
             },
         ]);
         assert_eq!(

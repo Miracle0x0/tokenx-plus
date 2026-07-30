@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{SubscriptionPayload, UsageAccount, UsageMetric};
+use super::{
+    SubscriptionIssue, SubscriptionIssueCode, SubscriptionPayload, UsageAccount, UsageMetric,
+};
 
 const BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const TOKEN_AUTH: &str = "xai-grok-cli";
@@ -74,34 +76,41 @@ fn auth_path_for_home(home: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn auth_path() -> Result<std::path::PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.grok_no_home")))?;
+    let home = dirs::home_dir().ok_or_else(|| {
+        anyhow::Error::new(SubscriptionIssue::new(
+            SubscriptionIssueCode::GrokNoHome,
+            "cannot locate the home directory for ~/.grok/auth.json",
+        ))
+    })?;
     Ok(auth_path_for_home(&home))
 }
 
 fn read_credentials() -> Result<Credentials> {
     let path = auth_path()?;
     let content = std::fs::read_to_string(&path).with_context(|| {
-        rust_i18n::t!(
-            "subscription.error.grok_read_credentials",
-            path = path.display()
+        SubscriptionIssue::new(
+            SubscriptionIssueCode::GrokReadCredentials,
+            format!("failed to read Grok credentials from {}", path.display()),
         )
-        .into_owned()
+        .with_field("path", path.display())
     })?;
     let doc: Value = serde_json::from_str(&content).with_context(|| {
-        rust_i18n::t!(
-            "subscription.error.grok_parse_credentials",
-            path = path.display()
+        SubscriptionIssue::new(
+            SubscriptionIssueCode::GrokParseCredentials,
+            format!("failed to parse Grok credentials from {}", path.display()),
         )
-        .into_owned()
+        .with_field("path", path.display())
     })?;
     credential_from_value(&doc)
 }
 
 fn credential_from_value(doc: &Value) -> Result<Credentials> {
-    let entries = doc
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.grok_auth_not_object")))?;
+    let entries = doc.as_object().ok_or_else(|| {
+        anyhow::Error::new(SubscriptionIssue::new(
+            SubscriptionIssueCode::GrokAuthNotObject,
+            "Grok auth.json must contain an object",
+        ))
+    })?;
 
     let candidates = entries
         .iter()
@@ -116,19 +125,35 @@ fn credential_from_value(doc: &Value) -> Result<Credentials> {
         .collect::<Vec<_>>();
 
     let (entry, token) = match candidates.len() {
-        0 => anyhow::bail!(rust_i18n::t!("subscription.error.grok_auth_entries_none")),
+        0 => {
+            return Err(anyhow::Error::new(SubscriptionIssue::new(
+                SubscriptionIssueCode::GrokAuthEntriesNone,
+                "Grok auth.json must contain exactly one https://auth.x.ai::* entry with a usable key; found none",
+            )))
+        }
         1 => candidates.into_iter().next().expect("one candidate"),
-        count => anyhow::bail!(rust_i18n::t!(
-            "subscription.error.grok_auth_entries_multiple",
-            count = count
-        )),
+        count => {
+            return Err(anyhow::Error::new(
+                SubscriptionIssue::new(
+                    SubscriptionIssueCode::GrokAuthEntriesMultiple,
+                    format!(
+                        "Grok auth.json must contain exactly one https://auth.x.ai::* entry with a usable key; found {count}"
+                    ),
+                )
+                .with_field("count", count),
+            ))
+        }
     };
 
-    let user_id = required_entry_field(entry, "user_id")
-        .context(rust_i18n::t!("subscription.error.grok_missing_user_id"))?;
-    let principal_id = required_entry_field(entry, "principal_id").context(rust_i18n::t!(
-        "subscription.error.grok_missing_principal_id"
+    let user_id = required_entry_field(entry, "user_id").context(SubscriptionIssue::new(
+        SubscriptionIssueCode::GrokMissingUserId,
+        "Grok credential is missing the user_id required by the billing service",
     ))?;
+    let principal_id =
+        required_entry_field(entry, "principal_id").context(SubscriptionIssue::new(
+            SubscriptionIssueCode::GrokMissingPrincipalId,
+            "Grok credential is missing the principal_id required for account identity",
+        ))?;
 
     Ok(Credentials {
         token,
@@ -142,10 +167,13 @@ fn credential_from_value(doc: &Value) -> Result<Credentials> {
 
 fn required_entry_field(entry: &serde_json::Map<String, Value>, field: &str) -> Result<String> {
     optional_entry_field(entry, field).ok_or_else(|| {
-        anyhow::anyhow!(rust_i18n::t!(
-            "subscription.error.grok_field_empty",
-            field = field
-        ))
+        anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::GrokFieldEmpty,
+                format!("Grok credential field `{field}` is empty"),
+            )
+            .with_field("field", field),
+        )
     })
 }
 
@@ -174,7 +202,10 @@ async fn fetch_billing(
         .await?;
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        anyhow::bail!(rust_i18n::t!("subscription.error.grok_rejected"));
+        return Err(anyhow::Error::new(SubscriptionIssue::new(
+            SubscriptionIssueCode::GrokRejected,
+            "Grok credentials were rejected; refresh the provider-owned authentication with Grok tooling",
+        )));
     }
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -187,15 +218,18 @@ async fn fetch_billing(
                     .map(ToString::to_string)
             })
             .unwrap_or_else(|| format!("HTTP {status}"));
-        anyhow::bail!(rust_i18n::t!(
-            "subscription.error.grok_billing_error",
-            detail = detail
+        return Err(anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::GrokBillingError,
+                format!("Grok billing service error: {detail}"),
+            )
+            .with_field("detail", detail),
         ));
     }
-    response
-        .json()
-        .await
-        .context(rust_i18n::t!("subscription.error.grok_parse_billing"))
+    response.json().await.context(SubscriptionIssue::new(
+        SubscriptionIssueCode::GrokParseBilling,
+        "failed to parse Grok billing data",
+    ))
 }
 
 fn format_cents(value: i64) -> String {
@@ -204,12 +238,12 @@ fn format_cents(value: i64) -> String {
 
 fn current_period_label(period: Option<&UsagePeriod>) -> String {
     let Some(period_type) = period.and_then(|period| period.period_type.as_deref()) else {
-        return rust_i18n::t!("subscription.metric.credits").into_owned();
+        return "Credits".to_string();
     };
     match period_type {
-        "USAGE_PERIOD_TYPE_WEEKLY" => rust_i18n::t!("subscription.metric.weekly").into_owned(),
-        "USAGE_PERIOD_TYPE_MONTHLY" => rust_i18n::t!("subscription.metric.monthly").into_owned(),
-        _ => rust_i18n::t!("subscription.metric.credits").into_owned(),
+        "USAGE_PERIOD_TYPE_WEEKLY" => "Weekly".to_string(),
+        "USAGE_PERIOD_TYPE_MONTHLY" => "Monthly".to_string(),
+        _ => "Credits".to_string(),
     }
 }
 
@@ -226,17 +260,11 @@ fn included_credit_metric(config: &BillingConfig) -> Option<UsageMetric> {
         .map(|value| value.clamp(0.0, 100.0))
         .or(derived_percent)?;
     let remaining_label = match (&config.used, &config.monthly_limit) {
-        (Some(used), Some(limit)) if limit.val > 0 => Some(
-            rust_i18n::t!(
-                "subscription.metric.left",
-                value = format!(
-                    "{}/{}",
-                    format_cents((limit.val - used.val).max(0)),
-                    format_cents(limit.val)
-                )
-            )
-            .into_owned(),
-        ),
+        (Some(used), Some(limit)) if limit.val > 0 => Some(format!(
+            "{}/{} left",
+            format_cents((limit.val - used.val).max(0)),
+            format_cents(limit.val)
+        )),
         _ => None,
     };
     let period = config.current_period.as_ref();
@@ -268,16 +296,14 @@ fn on_demand_metric(config: &BillingConfig, enabled: Option<bool>) -> Option<Usa
         .clamp(0, cap);
     let used_percent = used as f64 / cap as f64 * 100.0;
     Some(UsageMetric {
-        label: rust_i18n::t!("subscription.metric.on_demand").into_owned(),
+        label: "On demand".to_string(),
         used_percent,
         remaining_percent: 100.0 - used_percent,
-        remaining_label: Some(
-            rust_i18n::t!(
-                "subscription.metric.left",
-                value = format!("{}/{}", format_cents(cap - used), format_cents(cap))
-            )
-            .into_owned(),
-        ),
+        remaining_label: Some(format!(
+            "{}/{} left",
+            format_cents(cap - used),
+            format_cents(cap)
+        )),
         resets_at: config
             .current_period
             .as_ref()
@@ -300,7 +326,10 @@ fn subscription_payload(
         }
     }
     if metrics.is_empty() && response.subscription_tier.is_none() {
-        anyhow::bail!(rust_i18n::t!("subscription.error.grok_no_data"));
+        return Err(anyhow::Error::new(SubscriptionIssue::new(
+            SubscriptionIssueCode::GrokNoData,
+            "Grok billing response contained no subscription or quota data",
+        )));
     }
 
     Ok(SubscriptionPayload {

@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 use super::helpers::capitalize;
-use super::{SubscriptionPayload, UsageMetric};
+use super::{SubscriptionIssue, SubscriptionIssueCode, SubscriptionPayload, UsageMetric};
 
 const BETA_HEADER: &str = "oauth-2025-04-20";
 
@@ -48,31 +48,41 @@ fn credentials_path() -> Option<PathBuf> {
     credentials_path_for_home(dirs::home_dir().as_deref())
 }
 
+fn no_home_or_keychain_issue(error: &anyhow::Error) -> SubscriptionIssue {
+    SubscriptionIssue::new(
+        SubscriptionIssueCode::ClaudeNoHomeOrKeychain,
+        format!(
+            "No Claude credentials found: the home directory is unavailable and the keychain lookup failed: {error}"
+        ),
+    )
+    .with_cause(SubscriptionIssue::from_anyhow(error))
+}
+
 fn read_credentials() -> Result<Credentials> {
     let path = credentials_path();
     if let Some(path) = path.as_ref().filter(|path| path.exists()) {
         let content = std::fs::read_to_string(path).with_context(|| {
-            rust_i18n::t!(
-                "subscription.error.claude_read_credentials",
-                path = path.display()
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::ClaudeReadCredentials,
+                format!("Failed to read Claude credentials from {}", path.display()),
             )
-            .into_owned()
+            .with_field("path", path.display())
         })?;
         return serde_json::from_str::<Credentials>(&content).with_context(|| {
-            rust_i18n::t!(
-                "subscription.error.claude_parse_credentials",
-                path = path.display()
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::ClaudeParseCredentials,
+                format!("Failed to parse Claude credentials from {}", path.display()),
             )
-            .into_owned()
+            .with_field("path", path.display())
         });
     }
     match read_keychain() {
         Ok(content) => Ok(serde_json::from_str(&content)?),
-        Err(error) if path.is_none() => anyhow::bail!(rust_i18n::t!(
-            "subscription.error.claude_no_home_or_keychain",
-            error = error.to_string()
+        Err(error) if path.is_none() => Err(anyhow::Error::new(no_home_or_keychain_issue(&error))),
+        Err(error) => Err(error).context(SubscriptionIssue::new(
+            SubscriptionIssueCode::ClaudeNoCredentials,
+            "No Claude credentials found in the current provider locations",
         )),
-        Err(error) => Err(error).context(rust_i18n::t!("subscription.error.claude_no_credentials")),
     }
 }
 
@@ -87,12 +97,18 @@ async fn fetch_usage(client: &reqwest::Client, token: &str) -> Result<UsageRespo
         .await?;
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        anyhow::bail!(rust_i18n::t!("subscription.error.claude_rejected"));
+        return Err(anyhow::Error::new(SubscriptionIssue::new(
+            SubscriptionIssueCode::ClaudeRejected,
+            "Claude credentials were rejected. Run `claude` to refresh the provider-owned authentication.",
+        )));
     }
     if !status.is_success() {
-        anyhow::bail!(rust_i18n::t!(
-            "subscription.error.claude_request_failed",
-            status = status.as_str()
+        return Err(anyhow::Error::new(
+            SubscriptionIssue::new(
+                SubscriptionIssueCode::ClaudeRequestFailed,
+                format!("Claude usage request failed (HTTP {status})"),
+            )
+            .with_field("status", status),
         ));
     }
     Ok(resp.json().await?)
@@ -111,11 +127,17 @@ fn window_metric(label: &str, w: &Window) -> UsageMetric {
 
 pub async fn fetch(client: &reqwest::Client) -> Result<SubscriptionPayload> {
     let creds = read_credentials()?;
-    let oauth = creds
-        .claude_ai_oauth
-        .ok_or_else(|| anyhow::anyhow!(rust_i18n::t!("subscription.error.claude_no_oauth")))?;
+    let oauth = creds.claude_ai_oauth.ok_or_else(|| {
+        anyhow::Error::new(SubscriptionIssue::new(
+            SubscriptionIssueCode::ClaudeNoOauth,
+            "No Claude OAuth credentials. Run 'claude' to log in.",
+        ))
+    })?;
     let access_token = oauth.access_token.clone().ok_or_else(|| {
-        anyhow::anyhow!(rust_i18n::t!("subscription.error.claude_no_access_token"))
+        anyhow::Error::new(SubscriptionIssue::new(
+            SubscriptionIssueCode::ClaudeNoAccessToken,
+            "No Claude access token.",
+        ))
     })?;
     let plan = oauth.subscription_type.as_ref().map(|s| {
         let tier = oauth
@@ -132,22 +154,13 @@ pub async fn fetch(client: &reqwest::Client) -> Result<SubscriptionPayload> {
 
     let mut metrics = Vec::new();
     if let Some(ref w) = resp.five_hour {
-        metrics.push(window_metric(
-            rust_i18n::t!("subscription.metric.session").as_ref(),
-            w,
-        ));
+        metrics.push(window_metric("Session", w));
     }
     if let Some(ref w) = resp.seven_day {
-        metrics.push(window_metric(
-            rust_i18n::t!("subscription.metric.weekly").as_ref(),
-            w,
-        ));
+        metrics.push(window_metric("Weekly", w));
     }
     if let Some(ref w) = resp.seven_day_opus {
-        metrics.push(window_metric(
-            rust_i18n::t!("subscription.metric.opus").as_ref(),
-            w,
-        ));
+        metrics.push(window_metric("Opus", w));
     }
 
     Ok(SubscriptionPayload {
@@ -173,5 +186,22 @@ mod tests {
     #[test]
     fn missing_home_does_not_create_a_relative_credentials_path() {
         assert_eq!(credentials_path_for_home(None), None);
+    }
+
+    #[test]
+    fn missing_home_preserves_the_typed_keychain_failure() {
+        let keychain_issue = SubscriptionIssue::new(
+            SubscriptionIssueCode::KeychainLookupFailed,
+            "Keychain lookup failed for service 'Claude Code-credentials'",
+        )
+        .with_field("service", "Claude Code-credentials");
+        let error = anyhow::Error::new(keychain_issue);
+
+        let issue = no_home_or_keychain_issue(&error);
+
+        assert_eq!(issue.code(), SubscriptionIssueCode::ClaudeNoHomeOrKeychain);
+        let cause = issue.cause().expect("typed keychain cause");
+        assert_eq!(cause.code(), SubscriptionIssueCode::KeychainLookupFailed);
+        assert_eq!(cause.field("service"), Some("Claude Code-credentials"));
     }
 }

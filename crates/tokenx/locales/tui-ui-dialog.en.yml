@@ -1,0 +1,30 @@
+tui:
+  ui:
+    dialog:
+      client_picker:
+        title: " Clients "
+        filter_label: "Filter: "
+        filter_placeholder: "Type to filter..."
+        no_results: "  No results"
+        hint_full: "↑↓ • Space • * invert matches • Enter • Esc"
+        hint_medium: "* invert matches • Space • Enter • Esc"
+        hint_short: "* invert matches"
+        error_empty_selection: "Select at least one client"
+      group_by:
+        title: " Group By "
+        current_label: "Current: "
+        current_suffix: "  current"
+        hint: "↑↓ navigate • Enter select • Esc close"
+        option:
+          model:
+            label: "Model"
+            description: "One row per model; merge clients and providers (default)"
+          client_model:
+            label: "Client + Model"
+            description: "One row per client-model pair"
+          client_provider_model:
+            label: "Client + Provider + Model"
+            description: "Keep provider identity; no model merging"
+          workspace_model:
+            label: "Workspace + Model"
+            description: "Group local usage by workspace, then model"

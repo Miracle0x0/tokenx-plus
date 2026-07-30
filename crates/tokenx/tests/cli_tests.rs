@@ -1527,7 +1527,7 @@ fn test_models_reports_project_reasoning_into_output() {
         .expect("model row");
     assert!(model_row.contains(" 50 "), "unexpected row: {model_row}");
     assert!(
-        stdout.contains("Total: 165 tokens"),
+        stdout.contains("Total: 165 token"),
         "unexpected output: {stdout}"
     );
 }

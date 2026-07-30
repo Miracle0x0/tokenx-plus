@@ -1,5 +1,0 @@
-paths:
-  error:
-    home_unavailable: "无法确定 Tokenx 产品目录，因为用户主目录不可用"
-    relative_product_root: "解析得到的 Tokenx 产品根目录 `%{path}` 必须是绝对路径"
-    relative_override: "%{variable} 路径 `%{path}` 必须是绝对路径"

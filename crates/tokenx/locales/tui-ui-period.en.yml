@@ -25,6 +25,6 @@ tui:
         cache_write: "Cache W"
         cache_rate: "Cache×"
         total: "Total"
-        tokens: "Tokens"
+        tokens: "Token"
         cost: "Cost"
         cost_per_million: "Cost/1M"

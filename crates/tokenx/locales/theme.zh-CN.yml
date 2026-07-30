@@ -1,4 +1,0 @@
-theme:
-  error:
-    invalid_theme: "主题 `%{name}` 无效；可选值：%{valid}"
-    unknown_theme: "未知主题 `%{name}`；可选值：%{valid}"

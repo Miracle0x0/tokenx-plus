@@ -1,6 +1,5 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation};
-use std::borrow::Cow;
 
 use super::empty_state;
 use super::usage_profile;
@@ -102,18 +101,6 @@ fn period_contains_hour(label: &str, hour: u32) -> bool {
     }
 }
 
-/// Resolves a no-interpolation translation to `&'static str` for the shared
-/// `usage_profile` helpers, whose label parameters still take `&'static str`.
-/// Without interpolation arguments `t!` always resolves to a value borrowed
-/// from the static backend (or the literal key fallback); the owned branch
-/// only exists to keep the invariant if that ever changes.
-fn static_label(key: &'static str) -> &'static str {
-    match rust_i18n::t!(key) {
-        Cow::Borrowed(label) => label,
-        Cow::Owned(label) => Box::leak(label.into_boxed_str()),
-    }
-}
-
 fn period_label_key(label: &str) -> Option<&'static str> {
     match label {
         "Morning" => Some("tui.ui.hourly.period.morning"),
@@ -173,7 +160,7 @@ pub(crate) fn build_hourly_profile_lines(
         app,
         hourly.iter().map(|entry| entry.datetime.date()),
         hourly.len(),
-        static_label("tui.ui.hourly.active_hours"),
+        rust_i18n::t!("tui.ui.hourly.active_hours").as_ref(),
     )
     .into_iter()
     .collect::<Vec<_>>();
@@ -205,7 +192,7 @@ pub(crate) fn build_hourly_profile_lines(
     if let Some((hour, tokens, cost)) = peak_hour {
         lines.push(usage_profile::peak_line(
             app,
-            static_label("tui.ui.hourly.peak_hour"),
+            rust_i18n::t!("tui.ui.hourly.peak_hour"),
             format!("{hour:02}:00-{hour:02}:59"),
             tokens,
             cost,
@@ -310,7 +297,7 @@ mod tests {
 
         assert!(text[0].contains("2026-07-17 to 2026-07-18"));
         assert!(text[1].contains("2 active hours"));
-        assert!(text[1].contains("1K tokens"));
+        assert!(text[1].contains("1K token"));
         assert!(text[1].contains("$10.00"));
         assert!(text[3].starts_with("Morning"));
         assert!(text[3].contains("05:00-11:59"));
