@@ -552,6 +552,17 @@ impl LocalUsageState {
         };
     }
 
+    pub(crate) fn rebind_pricing_diagnostics(
+        &mut self,
+        diagnostics: tokenx_engine::pricing::PricingDiagnostics,
+    ) -> bool {
+        let Some(installed) = self.installed_mut() else {
+            return false;
+        };
+        installed.generation.rebind_pricing_diagnostics(diagnostics);
+        true
+    }
+
     pub(crate) fn install_generation(
         &mut self,
         generation: Generation,

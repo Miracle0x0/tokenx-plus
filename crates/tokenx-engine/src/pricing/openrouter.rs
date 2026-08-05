@@ -188,7 +188,9 @@ fn select_models_for_author_pricing(model_ids: Vec<String>) -> Vec<(String, &'st
 /// Fetch all models and get author pricing for each
 pub async fn fetch_all_models(cache_dir: &Path) -> HashMap<String, ModelPricing> {
     let mut diagnostics = None;
-    fetch_all_models_with_sink(cache_dir, &mut diagnostics).await
+    fetch_all_models_with_sink(cache_dir, MODELS_URL, true, &mut diagnostics)
+        .await
+        .unwrap_or_default()
 }
 
 pub(crate) async fn fetch_all_models_with_diagnostics(
@@ -196,15 +198,29 @@ pub(crate) async fn fetch_all_models_with_diagnostics(
     diagnostics: &mut PricingDiagnostics,
 ) -> HashMap<String, ModelPricing> {
     let mut diagnostics = Some(diagnostics);
-    fetch_all_models_with_sink(cache_dir, &mut diagnostics).await
+    fetch_all_models_with_sink(cache_dir, MODELS_URL, true, &mut diagnostics)
+        .await
+        .unwrap_or_default()
+}
+
+pub(crate) async fn refresh_with_diagnostics(
+    cache_dir: &Path,
+    diagnostics: &mut PricingDiagnostics,
+) -> Result<HashMap<String, ModelPricing>, String> {
+    let mut diagnostics = Some(diagnostics);
+    fetch_all_models_with_sink(cache_dir, MODELS_URL, false, &mut diagnostics).await
 }
 
 async fn fetch_all_models_with_sink(
     cache_dir: &Path,
+    models_url: &str,
+    use_cache: bool,
     diagnostics: &mut PricingDiagnosticSink<'_>,
-) -> HashMap<String, ModelPricing> {
-    if let Some(cached) = load_cached(cache_dir) {
-        return cached;
+) -> Result<HashMap<String, ModelPricing>, String> {
+    if use_cache {
+        if let Some(cached) = load_cached(cache_dir) {
+            return Ok(cached);
+        }
     }
 
     let client = Arc::new(
@@ -217,10 +233,10 @@ async fn fetch_all_models_with_sink(
 
     let mut last_error: Option<String> = None;
 
-    let model_items: Vec<ModelListItem> = 'retry: {
+    let model_items = 'retry: {
         for attempt in 0..MAX_RETRIES {
             let response = match client
-                .get(MODELS_URL)
+                .get(models_url)
                 .header("Content-Type", "application/json")
                 .send()
                 .await
@@ -252,41 +268,36 @@ async fn fetch_all_models_with_sink(
             }
 
             if !status.is_success() {
-                emit_warning(
-                    diagnostics,
-                    format!("[tokenx] OpenRouter models API returned {status}"),
-                );
-                break 'retry Vec::new();
+                let error = format!("models API returned {status}");
+                emit_warning(diagnostics, format!("[tokenx] OpenRouter {error}"));
+                break 'retry Err(error);
             }
 
             let data: ModelsListResponse = match response.json().await {
                 Ok(d) => d,
                 Err(e) => {
-                    emit_warning(
-                        diagnostics,
-                        format!("[tokenx] OpenRouter models JSON parse failed: {e}"),
-                    );
-                    break 'retry Vec::new();
+                    let error = format!("models JSON parse failed: {e}");
+                    emit_warning(diagnostics, format!("[tokenx] OpenRouter {error}"));
+                    break 'retry Err(error);
                 }
             };
 
-            break 'retry data.data;
+            break 'retry Ok(data.data);
         }
 
-        if let Some(err) = &last_error {
-            emit_warning(
-                diagnostics,
-                format!(
-                    "[tokenx] OpenRouter fetch failed after {} retries: {}",
-                    MAX_RETRIES, err
-                ),
-            );
-        }
-        Vec::new()
-    };
+        let error = last_error.expect("OpenRouter retries end only after a request error");
+        emit_warning(
+            diagnostics,
+            format!(
+                "[tokenx] OpenRouter fetch failed after {} retries: {}",
+                MAX_RETRIES, error
+            ),
+        );
+        Err(error)
+    }?;
 
     if model_items.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
 
     let mut result = HashMap::new();
@@ -348,7 +359,7 @@ async fn fetch_all_models_with_sink(
         }
     }
 
-    result
+    Ok(result)
 }
 
 pub async fn fetch_all_mapped(cache_dir: &Path) -> HashMap<String, ModelPricing> {
@@ -365,9 +376,45 @@ pub(crate) async fn fetch_all_mapped_with_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::{
-        get_author_provider_name, parse_model_list_pricing, select_models_for_author_pricing,
-        ModelListPricing,
+        fetch_all_models_with_sink, get_author_provider_name, parse_model_list_pricing,
+        select_models_for_author_pricing, ModelListPricing, MAX_RETRIES,
     };
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    fn retryable_status_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            for _ in 0..MAX_RETRIES {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = [0; 1024];
+                let _ = stream.read(&mut buffer);
+                let response =
+                    "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn refresh_propagates_models_list_failure() {
+        let url = retryable_status_server();
+        let cache_dir = tempfile::TempDir::new().unwrap();
+        let mut diagnostics = Vec::new();
+        let mut sink = Some(&mut diagnostics);
+
+        let result = fetch_all_models_with_sink(cache_dir.path(), &url, false, &mut sink).await;
+
+        assert!(result.is_err());
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message().contains("OpenRouter fetch failed")));
+    }
 
     #[test]
     fn maps_xiaomi_models_to_openrouter_author_provider() {

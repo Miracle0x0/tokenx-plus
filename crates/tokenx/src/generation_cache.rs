@@ -193,6 +193,35 @@ pub(crate) enum CacheResult {
     Failure(CacheFailure),
 }
 
+impl CacheResult {
+    pub(crate) fn with_pricing_diagnostics(
+        self,
+        diagnostics: tokenx_engine::pricing::PricingDiagnostics,
+    ) -> Self {
+        match self {
+            Self::Fresh(generation) => {
+                Self::Fresh(generation.with_pricing_diagnostics(diagnostics))
+            }
+            Self::Stale {
+                generation,
+                retry_backoff,
+            } => Self::Stale {
+                generation: generation.with_pricing_diagnostics(diagnostics),
+                retry_backoff,
+            },
+            Self::RetryDeferred {
+                generation,
+                retry_backoff,
+            } => Self::RetryDeferred {
+                generation: generation.with_pricing_diagnostics(diagnostics),
+                retry_backoff,
+            },
+            Self::Missing => Self::Missing,
+            Self::Failure(failure) => Self::Failure(failure),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct CacheEnvelope {
     saved_at_ms: u64,
@@ -937,6 +966,26 @@ mod tests {
             .unwrap();
         assert_eq!(projection.total_tokens, 13);
         assert_eq!(projection.models[0].model_id.as_ref(), "amp-model");
+    }
+
+    #[test]
+    fn cached_generation_uses_current_pricing_diagnostics() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let current = vec![tokenx_engine::pricing::PricingDiagnostic::warning(
+            "partial public pricing",
+        )];
+
+        let CacheResult::Fresh(generation) =
+            CacheResult::Fresh(generation(temp.path())).with_pricing_diagnostics(current.clone())
+        else {
+            panic!("fresh cache result must remain fresh");
+        };
+
+        assert_eq!(generation.pricing_diagnostics(), current);
+        assert_eq!(
+            generation.pricing_status(),
+            tokenx_engine::pricing::PricingStatus::AvailableWithWarnings
+        );
     }
 
     #[test]

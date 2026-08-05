@@ -439,16 +439,24 @@ pub(crate) struct ResolvedInputScope {
     pub(crate) restricted: bool,
 }
 
-/// One command-start snapshot. Settings are read and validated exactly once,
-/// then the immutable input scope and all application policy share this value.
+/// One command-start snapshot parameterized by its pricing state.
+///
+/// CLI planning produces `PendingPricing`; the application composition root
+/// binds one immutable runtime snapshot before any acquisition command executes.
 #[derive(Debug)]
-pub(crate) struct StartupSnapshot {
+pub(crate) struct StartupSnapshot<PricingState> {
     pub(crate) paths: ProductPaths,
     pub(crate) input: ResolvedInputScope,
     pub(crate) settings: Settings,
     pub(crate) calendar: CalendarContext,
-    pub(crate) pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
+    pub(crate) pricing: PricingState,
 }
+
+#[derive(Debug)]
+pub(crate) struct PendingPricing;
+
+pub(crate) type RuntimePricing = Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>;
+pub(crate) type ResolvedStartupSnapshot = StartupSnapshot<RuntimePricing>;
 
 #[derive(Debug)]
 pub(crate) struct ResolvedDateRange {
@@ -488,39 +496,43 @@ impl RelativeDateRange {
 }
 
 #[derive(Debug)]
-pub(crate) struct ModelsPlan {
+pub(crate) struct ModelsPlan<PricingState> {
     pub(crate) json: bool,
-    pub(crate) startup: StartupSnapshot,
+    pub(crate) startup: StartupSnapshot<PricingState>,
     pub(crate) date: ResolvedDateRange,
     pub(crate) benchmark: bool,
     pub(crate) no_spinner: bool,
     pub(crate) group_by: GroupBy,
 }
 
+pub(crate) type ResolvedModelsPlan = ModelsPlan<RuntimePricing>;
+
 #[derive(Debug)]
-pub(crate) struct TuiPlan {
+pub(crate) struct TuiPlan<PricingState> {
     pub(crate) theme: Option<ThemeName>,
     pub(crate) refresh: Option<u64>,
     pub(crate) no_refresh: bool,
     pub(crate) debug: bool,
-    pub(crate) startup: StartupSnapshot,
+    pub(crate) startup: StartupSnapshot<PricingState>,
     pub(crate) date: ResolvedDateRange,
     pub(crate) initial_tab: Option<Tab>,
 }
 
+pub(crate) type ResolvedTuiPlan = TuiPlan<RuntimePricing>;
+
 #[derive(Debug)]
-pub(crate) enum ExecutionPlan {
-    Tui(TuiPlan),
-    Models(ModelsPlan),
+pub(crate) enum ExecutionPlan<PricingState> {
+    Tui(TuiPlan<PricingState>),
+    Models(ModelsPlan<PricingState>),
     Pricing {
         paths: ProductPaths,
         subcommand: PricingSubcommand,
     },
     CachePrune(ProductPaths),
-    CacheWarm(StartupSnapshot),
+    CacheWarm(StartupSnapshot<PricingState>),
 }
 
-impl ExecutionPlan {
+impl ExecutionPlan<PendingPricing> {
     pub(crate) fn resolve(cli: Cli, terminal: TerminalState) -> Result<Self, CliFailure> {
         match cli.command.unwrap_or(Commands::Tui(TuiArgs::default())) {
             Commands::Tui(args) => resolve_tui(args, terminal).map(Self::Tui),
@@ -535,9 +547,108 @@ impl ExecutionPlan {
             },
         }
     }
+
+    pub(crate) async fn bind_pricing(self) -> ExecutionPlan<RuntimePricing> {
+        match self {
+            Self::Tui(plan) => ExecutionPlan::Tui(plan.bind_local_pricing()),
+            Self::Models(plan) => ExecutionPlan::Models(plan.bind_refreshed_pricing().await),
+            Self::Pricing { paths, subcommand } => ExecutionPlan::Pricing { paths, subcommand },
+            Self::CachePrune(paths) => ExecutionPlan::CachePrune(paths),
+            Self::CacheWarm(startup) => {
+                ExecutionPlan::CacheWarm(startup.bind_refreshed_pricing().await)
+            }
+        }
+    }
 }
 
-fn resolve_tui(args: TuiArgs, terminal: TerminalState) -> Result<TuiPlan, CliFailure> {
+impl StartupSnapshot<PendingPricing> {
+    fn bind_local_pricing(self) -> ResolvedStartupSnapshot {
+        let pricing = Arc::new(
+            tokenx_engine::pricing::ResolvedPricingSnapshot::resolve_from(
+                &self.paths.custom_pricing_file(),
+                &self.paths.cache_dir(),
+            ),
+        );
+        self.with_pricing(pricing)
+    }
+
+    async fn bind_refreshed_pricing(self) -> ResolvedStartupSnapshot {
+        let pricing = Arc::new(
+            tokenx_engine::pricing::ResolvedPricingSnapshot::resolve_with_refresh(
+                &self.paths.custom_pricing_file(),
+                &self.paths.cache_dir(),
+            )
+            .await,
+        );
+        self.with_pricing(pricing)
+    }
+
+    fn with_pricing(self, pricing: RuntimePricing) -> ResolvedStartupSnapshot {
+        let Self {
+            paths,
+            input,
+            settings,
+            calendar,
+            pricing: PendingPricing,
+        } = self;
+        StartupSnapshot {
+            paths,
+            input,
+            settings,
+            calendar,
+            pricing,
+        }
+    }
+}
+
+impl ModelsPlan<PendingPricing> {
+    async fn bind_refreshed_pricing(self) -> ResolvedModelsPlan {
+        let Self {
+            json,
+            startup,
+            date,
+            benchmark,
+            no_spinner,
+            group_by,
+        } = self;
+        ModelsPlan {
+            json,
+            startup: startup.bind_refreshed_pricing().await,
+            date,
+            benchmark,
+            no_spinner,
+            group_by,
+        }
+    }
+}
+
+impl TuiPlan<PendingPricing> {
+    fn bind_local_pricing(self) -> ResolvedTuiPlan {
+        let Self {
+            theme,
+            refresh,
+            no_refresh,
+            debug,
+            startup,
+            date,
+            initial_tab,
+        } = self;
+        TuiPlan {
+            theme,
+            refresh,
+            no_refresh,
+            debug,
+            startup: startup.bind_local_pricing(),
+            date,
+            initial_tab,
+        }
+    }
+}
+
+fn resolve_tui(
+    args: TuiArgs,
+    terminal: TerminalState,
+) -> Result<TuiPlan<PendingPricing>, CliFailure> {
     if !terminal.interactive() {
         return Err(CliFailure::invalid_message(rust_i18n::t!(
             "cli.error.tui_requires_terminal"
@@ -564,7 +675,7 @@ fn resolve_tui(args: TuiArgs, terminal: TerminalState) -> Result<TuiPlan, CliFai
     })
 }
 
-fn resolve_models(args: ModelsArgs) -> Result<ModelsPlan, CliFailure> {
+fn resolve_models(args: ModelsArgs) -> Result<ModelsPlan<PendingPricing>, CliFailure> {
     let startup = resolve_startup(args.input)?;
     let date = resolve_date(args.date, startup.calendar)?;
     Ok(ModelsPlan {
@@ -577,7 +688,7 @@ fn resolve_models(args: ModelsArgs) -> Result<ModelsPlan, CliFailure> {
     })
 }
 
-fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot, CliFailure> {
+fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot<PendingPricing>, CliFailure> {
     // Product state and input discovery are deliberately separate authorities:
     // settings always come from Tokenx's product root, while `--home` changes
     // only the home used to derive built-in client input paths.
@@ -587,12 +698,6 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot, CliFailure> 
         Some(calendar) => calendar,
         None => CalendarContext::system().map_err(anyhow::Error::new)?,
     };
-    let pricing = Arc::new(
-        tokenx_engine::pricing::ResolvedPricingSnapshot::resolve_from(
-            &paths.custom_pricing_file(),
-            &paths.cache_dir(),
-        ),
-    );
     let home = args
         .home
         .or_else(dirs::home_dir)
@@ -607,7 +712,7 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot, CliFailure> 
         },
         settings,
         calendar,
-        pricing,
+        pricing: PendingPricing,
     })
 }
 

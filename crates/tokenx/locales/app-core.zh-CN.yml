@@ -14,6 +14,8 @@ cache:
     persist: "无法写入缓存 `%{path}`"
 
 main:
+  pricing:
+    refreshing: "正在刷新价格数据..."
   error:
     runtime_init: "错误：异步运行时初始化失败：%{error}"
     prefix_invalid: "错误"

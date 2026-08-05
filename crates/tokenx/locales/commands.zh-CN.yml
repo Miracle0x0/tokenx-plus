@@ -22,6 +22,7 @@ commands:
     title: "按模型统计的令牌用量"
     title_with_range: "按模型统计的令牌用量（%{range}）"
     footer_total_prefix: "总计：%{tokens} 个令牌，"
+    pricing_available_with_warnings: "价格数据不完整；部分成本可能缺失"
     pricing_cached_fallback: "价格刷新失败；成本使用缓存费率"
     pricing_unavailable: "价格不可用；零成本可能意味着缺少费率"
   pricing:

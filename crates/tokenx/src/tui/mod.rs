@@ -257,7 +257,7 @@ fn shutdown_session(tasks: &mut TaskSupervisor, terminal_session: TerminalSessio
     tasks.drain();
 }
 
-pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::TuiPlan) -> Result<TuiExit> {
+pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -> Result<TuiExit> {
     let crate::cli::TuiPlan {
         theme,
         refresh,
@@ -310,11 +310,12 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::TuiPlan) -> Result
         calendar,
         pricing,
     )?;
+    let pricing_diagnostics = acquisition.pricing_snapshot().diagnostics().to_vec();
     let (cached_snapshot, mut needs_background_load, retry_backoff, cache_startup_warning) =
-        decide_initial_data(load_generation_cache(
-            &paths.generation_cache_file(),
-            acquisition.config(),
-        ));
+        decide_initial_data(
+            load_generation_cache(&paths.generation_cache_file(), acquisition.config())
+                .with_pricing_diagnostics(pricing_diagnostics),
+        );
 
     let original_hook = panic::take_hook();
     let tui_thread_id = thread::current().id();
@@ -343,11 +344,12 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::TuiPlan) -> Result
     )
     .with_relative_date_range(relative_date_range);
     generation_controller.set_retry_backoff(retry_backoff);
-
-    if needs_background_load {
-        generation_controller.request_initial_load(true);
-        generation_controller.start_pending(&mut model, &mut tasks);
-    }
+    generation_controller.start_initial_pricing_refresh(
+        &mut model,
+        &mut tasks,
+        paths.cache_dir(),
+        needs_background_load,
+    );
     let mut tui_frame = TuiFrame::new(model);
 
     #[cfg(unix)]
@@ -418,6 +420,10 @@ fn run_loop_with_background(
         }
 
         terminal.draw(|frame| tui_frame.render(frame))?;
+
+        if let Ok(pricing) = tasks.try_recv_pricing() {
+            generation_controller.apply_pricing_result(tui_frame.model_mut(), pricing);
+        }
 
         match tasks.try_recv_acquisition() {
             Ok(completed) => {

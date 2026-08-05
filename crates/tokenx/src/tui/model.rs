@@ -230,6 +230,9 @@ pub(crate) enum StatusTone {
 fn pricing_warning(status: PricingStatus) -> Option<Cow<'static, str>> {
     match status {
         PricingStatus::Available => None,
+        PricingStatus::AvailableWithWarnings => {
+            Some(rust_i18n::t!("tui.model.pricing.available_with_warnings"))
+        }
         PricingStatus::CachedFallback => Some(rust_i18n::t!("tui.model.pricing.cached_fallback")),
         PricingStatus::Unavailable => Some(rust_i18n::t!("tui.model.pricing.unavailable")),
     }
@@ -1160,6 +1163,16 @@ impl TuiModel {
         self.reconcile_usage_selection(had_graph_selection, selected_graph_date);
         crate::acquisition::trim_allocator();
         Ok(())
+    }
+
+    pub(crate) fn rebind_pricing_diagnostics(
+        &mut self,
+        diagnostics: tokenx_engine::pricing::PricingDiagnostics,
+    ) {
+        let status = PricingStatus::from_diagnostics(&diagnostics);
+        if self.local_usage.rebind_pricing_diagnostics(diagnostics) {
+            self.pricing_status = status;
+        }
     }
 
     #[cfg(test)]
@@ -6183,7 +6196,10 @@ mod tests {
         app.install_generation_fixture_with_pricing_diagnostics(vec![PricingDiagnostic::warning(
             "message wording says pricing unavailable and using cached pricing",
         )]);
-        assert_eq!(app.pricing_warning(), None);
+        assert_eq!(
+            app.pricing_warning().as_deref(),
+            Some("Pricing warnings; some costs may be missing")
+        );
 
         app.install_generation_fixture_with_pricing_diagnostics(vec![
             PricingDiagnostic::cached_fallback("network error"),

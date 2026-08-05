@@ -12,6 +12,8 @@ use tempfile::TempDir;
 
 const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
+const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
+const PRICING_REFRESH: &[u8] = b"Refreshing pricing data";
 
 fn terminal_mode(fd: i32) -> libc::termios {
     // SAFETY: `tcgetattr` initializes the complete termios value on success,
@@ -113,11 +115,16 @@ fn run_tui_with_input(input: &[u8]) -> (ExitStatus, Vec<u8>) {
     });
 
     let home = TempDir::new().expect("create isolated TUI home");
+    let config_dir = home.path().join("tokenx-config");
     let mut child = Command::new(env!("CARGO_BIN_EXE_tokenx"))
         .args(["tui", "--no-refresh"])
         .env("HOME", home.path())
-        .env("TOKENX_CONFIG_DIR", home.path().join("tokenx-config"))
+        .env("TOKENX_CONFIG_DIR", config_dir)
         .env("TERM", "xterm-256color")
+        .env("HTTP_PROXY", "http://127.0.0.1:9")
+        .env("HTTPS_PROXY", "http://127.0.0.1:9")
+        .env("ALL_PROXY", "http://127.0.0.1:9")
+        .env_remove("NO_PROXY")
         .stdin(Stdio::from(stdin))
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
@@ -143,6 +150,25 @@ fn run_tui_with_input(input: &[u8]) -> (ExitStatus, Vec<u8>) {
             .any(|window| window == LEAVE_ALTERNATE_SCREEN),
         "TUI did not leave the alternate screen"
     );
+    let entered_at = output
+        .windows(ENTER_ALTERNATE_SCREEN.len())
+        .position(|window| window == ENTER_ALTERNATE_SCREEN)
+        .expect("TUI entered the alternate screen");
+    assert!(
+        !output[..entered_at]
+            .windows(PRICING_REFRESH.len())
+            .any(|window| window == PRICING_REFRESH),
+        "pricing refresh rendered before the TUI owned the terminal"
+    );
+    if let Some(hidden_at) = output
+        .windows(HIDE_CURSOR.len())
+        .position(|window| window == HIDE_CURSOR)
+    {
+        assert!(
+            hidden_at > entered_at,
+            "cursor visibility changed before TerminalSession ownership"
+        );
+    }
 
     (status, output)
 }

@@ -11,32 +11,51 @@ use super::generation_controller::{
 /// Owns every task whose lifetime is bounded by the interactive TUI session.
 ///
 /// A task handle must not be detached: acquisition can write the generation
-/// cache, while subscription fetches can retain network work. Shutdown first
-/// signals cancellation, then aborts async work and joins every owned task.
+/// cache, while pricing and subscription fetches can retain network work.
+/// Shutdown first signals cancellation, then aborts async work and joins every
+/// owned task.
 pub(super) struct TaskSupervisor {
     runtime: tokio::runtime::Handle,
     acquisition_tx: mpsc::Sender<AcquisitionTaskResult>,
     acquisition_rx: mpsc::Receiver<AcquisitionTaskResult>,
+    pricing_tx: mpsc::Sender<Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>>,
+    pricing_rx: mpsc::Receiver<Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>>,
     cancellation: tokenx_engine::AcquisitionCancellation,
     persistence_gate: Arc<Mutex<()>>,
     acquisition_tasks: Vec<thread::JoinHandle<()>>,
-    subscription_tasks: Vec<tokio::task::JoinHandle<()>>,
+    remote_tasks: Vec<tokio::task::JoinHandle<()>>,
     drained: bool,
 }
 
 impl TaskSupervisor {
     pub(super) fn new(runtime: tokio::runtime::Handle) -> Self {
         let (acquisition_tx, acquisition_rx) = mpsc::channel();
+        let (pricing_tx, pricing_rx) = mpsc::channel();
         Self {
             runtime,
             acquisition_tx,
             acquisition_rx,
+            pricing_tx,
+            pricing_rx,
             cancellation: tokenx_engine::AcquisitionCancellation::default(),
             persistence_gate: Arc::new(Mutex::new(())),
             acquisition_tasks: Vec::new(),
-            subscription_tasks: Vec::new(),
+            remote_tasks: Vec::new(),
             drained: false,
         }
+    }
+
+    pub(super) fn spawn_pricing_refresh(
+        &mut self,
+        pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
+        cache_dir: std::path::PathBuf,
+    ) {
+        self.reap_finished();
+        let tx = self.pricing_tx.clone();
+        self.remote_tasks.push(self.runtime.spawn(async move {
+            let snapshot = pricing.refresh_public_catalogs(&cache_dir).await;
+            let _ = tx.send(Arc::new(snapshot));
+        }));
     }
 
     pub(super) fn spawn_acquisition(
@@ -78,7 +97,7 @@ impl TaskSupervisor {
         tx: mpsc::Sender<SubscriptionBatch>,
     ) {
         self.reap_finished();
-        self.subscription_tasks.push(self.runtime.spawn(async move {
+        self.remote_tasks.push(self.runtime.spawn(async move {
             let batch = crate::subscription::service::fetch_enabled(&enabled).await;
             let _ = tx.send(batch);
         }));
@@ -90,13 +109,20 @@ impl TaskSupervisor {
         self.acquisition_rx.try_recv()
     }
 
+    pub(super) fn try_recv_pricing(
+        &self,
+    ) -> std::result::Result<Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>, mpsc::TryRecvError>
+    {
+        self.pricing_rx.try_recv()
+    }
+
     /// Signals cancellation without waiting for blocking acquisition work.
     ///
     /// Terminal restoration must happen after this signal and before
     /// [`Self::drain`], which may wait for an in-progress cache write.
     pub(super) fn signal_cancel(&mut self) {
         self.cancellation.cancel();
-        for task in &self.subscription_tasks {
+        for task in &self.remote_tasks {
             task.abort();
         }
     }
@@ -121,9 +147,9 @@ impl TaskSupervisor {
         );
 
         self.drained = true;
-        let subscription_tasks = std::mem::take(&mut self.subscription_tasks);
+        let remote_tasks = std::mem::take(&mut self.remote_tasks);
         self.runtime.block_on(async move {
-            for task in subscription_tasks {
+            for task in remote_tasks {
                 let _ = task.await;
             }
         });
@@ -143,7 +169,7 @@ impl TaskSupervisor {
                 index += 1;
             }
         }
-        self.subscription_tasks.retain(|task| !task.is_finished());
+        self.remote_tasks.retain(|task| !task.is_finished());
     }
 
     #[cfg(test)]
@@ -183,13 +209,11 @@ mod tests {
         let task_dropped = Arc::clone(&dropped);
         let (started_tx, started_rx) = mpsc::channel();
 
-        supervisor
-            .subscription_tasks
-            .push(runtime.spawn(async move {
-                let _guard = Dropped(task_dropped);
-                started_tx.send(()).expect("test receiver remains open");
-                tokio::time::sleep(Duration::from_secs(60)).await;
-            }));
+        supervisor.remote_tasks.push(runtime.spawn(async move {
+            let _guard = Dropped(task_dropped);
+            started_tx.send(()).expect("test receiver remains open");
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }));
         started_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("task started");
@@ -198,7 +222,7 @@ mod tests {
         supervisor.drain();
 
         assert!(dropped.load(Ordering::Acquire));
-        assert!(supervisor.subscription_tasks.is_empty());
+        assert!(supervisor.remote_tasks.is_empty());
     }
 
     #[test]

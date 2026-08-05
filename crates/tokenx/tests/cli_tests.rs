@@ -20,6 +20,7 @@ fn prime_pricing_cache(base: &Path) {
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("pricing-litellm.json"), &payload).unwrap();
     fs::write(dir.join("pricing-openrouter.json"), &payload).unwrap();
+    fs::write(dir.join("pricing-models-dev.json"), &payload).unwrap();
 }
 
 fn prime_override_pricing_cache(config_dir: &Path) {
@@ -33,6 +34,7 @@ fn prime_override_pricing_cache(config_dir: &Path) {
     fs::create_dir_all(&cache_dir).unwrap();
     fs::write(cache_dir.join("pricing-litellm.json"), &payload).unwrap();
     fs::write(cache_dir.join("pricing-openrouter.json"), &payload).unwrap();
+    fs::write(cache_dir.join("pricing-models-dev.json"), &payload).unwrap();
 }
 
 fn create_opencode_sqlite_at(db_path: &Path) -> Connection {
@@ -502,6 +504,11 @@ fn write_pricing_cache(base: &Path, timestamp: u64) {
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("pricing-litellm.json"), &litellm).unwrap();
     fs::write(dir.join("pricing-openrouter.json"), &openrouter).unwrap();
+    fs::write(
+        dir.join("pricing-models-dev.json"),
+        format!(r#"{{"timestamp":{},"data":{{}}}}"#, timestamp),
+    )
+    .unwrap();
 }
 
 fn create_pricing_fixture_dir() -> TempDir {
@@ -548,6 +555,15 @@ fn write_fireworks_pricing_cache(base: &Path) {
     fs::write(
         dir.join("pricing-openrouter.json"),
         serde_json::to_vec(&openrouter).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("pricing-models-dev.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "timestamp": now,
+            "data": {}
+        }))
+        .unwrap(),
     )
     .unwrap();
 }
@@ -1368,6 +1384,44 @@ fn test_models_json_offline_without_pricing_cache_still_succeeds() {
     assert_eq!(model_rows(&json).len(), 2);
     let total_cost = json["data"]["totals"]["cost"].as_f64().unwrap();
     assert_eq!(total_cost, 0.0);
+    assert_eq!(json["metadata"]["pricingStatus"], "unavailable");
+    assert!(!json["metadata"]["pricingDiagnostics"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn test_models_json_offline_custom_only_reports_incomplete_public_pricing() {
+    let tmp = create_temp_fixture_dir_without_pricing_cache();
+    let product_root = tmp.path().join(".tokenx");
+    fs::create_dir_all(&product_root).unwrap();
+    fs::write(
+        product_root.join("custom-pricing.json"),
+        r#"{"models":{"gpt-4o":{"input_cost_per_million_tokens":1.0,"output_cost_per_million_tokens":2.0}}}"#,
+    )
+    .unwrap();
+
+    let output = offline_cmd_with_home(tmp.path())
+        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["metadata"]["pricingStatus"], "availableWithWarnings");
+    assert!(json["data"]["totals"]["cost"].as_f64().unwrap() > 0.0);
+    assert!(json["metadata"]["pricingDiagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("pricing cache missing"))));
 }
 
 #[test]
@@ -1410,6 +1464,7 @@ fn test_models_json_offline_uses_stale_pricing_cache_when_available() {
         "unexpected totalCost: {total_cost}"
     );
     assert_eq!(json["health"]["complete"], true);
+    assert_eq!(json["metadata"]["pricingStatus"], "cachedFallback");
 }
 
 #[test]

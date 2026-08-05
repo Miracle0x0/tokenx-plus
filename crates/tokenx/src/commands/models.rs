@@ -1,6 +1,8 @@
 use crate::acquisition::{acquisition_engine, build_generation};
 use crate::claude_diagnostics;
-use crate::cli::{ModelsPlan, ResolvedDateRange, ResolvedInputScope, StartupSnapshot};
+use crate::cli::{
+    ModelsPlan, ResolvedDateRange, ResolvedInputScope, ResolvedModelsPlan, StartupSnapshot,
+};
 use crate::commands::render::{dim_borders, format_currency, LightSpinner, TABLE_PRESET};
 use crate::commands::shared::emit_client_diagnostics;
 use crate::formatting::{
@@ -54,7 +56,7 @@ fn model_clients_include(model: &UsageModelEntry, client: ClientId) -> bool {
     model.clients.contains(&client)
 }
 
-pub(crate) fn run_models(plan: ModelsPlan, no_spinner: bool) -> Result<()> {
+pub(crate) fn run_models(plan: ResolvedModelsPlan, no_spinner: bool) -> Result<()> {
     use std::time::Instant;
 
     let ModelsPlan {
@@ -277,6 +279,9 @@ fn emit_pricing_warning(
 
     let summary = match status {
         tokenx_engine::pricing::PricingStatus::Available => return,
+        tokenx_engine::pricing::PricingStatus::AvailableWithWarnings => {
+            rust_i18n::t!("commands.models.pricing_available_with_warnings")
+        }
         tokenx_engine::pricing::PricingStatus::CachedFallback => {
             rust_i18n::t!("commands.models.pricing_cached_fallback")
         }

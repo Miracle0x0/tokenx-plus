@@ -21,6 +21,7 @@ use cli::{Cli, ExecutionPlan, PricingSource, PricingSubcommand, TerminalState};
 use commands::cache::{run_input_record_cache_prune, run_warm_generation_cache};
 use commands::models::run_models;
 use commands::pricing::{run_pricing_list_overrides, run_pricing_lookup};
+use commands::render::LightSpinner;
 use failure::{CliFailure, FailureClass};
 
 const TOKIO_WORKER_THREADS: usize = 2;
@@ -82,6 +83,7 @@ fn run(runtime: &tokio::runtime::Runtime) -> std::result::Result<ExecutionOutcom
 
     let cli = Cli::parse_from_env();
     let plan = ExecutionPlan::resolve(cli, TerminalState::detect())?;
+    let plan = bind_pricing(plan, runtime);
     execute(plan, runtime)
 }
 
@@ -91,6 +93,23 @@ fn load_settings_language() -> std::result::Result<Option<i18n::Language>, CliFa
         Err(_) => return Ok(None),
     };
     settings::Settings::load_language(&paths).map_err(CliFailure::from)
+}
+
+fn bind_pricing(
+    plan: ExecutionPlan<cli::PendingPricing>,
+    runtime: &tokio::runtime::Runtime,
+) -> ExecutionPlan<cli::RuntimePricing> {
+    let spinner = match &plan {
+        ExecutionPlan::Models(plan) if !effective_no_spinner(plan.json, plan.no_spinner) => Some(
+            LightSpinner::start(rust_i18n::t!("main.pricing.refreshing")),
+        ),
+        _ => None,
+    };
+    let plan = runtime.block_on(plan.bind_pricing());
+    if let Some(spinner) = spinner {
+        spinner.stop();
+    }
+    plan
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +128,7 @@ impl From<tui::TuiExit> for ExecutionOutcome {
 }
 
 fn execute(
-    plan: ExecutionPlan,
+    plan: ExecutionPlan<cli::RuntimePricing>,
     runtime: &tokio::runtime::Runtime,
 ) -> std::result::Result<ExecutionOutcome, CliFailure> {
     match plan {

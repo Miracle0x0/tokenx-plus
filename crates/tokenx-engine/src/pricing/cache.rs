@@ -15,29 +15,22 @@ pub struct CachedData<T> {
     pub data: T,
 }
 
+pub(crate) enum ParsedCache<T> {
+    Fresh(T),
+    Stale(T),
+}
+
 fn load_cache_with_policy<T: for<'de> Deserialize<'de>>(
     cache_dir: &Path,
     filename: &str,
     allow_stale: bool,
 ) -> Option<T> {
     let canonical_path = get_cache_path(cache_dir, filename);
-    let content = fs::read_to_string(&canonical_path).ok()?;
-    let cached: CachedData<T> = serde_json::from_str(&content).ok()?;
-
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-
-    if cached.timestamp > now {
-        return None;
+    match parse_cache(&fs::read(&canonical_path).ok()?).ok()? {
+        ParsedCache::Fresh(data) => Some(data),
+        ParsedCache::Stale(data) if allow_stale => Some(data),
+        ParsedCache::Stale(_) => None,
     }
-
-    if !allow_stale && now.saturating_sub(cached.timestamp) > CACHE_TTL_SECS {
-        return None;
-    }
-
-    Some(cached.data)
 }
 
 pub fn load_cache<T: for<'de> Deserialize<'de>>(cache_dir: &Path, filename: &str) -> Option<T> {
@@ -51,7 +44,9 @@ pub fn load_cache_any_age<T: for<'de> Deserialize<'de>>(
     load_cache_with_policy(cache_dir, filename, true)
 }
 
-pub(crate) fn parse_cache_any_age<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, String> {
+pub(crate) fn parse_cache<T: for<'de> Deserialize<'de>>(
+    bytes: &[u8],
+) -> Result<ParsedCache<T>, String> {
     let cached: CachedData<T> = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -60,7 +55,11 @@ pub(crate) fn parse_cache_any_age<T: for<'de> Deserialize<'de>>(bytes: &[u8]) ->
     if cached.timestamp > now {
         return Err("cache timestamp is later than the current system clock".to_string());
     }
-    Ok(cached.data)
+    if now.saturating_sub(cached.timestamp) > CACHE_TTL_SECS {
+        Ok(ParsedCache::Stale(cached.data))
+    } else {
+        Ok(ParsedCache::Fresh(cached.data))
+    }
 }
 
 pub fn save_cache<T: Serialize>(

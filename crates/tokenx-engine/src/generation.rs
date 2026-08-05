@@ -531,6 +531,19 @@ impl Generation {
         &self.pricing_diagnostics
     }
 
+    /// Rebind runtime pricing diagnostics to an otherwise identical generation.
+    ///
+    /// This is used when a cached generation's pricing fingerprints still match
+    /// the current immutable pricing snapshot but refresh availability changed.
+    pub fn with_pricing_diagnostics(mut self, diagnostics: PricingDiagnostics) -> Self {
+        self.rebind_pricing_diagnostics(diagnostics);
+        self
+    }
+
+    pub fn rebind_pricing_diagnostics(&mut self, diagnostics: PricingDiagnostics) {
+        self.pricing_diagnostics = diagnostics;
+    }
+
     pub fn pricing_status(&self) -> PricingStatus {
         PricingStatus::from_diagnostics(&self.pricing_diagnostics)
     }

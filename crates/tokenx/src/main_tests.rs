@@ -590,12 +590,20 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
         .unwrap(),
     )
     .unwrap();
-    std::fs::write(
-        product_root.path().join("custom-pricing.json"),
-        b"{not-json",
-    )
-    .unwrap();
-
+    let pricing_cache_dir = product_root.path().join("cache");
+    std::fs::create_dir_all(&pricing_cache_dir).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let empty_pricing = format!(r#"{{"timestamp":{now},"data":{{}}}}"#);
+    for filename in [
+        "pricing-litellm.json",
+        "pricing-openrouter.json",
+        "pricing-models-dev.json",
+    ] {
+        std::fs::write(pricing_cache_dir.join(filename), &empty_pricing).unwrap();
+    }
     let cli = Cli::try_parse_from([
         "tokenx",
         "tui",
@@ -661,17 +669,19 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
         plan.startup.paths.generation_cache_file(),
         product_root.path().join("cache/generation.bin")
     );
+    assert!(matches!(&plan.startup.pricing, PendingPricing));
+
+    let runtime = super::build_process_runtime().unwrap();
+    let resolved = runtime.block_on(ExecutionPlan::Tui(plan).bind_pricing());
+    let ExecutionPlan::Tui(resolved) = resolved else {
+        panic!("expected resolved TUI plan");
+    };
     assert_eq!(
-        tokenx_engine::pricing::PricingStatus::from_diagnostics(plan.startup.pricing.diagnostics()),
-        tokenx_engine::pricing::PricingStatus::Unavailable,
-        "invalid optional pricing metadata must not prevent startup resolution"
+        tokenx_engine::pricing::PricingStatus::from_diagnostics(
+            resolved.startup.pricing.diagnostics()
+        ),
+        tokenx_engine::pricing::PricingStatus::Available
     );
-    assert!(plan
-        .startup
-        .pricing
-        .diagnostics()
-        .iter()
-        .any(|diagnostic| diagnostic.message().contains("failed to parse JSON")));
 }
 
 #[test]

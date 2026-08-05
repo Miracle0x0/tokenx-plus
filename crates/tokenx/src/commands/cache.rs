@@ -16,7 +16,9 @@ pub(crate) fn run_input_record_cache_prune(
     Ok(())
 }
 
-pub(crate) fn run_warm_generation_cache(startup: crate::cli::StartupSnapshot) -> Result<()> {
+pub(crate) fn run_warm_generation_cache(
+    startup: crate::cli::ResolvedStartupSnapshot,
+) -> Result<()> {
     use crate::acquisition::{acquisition_engine, build_generation};
     use crate::generation_cache::save_generation_cache;
 

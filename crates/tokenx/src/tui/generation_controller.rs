@@ -1,5 +1,5 @@
 use std::panic;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -90,6 +90,12 @@ struct ActiveRefresh {
     started_at: Instant,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ActivePricingRefresh {
+    needs_generation_load: bool,
+    started_at: Instant,
+}
+
 pub(super) enum BackgroundLoad {
     Unchanged,
     Loaded {
@@ -115,6 +121,7 @@ pub(super) struct GenerationController {
     last_checked: Instant,
     pending: Option<PendingRefresh>,
     active: Option<ActiveRefresh>,
+    pricing_refresh: Option<ActivePricingRefresh>,
     next_request_id: u64,
     retry_backoff: Option<RetryBackoff>,
     relative_date_range: Option<RelativeDateRange>,
@@ -133,6 +140,7 @@ impl GenerationController {
             last_checked: Instant::now(),
             pending: None,
             active: None,
+            pricing_refresh: None,
             next_request_id: 1,
             retry_backoff: None,
             relative_date_range: None,
@@ -166,6 +174,21 @@ impl GenerationController {
                 RefreshRequest::Automatic
             },
         });
+    }
+
+    pub(super) fn start_initial_pricing_refresh(
+        &mut self,
+        app: &mut TuiModel,
+        tasks: &mut TaskSupervisor,
+        cache_dir: std::path::PathBuf,
+        needs_generation_load: bool,
+    ) {
+        self.pricing_refresh = Some(ActivePricingRefresh {
+            needs_generation_load,
+            started_at: Instant::now(),
+        });
+        tasks.spawn_pricing_refresh(self.acquisition.pricing_snapshot(), cache_dir);
+        self.publish_status(app);
     }
 
     pub(super) fn consume_app_intents(&mut self, app: &mut TuiModel) {
@@ -212,7 +235,7 @@ impl GenerationController {
     }
 
     pub(super) fn start_pending(&mut self, app: &mut TuiModel, tasks: &mut TaskSupervisor) {
-        if self.active.is_some() {
+        if self.pricing_refresh.is_some() || self.active.is_some() {
             return;
         }
         let Some(pending) = self.pending.take() else {
@@ -282,6 +305,62 @@ impl GenerationController {
         self.acquisition = replacement;
         self.retry_backoff = None;
         Ok(true)
+    }
+
+    pub(super) fn apply_pricing_result(
+        &mut self,
+        app: &mut TuiModel,
+        pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
+    ) {
+        let Some(active) = self.pricing_refresh.take() else {
+            tracing::warn!("ignored pricing refresh result without an active refresh");
+            return;
+        };
+
+        let context_changed = match self.replace_pricing_snapshot(Arc::clone(&pricing)) {
+            Ok(changed) => changed,
+            Err(error) => {
+                generation_background_failure(
+                    app,
+                    rust_i18n::t!(
+                        "tui.generation.error.refresh_context",
+                        error = format!("{error:#}")
+                    )
+                    .into_owned(),
+                );
+                self.publish_status(app);
+                return;
+            }
+        };
+
+        if context_changed {
+            self.retry_backoff = None;
+        } else {
+            app.rebind_pricing_diagnostics(pricing.diagnostics().to_vec());
+        }
+        if active.needs_generation_load || context_changed {
+            self.request_initial_load(true);
+        }
+        self.publish_status(app);
+    }
+
+    fn replace_pricing_snapshot(
+        &mut self,
+        pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
+    ) -> Result<bool> {
+        let current = self.acquisition.config();
+        let context_changed = current.pricing() != pricing.context();
+        let replacement = acquisition_engine(
+            self.acquisition.input_cache_dir().to_path_buf(),
+            current.resolved_home_dir().to_path_buf(),
+            current.universe().clone(),
+            current.date_range().clone(),
+            current.scanner().clone(),
+            *current.calendar(),
+            pricing,
+        )?;
+        self.acquisition = replacement;
+        Ok(context_changed)
     }
 
     pub(super) fn apply_task_result(
@@ -414,10 +493,11 @@ impl GenerationController {
 
     fn publish_status(&mut self, app: &mut TuiModel) {
         self.status.elapsed = self.last_checked.elapsed();
-        self.status.loading = self.active.is_some();
+        self.status.loading = self.pricing_refresh.is_some() || self.active.is_some();
         self.status.loading_elapsed = self
-            .active
+            .pricing_refresh
             .map(|active| active.started_at.elapsed())
+            .or_else(|| self.active.map(|active| active.started_at.elapsed()))
             .unwrap_or_default();
         app.set_refresh_status(self.status);
     }
@@ -654,6 +734,20 @@ mod tests {
         (app, controller)
     }
 
+    fn pricing_snapshot(
+        catalog: &str,
+        diagnostics: tokenx_engine::pricing::PricingDiagnostics,
+    ) -> Arc<tokenx_engine::pricing::ResolvedPricingSnapshot> {
+        Arc::new(tokenx_engine::pricing::ResolvedPricingSnapshot::explicit(
+            tokenx_engine::PricingContext::explicit_with_catalog("test-custom", catalog),
+            Some(Arc::new(tokenx_engine::pricing::PricingService::new(
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            ))),
+            diagnostics,
+        ))
+    }
+
     #[test]
     fn manual_request_supersedes_queued_automatic_request() {
         let (_, mut controller) = harness(false);
@@ -722,6 +816,84 @@ mod tests {
             &controller.acquisition.pricing_snapshot(),
             &pricing_snapshot,
         ));
+    }
+
+    #[test]
+    fn changed_pricing_identity_queues_a_forced_generation_rebuild() {
+        let (mut app, mut controller) = harness(false);
+        controller.pricing_refresh = Some(ActivePricingRefresh {
+            needs_generation_load: false,
+            started_at: Instant::now(),
+        });
+
+        controller.apply_pricing_result(&mut app, pricing_snapshot("updated-catalog", Vec::new()));
+
+        assert_eq!(
+            controller
+                .acquisition
+                .config()
+                .pricing()
+                .catalog_fingerprint(),
+            "updated-catalog"
+        );
+        assert!(matches!(
+            controller.pending,
+            Some(PendingRefresh {
+                request: RefreshRequest::Manual
+            })
+        ));
+        assert!(controller.retry_backoff.is_none());
+    }
+
+    #[test]
+    fn cold_start_queues_generation_after_pricing_refresh() {
+        let (mut app, mut controller) = harness(false);
+        controller.pricing_refresh = Some(ActivePricingRefresh {
+            needs_generation_load: true,
+            started_at: Instant::now(),
+        });
+
+        controller.apply_pricing_result(&mut app, pricing_snapshot("test-catalog", Vec::new()));
+
+        assert!(matches!(
+            controller.pending,
+            Some(PendingRefresh {
+                request: RefreshRequest::Manual
+            })
+        ));
+    }
+
+    #[test]
+    fn unchanged_pricing_identity_rebinds_diagnostics_without_rescan() {
+        let (mut app, mut controller) = harness(false);
+        app.install_generation_fixture_with_pricing_diagnostics(vec![
+            tokenx_engine::pricing::PricingDiagnostic::warning("old warning"),
+        ]);
+        controller.pricing_refresh = Some(ActivePricingRefresh {
+            needs_generation_load: false,
+            started_at: Instant::now(),
+        });
+        let diagnostics = vec![tokenx_engine::pricing::PricingDiagnostic::cached_fallback(
+            "refresh failed",
+        )];
+
+        controller.apply_pricing_result(
+            &mut app,
+            pricing_snapshot("test-catalog", diagnostics.clone()),
+        );
+
+        assert!(controller.pending.is_none());
+        assert_eq!(
+            app.installed_generation()
+                .unwrap()
+                .generation()
+                .pricing_diagnostics(),
+            diagnostics
+        );
+        assert_eq!(
+            app.pricing_warning().as_deref(),
+            Some("Pricing refresh failed; using cached rates")
+        );
     }
 
     #[test]

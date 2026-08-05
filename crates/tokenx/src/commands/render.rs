@@ -20,6 +20,10 @@ impl LightSpinner {
     const INACTIVE_COLOR: u8 = 240;
     const FRAME_MS: u64 = 40;
 
+    /// Start a line-local progress renderer without changing cursor visibility.
+    ///
+    /// Persistent terminal state belongs to the TUI `TerminalSession`; this
+    /// renderer may run before that session exists or in an ordinary CLI.
     pub(crate) fn start(message: impl Into<String>) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let running_thread = Arc::clone(&running);
@@ -29,9 +33,6 @@ impl LightSpinner {
             let mut frame = 0usize;
             let mut stderr = io::stderr().lock();
 
-            let _ = write!(stderr, "\x1b[?25l");
-            let _ = stderr.flush();
-
             while running_thread.load(Ordering::Relaxed) {
                 let spinner = Self::frame(frame);
                 let _ = write!(stderr, "\r\x1b[K  {} {}", spinner, message);
@@ -40,7 +41,7 @@ impl LightSpinner {
                 thread::sleep(Duration::from_millis(Self::FRAME_MS));
             }
 
-            let _ = write!(stderr, "\r\x1b[K\x1b[?25h");
+            let _ = write!(stderr, "\r\x1b[K");
             let _ = stderr.flush();
         });
 

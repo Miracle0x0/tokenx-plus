@@ -51,6 +51,16 @@ pub(crate) async fn fetch_with_diagnostics(
     fetch_inner(cache_dir, PRICING_URL, true, &mut diagnostics).await
 }
 
+pub(crate) async fn refresh_with_diagnostics(
+    cache_dir: &Path,
+    diagnostics: &mut PricingDiagnostics,
+) -> Result<PricingDataset, String> {
+    let mut diagnostics = Some(diagnostics);
+    fetch_inner(cache_dir, PRICING_URL, false, &mut diagnostics)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 async fn fetch_inner(
     cache_dir: &Path,
     url: &str,
@@ -207,6 +217,40 @@ mod tests {
                 .any(|diagnostic| diagnostic.message().contains("LiteLLM HTTP 429")),
             "diagnostics missing retryable status: {diagnostics:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn successful_fetch_survives_cache_write_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = [0; 1024];
+            let _ = stream.read(&mut buffer);
+            let body = br#"{"snapshot-model":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(body);
+        });
+        let temp = tempfile::TempDir::new().unwrap();
+        let cache_dir = temp.path().join("not-a-directory");
+        std::fs::write(&cache_dir, b"blocks cache directory creation").unwrap();
+        let mut diagnostics = Vec::new();
+        let mut sink = Some(&mut diagnostics);
+
+        let result = fetch_inner(&cache_dir, &url, false, &mut sink)
+            .await
+            .unwrap();
+
+        assert!(result.contains_key("snapshot-model"));
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message().contains("Failed to cache LiteLLM")));
     }
 
     #[test]

@@ -32,6 +32,26 @@ struct ModelCost {
 
 pub type PricingDataset = HashMap<String, ModelPricing>;
 
+enum FetchError {
+    Request(reqwest::Error),
+    InvalidCatalog(serde_json::Error),
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Request(error) => error.fmt(formatter),
+            Self::InvalidCatalog(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl From<reqwest::Error> for FetchError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error)
+    }
+}
+
 pub fn load_cached(cache_dir: &Path) -> Option<PricingDataset> {
     cache::load_cache(cache_dir, CACHE_FILENAME)
 }
@@ -47,7 +67,7 @@ pub(crate) fn parse_dataset(content: &str) -> Result<PricingDataset, serde_json:
 
 pub async fn fetch(cache_dir: &Path) -> Result<PricingDataset, reqwest::Error> {
     let mut diagnostics = None;
-    fetch_inner(cache_dir, MODELS_DEV_URL, true, &mut diagnostics).await
+    fetch_compatible(cache_dir, true, &mut diagnostics).await
 }
 
 pub(crate) async fn fetch_with_diagnostics(
@@ -55,7 +75,29 @@ pub(crate) async fn fetch_with_diagnostics(
     diagnostics: &mut PricingDiagnostics,
 ) -> Result<PricingDataset, reqwest::Error> {
     let mut diagnostics = Some(diagnostics);
-    fetch_inner(cache_dir, MODELS_DEV_URL, true, &mut diagnostics).await
+    fetch_compatible(cache_dir, true, &mut diagnostics).await
+}
+
+pub(crate) async fn refresh_with_diagnostics(
+    cache_dir: &Path,
+    diagnostics: &mut PricingDiagnostics,
+) -> Result<PricingDataset, String> {
+    let mut diagnostics = Some(diagnostics);
+    fetch_inner(cache_dir, MODELS_DEV_URL, false, &mut diagnostics)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+async fn fetch_compatible(
+    cache_dir: &Path,
+    use_cache: bool,
+    diagnostics: &mut PricingDiagnosticSink<'_>,
+) -> Result<PricingDataset, reqwest::Error> {
+    match fetch_inner(cache_dir, MODELS_DEV_URL, use_cache, diagnostics).await {
+        Ok(data) => Ok(data),
+        Err(FetchError::Request(error)) => Err(error),
+        Err(FetchError::InvalidCatalog(_)) => Ok(HashMap::new()),
+    }
 }
 
 async fn fetch_inner(
@@ -63,7 +105,7 @@ async fn fetch_inner(
     url: &str,
     use_cache: bool,
     diagnostics: &mut PricingDiagnosticSink<'_>,
-) -> Result<PricingDataset, reqwest::Error> {
+) -> Result<PricingDataset, FetchError> {
     if use_cache {
         if let Some(cached) = load_cached(cache_dir) {
             return Ok(cached);
@@ -93,7 +135,7 @@ async fn fetch_inner(
                         ),
                     );
                     if attempt == MAX_RETRIES - 1 {
-                        return Err(response.error_for_status().unwrap_err());
+                        return Err(response.error_for_status().unwrap_err().into());
                     }
                     let _ = response.bytes().await;
                     tokio::time::sleep(std::time::Duration::from_millis(
@@ -105,7 +147,7 @@ async fn fetch_inner(
 
                 if !status.is_success() {
                     emit_warning(diagnostics, format!("[tokenx] models.dev HTTP {status}"));
-                    return Err(response.error_for_status().unwrap_err());
+                    return Err(response.error_for_status().unwrap_err().into());
                 }
 
                 let content = response.text().await?;
@@ -131,7 +173,7 @@ async fn fetch_inner(
                             diagnostics,
                             format!("[tokenx] models.dev JSON parse failed: {e}"),
                         );
-                        return Ok(HashMap::new());
+                        return Err(FetchError::InvalidCatalog(e));
                     }
                 }
             }
@@ -157,7 +199,7 @@ async fn fetch_inner(
     }
 
     match last_error {
-        Some(e) => Err(e),
+        Some(error) => Err(error.into()),
         None => Ok(HashMap::new()),
     }
 }
@@ -253,5 +295,35 @@ mod tests {
                 .any(|diagnostic| diagnostic.message().contains("models.dev HTTP 503")),
             "diagnostics missing retryable status: {diagnostics:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_propagates_invalid_catalog_json() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = [0; 1024];
+            let _ = stream.read(&mut buffer);
+            let body = b"{not-json";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(body);
+        });
+        let cache_dir = tempfile::TempDir::new().unwrap();
+        let mut diagnostics = Vec::new();
+        let mut sink = Some(&mut diagnostics);
+
+        let result = fetch_inner(cache_dir.path(), &url, false, &mut sink).await;
+
+        assert!(result.is_err());
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message().contains("JSON parse failed")));
     }
 }

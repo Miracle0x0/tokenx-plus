@@ -85,9 +85,11 @@ impl PricingDiagnostic {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PricingStatus {
-    /// Pricing is usable. Non-fatal warnings do not change availability.
+    /// Pricing is usable without diagnostics.
     #[default]
     Available,
+    /// Pricing is usable, but one or more sources are incomplete.
+    AvailableWithWarnings,
     /// Online refresh failed and an older on-disk cache was used.
     CachedFallback,
     /// No pricing service could be initialized.
@@ -106,8 +108,10 @@ impl PricingStatus {
             .any(|diagnostic| diagnostic.kind() == PricingDiagnosticKind::CachedFallback)
         {
             Self::CachedFallback
-        } else {
+        } else if diagnostics.is_empty() {
             Self::Available
+        } else {
+            Self::AvailableWithWarnings
         }
     }
 }
@@ -129,6 +133,38 @@ const EXCLUDED_LITELLM_PREFIXES: &[&str] = &["github_copilot/"];
 pub struct PricingService {
     custom: CustomPricing,
     lookup: PricingLookup,
+}
+
+type PricingDataset = HashMap<String, ModelPricing>;
+
+struct PublicPricingCatalogs {
+    litellm: PricingDataset,
+    openrouter: PricingDataset,
+    models_dev: PricingDataset,
+}
+
+#[derive(Default)]
+struct ResolvedPublicPricingCatalogs {
+    litellm: Option<PricingDataset>,
+    openrouter: Option<PricingDataset>,
+    models_dev: Option<PricingDataset>,
+}
+
+struct CapturedPublicPricingCatalogs {
+    litellm: CatalogSeed,
+    openrouter: CatalogSeed,
+    models_dev: CatalogSeed,
+}
+
+enum CatalogSeed {
+    Fresh(PricingDataset),
+    Stale(PricingDataset),
+    Unavailable(PricingDiagnostic),
+}
+
+struct CatalogResolution {
+    data: Option<PricingDataset>,
+    diagnostics: PricingDiagnostics,
 }
 
 impl PricingService {
@@ -179,7 +215,7 @@ impl PricingService {
         data
     }
 
-    async fn fetch_inner(custom_path: &Path, cache_dir: &Path) -> Result<Self, String> {
+    async fn fetch_public_catalogs(cache_dir: &Path) -> Result<PublicPricingCatalogs, String> {
         let (litellm_result, openrouter_data, models_dev_result) = tokio::join!(
             litellm::fetch(cache_dir),
             openrouter::fetch_all_mapped(cache_dir),
@@ -196,19 +232,17 @@ impl PricingService {
             }
         };
 
-        Ok(Self::new_with_custom_and_models_dev(
-            CustomPricing::load_from_path(custom_path),
-            litellm_data,
-            openrouter_data,
-            models_dev_data,
-        ))
+        Ok(PublicPricingCatalogs {
+            litellm: litellm_data,
+            openrouter: openrouter_data,
+            models_dev: models_dev_data,
+        })
     }
 
-    async fn fetch_inner_with_diagnostics(
-        custom_path: &Path,
+    async fn fetch_public_catalogs_with_diagnostics(
         cache_dir: &Path,
         diagnostics: &mut PricingDiagnostics,
-    ) -> Result<Self, String> {
+    ) -> Result<PublicPricingCatalogs, String> {
         let mut litellm_diagnostics = PricingDiagnostics::new();
         let mut openrouter_diagnostics = PricingDiagnostics::new();
         let mut models_dev_diagnostics = PricingDiagnostics::new();
@@ -235,15 +269,38 @@ impl PricingService {
             }
         };
 
+        Ok(PublicPricingCatalogs {
+            litellm: litellm_data,
+            openrouter: openrouter_data,
+            models_dev: models_dev_data,
+        })
+    }
+
+    async fn fetch_inner(custom_path: &Path, cache_dir: &Path) -> Result<Self, String> {
+        let catalogs = Self::fetch_public_catalogs(cache_dir).await?;
         Ok(Self::new_with_custom_and_models_dev(
-            CustomPricing::load_from_path_with_diagnostics(custom_path, diagnostics),
-            litellm_data,
-            openrouter_data,
-            models_dev_data,
+            CustomPricing::load_from_path(custom_path),
+            catalogs.litellm,
+            catalogs.openrouter,
+            catalogs.models_dev,
         ))
     }
 
-    fn from_cached_datasets(
+    async fn fetch_inner_with_diagnostics(
+        custom_path: &Path,
+        cache_dir: &Path,
+        diagnostics: &mut PricingDiagnostics,
+    ) -> Result<Self, String> {
+        let catalogs = Self::fetch_public_catalogs_with_diagnostics(cache_dir, diagnostics).await?;
+        Ok(Self::new_with_custom_and_models_dev(
+            CustomPricing::load_from_path_with_diagnostics(custom_path, diagnostics),
+            catalogs.litellm,
+            catalogs.openrouter,
+            catalogs.models_dev,
+        ))
+    }
+
+    fn from_resolved_datasets(
         custom: CustomPricing,
         litellm_data: Option<HashMap<String, ModelPricing>>,
         openrouter_data: Option<HashMap<String, ModelPricing>>,
@@ -266,7 +323,7 @@ impl PricingService {
     }
 
     pub fn load_cached_any_age(custom_path: &Path, cache_dir: &Path) -> Option<Self> {
-        Self::from_cached_datasets(
+        Self::from_resolved_datasets(
             CustomPricing::load_from_path(custom_path),
             litellm::load_cached_any_age(cache_dir),
             openrouter::load_cached_any_age(cache_dir),
@@ -407,6 +464,14 @@ pub struct ResolvedPricingSnapshot {
     context: crate::PricingContext,
     service: Option<Arc<PricingService>>,
     diagnostics: PricingDiagnostics,
+    custom: ResolvedCustomPricing,
+}
+
+#[derive(Clone)]
+struct ResolvedCustomPricing {
+    fingerprint: String,
+    pricing: CustomPricing,
+    diagnostics: PricingDiagnostics,
 }
 
 impl std::fmt::Debug for ResolvedPricingSnapshot {
@@ -427,6 +492,14 @@ impl ResolvedPricingSnapshot {
         service: Option<Arc<PricingService>>,
         mut diagnostics: PricingDiagnostics,
     ) -> Self {
+        let custom = ResolvedCustomPricing {
+            fingerprint: context.custom_pricing_fingerprint().to_owned(),
+            pricing: service
+                .as_deref()
+                .map(|service| service.custom.clone())
+                .unwrap_or_default(),
+            diagnostics: PricingDiagnostics::new(),
+        };
         if service.is_none()
             && !diagnostics
                 .iter()
@@ -440,6 +513,7 @@ impl ResolvedPricingSnapshot {
             context,
             service,
             diagnostics,
+            custom,
         }
     }
 
@@ -450,20 +524,41 @@ impl ResolvedPricingSnapshot {
     /// diagnostics and never prevent local usage acquisition.
     pub fn resolve_from(custom_path: &Path, cache_dir: &Path) -> Self {
         let custom_file = CapturedPricingFile::read(custom_path, MAX_CUSTOM_SNAPSHOT_BYTES);
-        let catalog_files = CACHED_CATALOG_FILES.map(|filename| {
-            CapturedPricingFile::read(&cache_dir.join(filename), MAX_CATALOG_SNAPSHOT_BYTES)
-        });
-        let custom_fingerprint = custom_file.fingerprint(b"tokenx-custom-pricing-v1\0");
-        let mut catalog_digest = Sha256::new();
-        catalog_digest.update(b"tokenx-pricing-catalogs-v1\0");
-        for (filename, file) in CACHED_CATALOG_FILES.iter().zip(&catalog_files) {
-            catalog_digest.update(filename.as_bytes());
-            catalog_digest.update(b"\0");
-            catalog_digest.update(file.fingerprint(b"tokenx-pricing-catalog-v1\0"));
-        }
-        let catalog_fingerprint = finish_pricing_fingerprint(catalog_digest);
+        let custom = Self::resolve_custom(custom_path, custom_file);
+        let (catalogs, diagnostics) = CapturedPublicPricingCatalogs::read(cache_dir).into_local();
+        Self::from_parts(custom, catalogs, diagnostics)
+    }
+
+    /// Resolve public catalogs, then freeze one coherent pricing snapshot.
+    ///
+    /// Fresh caches are reused without network I/O. Missing or stale sources
+    /// refresh independently; fetched data remains authoritative for this
+    /// command even when persistence fails, while a failed source refresh may
+    /// reuse its captured stale catalog.
+    pub async fn resolve_with_refresh(custom_path: &Path, cache_dir: &Path) -> Self {
+        let custom_file = CapturedPricingFile::read(custom_path, MAX_CUSTOM_SNAPSHOT_BYTES);
+        let custom = Self::resolve_custom(custom_path, custom_file);
+        let (catalogs, diagnostics) = CapturedPublicPricingCatalogs::read(cache_dir)
+            .refresh(cache_dir)
+            .await;
+        Self::from_parts(custom, catalogs, diagnostics)
+    }
+
+    /// Refresh public catalogs while retaining the captured custom authority.
+    pub async fn refresh_public_catalogs(&self, cache_dir: &Path) -> Self {
+        let (catalogs, diagnostics) = CapturedPublicPricingCatalogs::read(cache_dir)
+            .refresh(cache_dir)
+            .await;
+        Self::from_parts(self.custom.clone(), catalogs, diagnostics)
+    }
+
+    fn resolve_custom(
+        custom_path: &Path,
+        custom_file: CapturedPricingFile,
+    ) -> ResolvedCustomPricing {
+        let fingerprint = custom_file.fingerprint(b"tokenx-custom-pricing-v1\0");
         let mut diagnostics = PricingDiagnostics::new();
-        let custom = match custom_file.content(custom_path, "custom pricing", &mut diagnostics) {
+        let pricing = match custom_file.content(custom_path, "custom pricing", &mut diagnostics) {
             Some(bytes) => CustomPricing::load_from_bytes_with_diagnostics(
                 bytes,
                 custom_path,
@@ -471,26 +566,27 @@ impl ResolvedPricingSnapshot {
             ),
             None => CustomPricing::default(),
         };
-        let litellm = parse_captured_catalog::<litellm::PricingDataset>(
-            &catalog_files[0],
-            &cache_dir.join(CACHED_CATALOG_FILES[0]),
-            "LiteLLM",
-            &mut diagnostics,
-        );
-        let openrouter = parse_captured_catalog::<HashMap<String, ModelPricing>>(
-            &catalog_files[1],
-            &cache_dir.join(CACHED_CATALOG_FILES[1]),
-            "OpenRouter",
-            &mut diagnostics,
-        );
-        let models_dev = parse_captured_catalog::<models_dev::PricingDataset>(
-            &catalog_files[2],
-            &cache_dir.join(CACHED_CATALOG_FILES[2]),
-            "models.dev",
-            &mut diagnostics,
-        );
-        let service = PricingService::from_cached_datasets(custom, litellm, openrouter, models_dev)
-            .map(Arc::new);
+        ResolvedCustomPricing {
+            fingerprint,
+            pricing,
+            diagnostics,
+        }
+    }
+
+    fn from_parts(
+        custom: ResolvedCustomPricing,
+        catalogs: ResolvedPublicPricingCatalogs,
+        mut diagnostics: PricingDiagnostics,
+    ) -> Self {
+        let catalog_fingerprint = catalogs.fingerprint();
+        diagnostics.extend(custom.diagnostics.iter().cloned());
+        let service = PricingService::from_resolved_datasets(
+            custom.pricing.clone(),
+            catalogs.litellm,
+            catalogs.openrouter,
+            catalogs.models_dev,
+        )
+        .map(Arc::new);
         if service.is_none() {
             diagnostics.push(PricingDiagnostic::unavailable(
                 "[tokenx] pricing unavailable: no local pricing snapshot",
@@ -498,11 +594,12 @@ impl ResolvedPricingSnapshot {
         }
         Self {
             context: crate::PricingContext::explicit_with_catalog(
-                custom_fingerprint,
+                custom.fingerprint.clone(),
                 catalog_fingerprint,
             ),
             service,
             diagnostics,
+            custom,
         }
     }
 
@@ -527,6 +624,240 @@ enum CapturedPricingFile {
     Missing,
     Content(Vec<u8>),
     Rejected { identity: String, reason: String },
+}
+
+impl CapturedPublicPricingCatalogs {
+    fn read(cache_dir: &Path) -> Self {
+        let litellm_path = cache_dir.join(CACHED_CATALOG_FILES[0]);
+        let openrouter_path = cache_dir.join(CACHED_CATALOG_FILES[1]);
+        let models_dev_path = cache_dir.join(CACHED_CATALOG_FILES[2]);
+        Self {
+            litellm: capture_catalog_seed(
+                CapturedPricingFile::read(&litellm_path, MAX_CATALOG_SNAPSHOT_BYTES),
+                &litellm_path,
+                "LiteLLM",
+            )
+            .map(PricingService::filter_litellm_data),
+            openrouter: capture_catalog_seed(
+                CapturedPricingFile::read(&openrouter_path, MAX_CATALOG_SNAPSHOT_BYTES),
+                &openrouter_path,
+                "OpenRouter",
+            ),
+            models_dev: capture_catalog_seed(
+                CapturedPricingFile::read(&models_dev_path, MAX_CATALOG_SNAPSHOT_BYTES),
+                &models_dev_path,
+                "models.dev",
+            ),
+        }
+    }
+
+    fn into_local(self) -> (ResolvedPublicPricingCatalogs, PricingDiagnostics) {
+        ResolvedPublicPricingCatalogs::from_resolutions(
+            self.litellm.into_local(),
+            self.openrouter.into_local(),
+            self.models_dev.into_local(),
+        )
+    }
+
+    async fn refresh(
+        self,
+        cache_dir: &Path,
+    ) -> (ResolvedPublicPricingCatalogs, PricingDiagnostics) {
+        let (litellm, openrouter, models_dev) = tokio::join!(
+            resolve_litellm_catalog(self.litellm, cache_dir),
+            resolve_openrouter_catalog(self.openrouter, cache_dir),
+            resolve_models_dev_catalog(self.models_dev, cache_dir),
+        );
+        ResolvedPublicPricingCatalogs::from_resolutions(litellm, openrouter, models_dev)
+    }
+}
+
+impl CatalogSeed {
+    fn map(self, transform: fn(PricingDataset) -> PricingDataset) -> Self {
+        match self {
+            Self::Fresh(data) => Self::Fresh(transform(data)),
+            Self::Stale(data) => Self::Stale(transform(data)),
+            Self::Unavailable(diagnostic) => Self::Unavailable(diagnostic),
+        }
+    }
+
+    fn into_local(self) -> CatalogResolution {
+        match self {
+            Self::Fresh(data) | Self::Stale(data) => CatalogResolution {
+                data: Some(data),
+                diagnostics: PricingDiagnostics::new(),
+            },
+            Self::Unavailable(diagnostic) => CatalogResolution {
+                data: None,
+                diagnostics: vec![diagnostic],
+            },
+        }
+    }
+}
+
+impl CatalogResolution {
+    fn available(data: PricingDataset) -> Self {
+        Self {
+            data: Some(data),
+            diagnostics: PricingDiagnostics::new(),
+        }
+    }
+
+    fn after_refresh(
+        label: &str,
+        seed: CatalogSeed,
+        refreshed: Result<PricingDataset, String>,
+        mut diagnostics: PricingDiagnostics,
+    ) -> Self {
+        match refreshed {
+            Ok(data) => Self {
+                data: Some(data),
+                diagnostics,
+            },
+            Err(error) => match seed {
+                CatalogSeed::Stale(data) => {
+                    diagnostics.push(PricingDiagnostic::cached_fallback(format!(
+                        "[tokenx] {label} pricing refresh failed; using cached pricing: {error}"
+                    )));
+                    Self {
+                        data: Some(data),
+                        diagnostics,
+                    }
+                }
+                CatalogSeed::Unavailable(cache_diagnostic) => {
+                    diagnostics.push(cache_diagnostic);
+                    diagnostics.push(PricingDiagnostic::warning(format!(
+                        "[tokenx] {label} pricing refresh failed; no cached catalog is available: {error}"
+                    )));
+                    Self {
+                        data: None,
+                        diagnostics,
+                    }
+                }
+                CatalogSeed::Fresh(_) => {
+                    unreachable!("fresh pricing catalogs are never refreshed")
+                }
+            },
+        }
+    }
+}
+
+impl ResolvedPublicPricingCatalogs {
+    fn from_resolutions(
+        litellm: CatalogResolution,
+        openrouter: CatalogResolution,
+        models_dev: CatalogResolution,
+    ) -> (Self, PricingDiagnostics) {
+        let mut diagnostics = litellm.diagnostics;
+        diagnostics.extend(openrouter.diagnostics);
+        diagnostics.extend(models_dev.diagnostics);
+        (
+            Self {
+                litellm: litellm.data,
+                openrouter: openrouter.data,
+                models_dev: models_dev.data,
+            },
+            diagnostics,
+        )
+    }
+
+    fn fingerprint(&self) -> String {
+        let mut digest = Sha256::new();
+        digest.update(b"tokenx-pricing-catalog-data-v1\0");
+        update_catalog_digest(&mut digest, CACHED_CATALOG_FILES[0], self.litellm.as_ref());
+        update_catalog_digest(
+            &mut digest,
+            CACHED_CATALOG_FILES[1],
+            self.openrouter.as_ref(),
+        );
+        update_catalog_digest(
+            &mut digest,
+            CACHED_CATALOG_FILES[2],
+            self.models_dev.as_ref(),
+        );
+        finish_pricing_fingerprint(digest)
+    }
+}
+
+async fn resolve_litellm_catalog(seed: CatalogSeed, cache_dir: &Path) -> CatalogResolution {
+    match seed {
+        CatalogSeed::Fresh(data) => CatalogResolution::available(data),
+        seed => {
+            let mut diagnostics = PricingDiagnostics::new();
+            let refreshed = litellm::refresh_with_diagnostics(cache_dir, &mut diagnostics)
+                .await
+                .map(PricingService::filter_litellm_data);
+            CatalogResolution::after_refresh("LiteLLM", seed, refreshed, diagnostics)
+        }
+    }
+}
+
+async fn resolve_openrouter_catalog(seed: CatalogSeed, cache_dir: &Path) -> CatalogResolution {
+    match seed {
+        CatalogSeed::Fresh(data) => CatalogResolution::available(data),
+        seed => {
+            let mut diagnostics = PricingDiagnostics::new();
+            let refreshed = openrouter::refresh_with_diagnostics(cache_dir, &mut diagnostics).await;
+            CatalogResolution::after_refresh("OpenRouter", seed, refreshed, diagnostics)
+        }
+    }
+}
+
+async fn resolve_models_dev_catalog(seed: CatalogSeed, cache_dir: &Path) -> CatalogResolution {
+    match seed {
+        CatalogSeed::Fresh(data) => CatalogResolution::available(data),
+        seed => {
+            let mut diagnostics = PricingDiagnostics::new();
+            let refreshed = models_dev::refresh_with_diagnostics(cache_dir, &mut diagnostics).await;
+            CatalogResolution::after_refresh("models.dev", seed, refreshed, diagnostics)
+        }
+    }
+}
+
+fn capture_catalog_seed(file: CapturedPricingFile, path: &Path, label: &str) -> CatalogSeed {
+    match file {
+        CapturedPricingFile::Missing => {
+            CatalogSeed::Unavailable(PricingDiagnostic::warning(format!(
+                "[tokenx] {label} pricing cache missing at {}",
+                path.display()
+            )))
+        }
+        CapturedPricingFile::Rejected { reason, .. } => {
+            CatalogSeed::Unavailable(PricingDiagnostic::warning(format!(
+                "[tokenx] {label} pricing cache ignored at {}: {reason}",
+                path.display()
+            )))
+        }
+        CapturedPricingFile::Content(bytes) => match cache::parse_cache(&bytes) {
+            Ok(cache::ParsedCache::Fresh(data)) => CatalogSeed::Fresh(data),
+            Ok(cache::ParsedCache::Stale(data)) => CatalogSeed::Stale(data),
+            Err(error) => CatalogSeed::Unavailable(PricingDiagnostic::warning(format!(
+                "[tokenx] {label} pricing cache ignored at {}: {error}",
+                path.display()
+            ))),
+        },
+    }
+}
+
+fn update_catalog_digest(digest: &mut Sha256, filename: &str, catalog: Option<&PricingDataset>) {
+    digest.update((filename.len() as u64).to_be_bytes());
+    digest.update(filename.as_bytes());
+    let Some(catalog) = catalog else {
+        digest.update(b"missing\0");
+        return;
+    };
+    digest.update(b"present\0");
+    let mut entries: Vec<_> = catalog.iter().collect();
+    entries.sort_unstable_by_key(|(model_id, _)| *model_id);
+    digest.update((entries.len() as u64).to_be_bytes());
+    for (model_id, pricing) in entries {
+        digest.update((model_id.len() as u64).to_be_bytes());
+        digest.update(model_id.as_bytes());
+        let pricing = serde_json::to_vec(pricing)
+            .expect("public pricing models must serialize to canonical JSON");
+        digest.update((pricing.len() as u64).to_be_bytes());
+        digest.update(pricing);
+    }
 }
 
 impl CapturedPricingFile {
@@ -620,25 +951,6 @@ impl CapturedPricingFile {
     }
 }
 
-fn parse_captured_catalog<T: for<'de> serde::Deserialize<'de>>(
-    file: &CapturedPricingFile,
-    path: &Path,
-    label: &str,
-    diagnostics: &mut PricingDiagnostics,
-) -> Option<T> {
-    let bytes = file.content(path, &format!("{label} pricing cache"), diagnostics)?;
-    match cache::parse_cache_any_age(bytes) {
-        Ok(catalog) => Some(catalog),
-        Err(error) => {
-            diagnostics.push(PricingDiagnostic::warning(format!(
-                "[tokenx] {label} pricing cache ignored at {}: {error}",
-                path.display()
-            )));
-            None
-        }
-    }
-}
-
 fn finish_pricing_fingerprint(digest: Sha256) -> String {
     digest
         .finalize()
@@ -664,7 +976,7 @@ mod tests {
             PricingStatus::from_diagnostics(&[PricingDiagnostic::warning(
                 "wording says pricing unavailable and cached fallback"
             )]),
-            PricingStatus::Available
+            PricingStatus::AvailableWithWarnings
         );
         assert_eq!(
             PricingStatus::from_diagnostics(&[
@@ -679,6 +991,186 @@ mod tests {
             ]),
             PricingStatus::Unavailable
         );
+    }
+
+    #[test]
+    fn custom_only_snapshot_reports_missing_public_catalogs() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let custom_path = temp.path().join("custom-pricing.json");
+        std::fs::write(
+            &custom_path,
+            r#"{"models":{"snapshot-model":{"input_cost_per_token":0.000001}}}"#,
+        )
+        .unwrap();
+        let cache_dir = temp.path().join("cache");
+
+        let snapshot = ResolvedPricingSnapshot::resolve_from(&custom_path, &cache_dir);
+
+        assert!(snapshot.service().is_some());
+        assert_eq!(
+            PricingStatus::from_diagnostics(snapshot.diagnostics()),
+            PricingStatus::AvailableWithWarnings
+        );
+        assert_eq!(
+            snapshot
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.message().contains("pricing cache missing"))
+                .count(),
+            CACHED_CATALOG_FILES.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_binds_one_complete_snapshot_from_fresh_catalogs() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let custom_path = temp.path().join("custom-pricing.json");
+        let cache_dir = temp.path().join("cache");
+        let litellm = HashMap::from([(
+            "snapshot-model".to_string(),
+            model_pricing(0.000001, 0.000002),
+        )]);
+        let empty = HashMap::<String, ModelPricing>::new();
+        cache::save_cache(&cache_dir, CACHED_CATALOG_FILES[0], &litellm).unwrap();
+        cache::save_cache(&cache_dir, CACHED_CATALOG_FILES[1], &empty).unwrap();
+        cache::save_cache(&cache_dir, CACHED_CATALOG_FILES[2], &empty).unwrap();
+
+        let snapshot =
+            ResolvedPricingSnapshot::resolve_with_refresh(&custom_path, &cache_dir).await;
+        let usage = TokenBreakdown {
+            input: 1_000_000,
+            ..TokenBreakdown::default()
+        };
+
+        assert_eq!(
+            PricingStatus::from_diagnostics(snapshot.diagnostics()),
+            PricingStatus::Available
+        );
+        assert_eq!(
+            snapshot
+                .service()
+                .unwrap()
+                .calculate_cost_with_provider("snapshot-model", None, &usage)
+                .unwrap(),
+            1.0
+        );
+    }
+
+    #[test]
+    fn fetched_catalog_remains_authoritative_when_persistence_warns() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let custom_path = temp.path().join("custom-pricing.json");
+        let fetched = HashMap::from([(
+            "snapshot-model".to_string(),
+            model_pricing(0.000001, 0.000002),
+        )]);
+        let resolution = CatalogResolution::after_refresh(
+            "LiteLLM",
+            CatalogSeed::Unavailable(PricingDiagnostic::warning("cache was missing")),
+            Ok(fetched),
+            vec![PricingDiagnostic::warning(
+                "failed to persist refreshed catalog",
+            )],
+        );
+        let snapshot = ResolvedPricingSnapshot::from_parts(
+            ResolvedPricingSnapshot::resolve_custom(&custom_path, CapturedPricingFile::Missing),
+            ResolvedPublicPricingCatalogs {
+                litellm: resolution.data,
+                openrouter: Some(HashMap::new()),
+                models_dev: Some(HashMap::new()),
+            },
+            resolution.diagnostics,
+        );
+        let usage = TokenBreakdown {
+            input: 1_000_000,
+            ..TokenBreakdown::default()
+        };
+
+        assert_eq!(
+            PricingStatus::from_diagnostics(snapshot.diagnostics()),
+            PricingStatus::AvailableWithWarnings
+        );
+        assert!(!snapshot
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message() == "cache was missing"));
+        assert_eq!(
+            snapshot
+                .service()
+                .unwrap()
+                .calculate_cost_with_provider("snapshot-model", None, &usage)
+                .unwrap(),
+            1.0
+        );
+    }
+
+    #[test]
+    fn failed_source_refresh_uses_stale_catalog_with_typed_fallback() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let custom_path = temp.path().join("custom-pricing.json");
+        let stale = HashMap::from([(
+            "snapshot-model".to_string(),
+            model_pricing(0.000001, 0.000002),
+        )]);
+        let resolution = CatalogResolution::after_refresh(
+            "OpenRouter",
+            CatalogSeed::Stale(stale),
+            Err("network unavailable".to_string()),
+            PricingDiagnostics::new(),
+        );
+        let snapshot = ResolvedPricingSnapshot::from_parts(
+            ResolvedPricingSnapshot::resolve_custom(&custom_path, CapturedPricingFile::Missing),
+            ResolvedPublicPricingCatalogs {
+                litellm: Some(HashMap::new()),
+                openrouter: resolution.data,
+                models_dev: Some(HashMap::new()),
+            },
+            resolution.diagnostics,
+        );
+
+        assert_eq!(
+            PricingStatus::from_diagnostics(snapshot.diagnostics()),
+            PricingStatus::CachedFallback
+        );
+        assert!(snapshot.diagnostics().iter().any(|diagnostic| {
+            diagnostic.kind() == PricingDiagnosticKind::CachedFallback
+                && diagnostic.message().contains("OpenRouter")
+        }));
+    }
+
+    #[test]
+    fn catalog_identity_ignores_cache_timestamp_for_identical_data() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let custom_path = temp.path().join("custom-pricing.json");
+        let cache_dir = temp.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        let data = HashMap::from([(
+            "snapshot-model".to_string(),
+            model_pricing(0.000001, 0.000002),
+        )]);
+        let cache_path = cache_dir.join(CACHED_CATALOG_FILES[0]);
+        std::fs::write(
+            &cache_path,
+            serde_json::to_vec(&cache::CachedData {
+                timestamp: 1,
+                data: &data,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let first = ResolvedPricingSnapshot::resolve_from(&custom_path, &cache_dir);
+        std::fs::write(
+            &cache_path,
+            serde_json::to_vec(&cache::CachedData {
+                timestamp: 2,
+                data: &data,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let second = ResolvedPricingSnapshot::resolve_from(&custom_path, &cache_dir);
+
+        assert_eq!(first.context(), second.context());
     }
 
     #[test]
@@ -753,6 +1245,47 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn public_refresh_retains_the_captured_custom_authority() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("custom-pricing.json");
+        let cache_dir = temp.path().join("cache");
+        let empty = HashMap::<String, ModelPricing>::new();
+        for filename in CACHED_CATALOG_FILES {
+            cache::save_cache(&cache_dir, filename, &empty).unwrap();
+        }
+        std::fs::write(
+            &path,
+            r#"{"models":{"snapshot-model":{"input_cost_per_token":0.000001}}}"#,
+        )
+        .unwrap();
+        let local = ResolvedPricingSnapshot::resolve_from(&path, &cache_dir);
+        std::fs::write(
+            &path,
+            r#"{"models":{"snapshot-model":{"input_cost_per_token":0.000009}}}"#,
+        )
+        .unwrap();
+
+        let refreshed = local.refresh_public_catalogs(&cache_dir).await;
+        let usage = TokenBreakdown {
+            input: 1_000_000,
+            ..TokenBreakdown::default()
+        };
+
+        assert_eq!(
+            local.context().custom_pricing_fingerprint(),
+            refreshed.context().custom_pricing_fingerprint()
+        );
+        assert_eq!(
+            refreshed
+                .service()
+                .unwrap()
+                .calculate_cost_with_provider("snapshot-model", None, &usage)
+                .unwrap(),
+            1.0
+        );
+    }
+
     #[test]
     fn malformed_and_oversized_inputs_degrade_pricing_without_failing_resolution() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -800,7 +1333,7 @@ mod tests {
         assert!(snapshot.service().is_some());
         assert_eq!(
             PricingStatus::from_diagnostics(snapshot.diagnostics()),
-            PricingStatus::Available
+            PricingStatus::AvailableWithWarnings
         );
         assert!(snapshot
             .diagnostics()
@@ -1172,22 +1705,22 @@ mod tests {
     }
 
     #[test]
-    fn test_from_cached_datasets_returns_none_when_all_pricing_sources_missing() {
+    fn test_from_resolved_datasets_returns_none_when_all_pricing_sources_missing() {
         assert!(
-            PricingService::from_cached_datasets(CustomPricing::default(), None, None, None)
+            PricingService::from_resolved_datasets(CustomPricing::default(), None, None, None)
                 .is_none()
         );
     }
 
     #[test]
-    fn test_from_cached_datasets_uses_custom_when_remote_pricing_sources_missing() {
+    fn test_from_resolved_datasets_uses_custom_when_remote_pricing_sources_missing() {
         let mut custom = HashMap::new();
         custom.insert(
             "custom-only-model".into(),
             model_pricing(0.000002, 0.000008),
         );
 
-        let service = PricingService::from_cached_datasets(
+        let service = PricingService::from_resolved_datasets(
             CustomPricing::from_models(custom),
             None,
             None,
@@ -1203,7 +1736,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_cached_datasets_filters_subscription_only_litellm_entries() {
+    fn test_from_resolved_datasets_filters_subscription_only_litellm_entries() {
         let mut litellm = HashMap::new();
         litellm.insert(
             "github_copilot/gpt-5.3-codex".into(),
@@ -1220,7 +1753,7 @@ mod tests {
             },
         );
 
-        let service = PricingService::from_cached_datasets(
+        let service = PricingService::from_resolved_datasets(
             CustomPricing::default(),
             Some(litellm),
             None,
@@ -1237,8 +1770,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_cached_datasets_uses_models_dev_when_other_pricing_sources_missing() {
-        let service = PricingService::from_cached_datasets(
+    fn test_from_resolved_datasets_uses_models_dev_when_other_pricing_sources_missing() {
+        let service = PricingService::from_resolved_datasets(
             CustomPricing::default(),
             None,
             None,

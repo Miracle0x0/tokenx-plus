@@ -108,6 +108,20 @@ Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:
 Deleting these files forces Tokenx to fetch pricing data again on the next
 lookup or usage load that needs pricing.
 
+Headless usage commands refresh missing or expired public catalogs before
+building their generation. The TUI enters immediately from its captured local
+snapshot and performs the same refresh in its supervised background acquisition
+lifecycle. If refreshed catalog identity changes, the TUI installs a newly
+priced generation when the background build completes; the existing generation
+remains visible during a warm refresh.
+
+If refresh fails, readable older catalogs remain usable and pricing status
+becomes `cachedFallback`. A partial catalog set or custom-only pricing remains
+usable with `availableWithWarnings`; it is never reported as complete public
+pricing. Successfully fetched data remains active for the current acquisition
+when cache persistence fails; the write failure is reported as a warning
+instead of replacing fresh rates with missing or stale disk state.
+
 ## Standalone lookup
 
 ```bash

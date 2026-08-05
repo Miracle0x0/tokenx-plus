@@ -14,6 +14,8 @@ cache:
     persist: "failed to persist generation cache `%{path}`"
 
 main:
+  pricing:
+    refreshing: "Refreshing pricing data..."
   error:
     runtime_init: "Error: failed to initialize async runtime: %{error}"
     prefix_invalid: "error"

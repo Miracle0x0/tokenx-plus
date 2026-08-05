@@ -70,22 +70,35 @@ Tokenx uses the following ownership model:
     `TOKENX_CONFIG_DIR` is the only explicit product-root override. The
     application composition root is the only boundary that resolves
     environment-backed product paths, calendar, and pricing state. Pricing
-    resolution produces one immutable runtime snapshot containing its
-    serializable identity, loaded pricing service, and diagnostics. Each
-    pricing file is read once into bounded owned bytes from which both identity
-    and runtime data are derived. Missing, malformed, unreadable, or oversized
-    pricing inputs degrade pricing diagnostics and may yield a partial or
-    unavailable pricing service, but cannot prevent usage acquisition. The
+    resolution produces an immutable runtime snapshot containing its
+    serializable identity, loaded pricing service, and diagnostics. Custom
+    pricing and cached public catalogs are each captured once into bounded
+    owned bytes. Public catalog resolution produces normalized per-source
+    artifacts from which both service data and deterministic catalog identity
+    are derived; cache-envelope timestamps are not pricing identity. A
+    successful refresh remains authoritative for that acquisition when
+    persistence fails, while each failed source may independently reuse its
+    captured stale artifact with a typed cached-fallback diagnostic. Missing,
+    malformed, unreadable, or oversized pricing inputs degrade pricing
+    diagnostics and may yield a partial or unavailable pricing service, but
+    cannot prevent usage acquisition. The
     startup snapshot parses client ids and theme names into domain types,
     resolves one non-empty client universe, captures the product paths,
     calendar context, and shared pricing snapshot, and carries the same
     scanner, subscription, refresh, theme, and save-path policy through command
-    execution. The acquisition engine retains that pricing snapshot for every
-    initial build and refresh; only its pricing identity is serialized into a
-    generation. Acquisition configuration, diagnostics, cache warming, and
-    `TuiModel` constructors receive those values explicitly; they do not resolve
-    another product root, reread settings, or inspect ambient calendar or
-    pricing state.
+    execution. Headless acquisition commands resolve missing or expired public
+    catalogs before building their generation. The TUI instead enters its
+    terminal session from the captured local snapshot, then refreshes public
+    catalogs through its supervised background acquisition lifecycle. A
+    changed pricing identity replaces the acquisition authority and triggers a
+    background generation rebuild; an unchanged identity only rebinds current
+    diagnostics. The pricing service is never serialized. A generation carries
+    the pricing identity and diagnostics. When a cached generation still
+    matches that identity, its persisted pricing diagnostics are rebound to the
+    current runtime snapshot before installation.
+    Acquisition configuration, diagnostics, cache warming, and `TuiModel`
+    constructors receive those values explicitly; they do not resolve another
+    product root, reread settings, or inspect ambient calendar or pricing state.
 11. Built-in input discovery is scoped to the running platform and the resolved
     acquisition home. It never crosses into another operating-system home by
     inference. Cross-environment data, including Windows-mounted data observed
@@ -126,7 +139,9 @@ Tokenx uses the following ownership model:
     subscription I/O; it is not an adapter around synchronous local builds.
 17. Interactive terminal ownership is RAII-bound. Shutdown signals
     cancellation, restores the terminal, and only then waits for persistence
-    and worker quiescence.
+    and worker quiescence. Remote pricing is not a precondition for entering
+    the TUI, and progress renderers outside that ownership boundary do not
+    change cursor visibility or other persistent terminal state.
 
 Tokenx reads only its own configuration, cache, environment-variable, package,
 and repository namespaces. Predecessor namespaces are not fallback inputs,

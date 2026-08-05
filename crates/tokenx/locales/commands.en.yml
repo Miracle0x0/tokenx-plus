@@ -22,6 +22,7 @@ commands:
     title: "Token Usage by Model"
     title_with_range: "Token Usage by Model (%{range})"
     footer_total_prefix: "Total: %{tokens} token, "
+    pricing_available_with_warnings: "Pricing warnings; some costs may be missing"
     pricing_cached_fallback: "Pricing refresh failed; costs use cached rates"
     pricing_unavailable: "Pricing unavailable; zero costs may mean missing rates"
   pricing:
