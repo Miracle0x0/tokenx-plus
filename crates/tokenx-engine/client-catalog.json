@@ -138,5 +138,10 @@
     "variant": "Grok",
     "id": "grok",
     "displayName": "Grok"
+  },
+  {
+    "variant": "Dsh",
+    "id": "dsh",
+    "displayName": "DeepSeek Harness"
   }
 ]

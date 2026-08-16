@@ -205,6 +205,12 @@ pub(crate) const DECODER_CONTRACTS: &[DecoderContractSpec] = &[
         plain_kind: true,
         integration: "omp",
     },
+    DecoderContractSpec {
+        variant: "Dsh",
+        stable_name: "dsh",
+        plain_kind: true,
+        integration: "dsh",
+    },
 ];
 
 pub(crate) fn production_sources(crate_dir: &Path) -> Vec<PathBuf> {

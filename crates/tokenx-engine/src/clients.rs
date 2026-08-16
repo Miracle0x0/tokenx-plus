@@ -46,4 +46,9 @@ mod tests {
     fn hermes_uses_the_brand_name_for_display() {
         assert_eq!(ClientId::Hermes.display_name(), "Hermes");
     }
+
+    #[test]
+    fn dsh_uses_the_product_name_for_display() {
+        assert_eq!(ClientId::Dsh.display_name(), "DeepSeek Harness");
+    }
 }

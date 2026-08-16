@@ -13,6 +13,7 @@ pub(crate) mod copilot;
 mod decoder;
 pub(crate) mod discover;
 pub(crate) mod droid;
+pub(crate) mod dsh;
 pub(crate) mod error;
 pub(crate) mod file;
 pub(crate) mod gemini;
@@ -738,6 +739,7 @@ pub(crate) fn integration_for(client: ClientId) -> IntegrationBinding {
         ClientId::Cline => &cline::DRIVER,
         ClientId::CommandCode => &commandcode::DRIVER,
         ClientId::Grok => &grok::DRIVER,
+        ClientId::Dsh => &dsh::DRIVER,
     };
     IntegrationBinding::new(client, driver)
 }

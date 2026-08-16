@@ -100,6 +100,7 @@ fn client_brand_color(client: ClientId) -> Color {
         ClientId::Junie => Color::Rgb(123, 97, 255),
         ClientId::Warp => Color::Rgb(1, 164, 164),
         ClientId::Cline => Color::Rgb(91, 141, 239),
+        ClientId::Dsh => DEEPSEEK_COLOR,
     }
 }
 
@@ -163,6 +164,7 @@ mod tests {
         assert_eq!(client_brand_color(ClientId::Droid), Color::Rgb(31, 29, 28));
         assert_eq!(client_brand_color(ClientId::Mux), Color::Rgb(23, 23, 23));
         assert_eq!(client_brand_color(ClientId::Grok), Color::Rgb(23, 23, 23));
+        assert_eq!(client_brand_color(ClientId::Dsh), DEEPSEEK_COLOR);
         assert_eq!(client_brand_color(ClientId::Zcode), Color::Rgb(17, 24, 39));
         assert_eq!(
             client_brand_color(ClientId::CommandCode),

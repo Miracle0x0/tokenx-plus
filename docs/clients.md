@@ -51,6 +51,7 @@ current home directory. `**` means recursive discovery under the stated root.
 | `cline` | Cline | `~/.cline/data/sessions/**/*.messages.json` | Reads the SDK v1 messages envelope and optional root manifest workspace metadata. |
 | `commandcode` | Command Code | `~/.commandcode/projects/**/*.jsonl` with optional same-stem `.meta.json` sidecars | Estimates transcript tokens. A non-empty session metadata model is authoritative; otherwise the record uses the explicit unpriced `commandcode-model-unknown` identity. The current global config never relabels historical sessions. |
 | `grok` | Grok | `~/.grok/sessions/**/updates.jsonl` with optional `summary.json` and `events.jsonl` siblings | Reads positive total-token deltas and optional session metadata. |
+| `dsh` | DeepSeek Harness | `~/.dsh/sessions/**/session.jsonl.zstd`; uncompressed `session.jsonl` | Reads per-call assistant usage, separates reasoning from its inclusive output total, and deduplicates forked session prefixes. |
 
 ## Scanner extensions
 

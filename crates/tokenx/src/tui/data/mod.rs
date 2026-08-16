@@ -90,8 +90,9 @@ mod tests {
             .unwrap();
         assert_eq!(clients[zed_index + 1], ClientId::Zcode);
         assert_eq!(clients[zed_index + 2], ClientId::Kiro);
-        assert_eq!(clients[clients.len() - 2], ClientId::CommandCode);
-        assert_eq!(clients.last(), Some(&ClientId::Grok));
+        assert_eq!(clients[clients.len() - 3], ClientId::CommandCode);
+        assert_eq!(clients[clients.len() - 2], ClientId::Grok);
+        assert_eq!(clients.last(), Some(&ClientId::Dsh));
     }
 
     #[test]
@@ -104,6 +105,7 @@ mod tests {
         assert_eq!(ClientId::Amp.display_name(), "Amp");
         assert_eq!(ClientId::Droid.display_name(), "Droid");
         assert_eq!(ClientId::OpenClaw.display_name(), "OpenClaw");
+        assert_eq!(ClientId::Dsh.display_name(), "DeepSeek Harness");
         assert_eq!(ClientId::Pi.display_name(), "Pi");
         assert_eq!(ClientId::Omp.display_name(), "OMP");
         assert_eq!(ClientId::Kimi.display_name(), "Kimi");
