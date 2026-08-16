@@ -5,7 +5,7 @@ tui:
       column:
         agent: "代理"
         client: "客户端"
-        tokens: "令牌"
+        tokens: "词元"
         cost: "费用"
         messages: "消息"
         instances: "实例"

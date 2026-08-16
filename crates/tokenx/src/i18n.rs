@@ -301,7 +301,7 @@ mod tests {
         );
         assert_eq!(
             rust_i18n::t!("tui.model.sort.field.tokens", locale = "zh-CN"),
-            "令牌"
+            "词元"
         );
 
         for (key, expected) in [

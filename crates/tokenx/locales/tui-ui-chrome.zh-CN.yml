@@ -8,7 +8,7 @@ tui:
       sort:
         date: "日期"
         cost: "费用"
-        tokens: "令牌"
+        tokens: "词元"
         active: "活跃"
         sessions: "会话"
         space: "空间"
@@ -24,7 +24,7 @@ tui:
         compact: "r:重试 · q:退出"
         keys: "[r] [q]"
         minimal: "r q"
-      tokens_suffix: " 令牌"
+      tokens_suffix: " 词元"
       summary:
         no_providers_configured: "未配置提供商"
         configured_suffix: "已配置"

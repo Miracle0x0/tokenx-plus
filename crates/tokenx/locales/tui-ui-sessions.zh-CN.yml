@@ -15,7 +15,7 @@ tui:
         models: "模型"
         messages: "消息"
         turns: "轮次"
-        tokens: "令牌"
+        tokens: "词元"
         cost: "费用"
       status:
         degraded: "已降级"

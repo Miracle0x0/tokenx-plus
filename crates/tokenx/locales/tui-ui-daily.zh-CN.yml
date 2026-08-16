@@ -23,7 +23,7 @@ tui:
         cache_write: "缓存写"
         cache_rate: "缓存×"
         total: "总计"
-        tokens: "令牌"
+        tokens: "词元"
         cost: "费用"
         cost_per_million: "费用/1M"
       weekday:

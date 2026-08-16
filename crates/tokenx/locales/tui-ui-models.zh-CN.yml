@@ -19,6 +19,6 @@ tui:
         cache_write_short: "缓存写"
         cache_rate: "缓存×"
         total_full: "总计"
-        total_short: "令牌"
+        total_short: "词元"
         cost: "费用"
         cost_per_million: "费用/1M"

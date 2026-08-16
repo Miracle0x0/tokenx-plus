@@ -24,7 +24,7 @@ tui:
     sort:
       field:
         cost: "费用"
-        tokens: "令牌"
+        tokens: "词元"
         date: "日期"
       direction:
         ascending: "升序"
@@ -103,7 +103,7 @@ tui:
       no_providers: "未启用任何订阅提供商"
       fetching: "正在获取订阅..."
     copy:
-      label_tokens_cost: "%{label}：%{tokens} 个令牌，$%{cost}"
-      agent_row: "%{client} / %{agent}：%{tokens} 个令牌，$%{cost}，%{instances} 个实例"
-      detail_row: "%{clients} / %{model}：%{tokens} 个令牌，$%{cost}"
-      period_row: "%{section} %{label}：%{tokens} 个令牌，$%{cost}"
+      label_tokens_cost: "%{label}：%{tokens} 个词元，$%{cost}"
+      agent_row: "%{client} / %{agent}：%{tokens} 个词元，$%{cost}，%{instances} 个实例"
+      detail_row: "%{clients} / %{model}：%{tokens} 个词元，$%{cost}"
+      period_row: "%{section} %{label}：%{tokens} 个词元，$%{cost}"
