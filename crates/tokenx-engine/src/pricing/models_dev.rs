@@ -150,7 +150,29 @@ async fn fetch_inner(
                     return Err(response.error_for_status().unwrap_err().into());
                 }
 
-                let content = response.text().await?;
+                let content = match response.text().await {
+                    Ok(content) => content,
+                    Err(error) => {
+                        emit_warning(
+                            diagnostics,
+                            format!(
+                                "[tokenx] models.dev response body error (attempt {}/{}): {}",
+                                attempt + 1,
+                                MAX_RETRIES,
+                                error
+                            ),
+                        );
+                        last_error = Some(error);
+                        if attempt < MAX_RETRIES - 1 {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                INITIAL_BACKOFF_MS * (1 << attempt),
+                            ))
+                            .await;
+                            continue;
+                        }
+                        break;
+                    }
+                };
                 match parse_dataset(&content) {
                     Ok(data) => {
                         if let Err(e) = cache::save_cache(cache_dir, CACHE_FILENAME, &data) {
@@ -325,5 +347,44 @@ mod tests {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.message().contains("JSON parse failed")));
+    }
+
+    #[tokio::test]
+    async fn truncated_response_body_is_retried_and_successful_retry_is_cached() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let body = br#"{"provider":{"models":{"model":{"cost":{"input":1.0,"output":2.0}}}}}"#;
+        thread::spawn(move || {
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buffer = [0; 1024];
+                let _ = stream.read(&mut buffer);
+                let declared_len = if attempt == 0 {
+                    body.len() + 16
+                } else {
+                    body.len()
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {declared_len}\r\nConnection: close\r\n\r\n"
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.write_all(body).unwrap();
+            }
+        });
+        let cache_dir = tempfile::TempDir::new().unwrap();
+        let mut diagnostics = Vec::new();
+        let mut sink = Some(&mut diagnostics);
+
+        let data = fetch_inner(cache_dir.path(), &url, false, &mut sink)
+            .await
+            .unwrap_or_else(|error| panic!("models.dev retry failed: {error}"));
+
+        assert!(data.contains_key("provider/model"));
+        assert!(load_cached(cache_dir.path())
+            .unwrap()
+            .contains_key("provider/model"));
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic
+            .message()
+            .contains("response body error (attempt 1/3)")));
     }
 }
