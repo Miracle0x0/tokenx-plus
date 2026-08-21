@@ -631,23 +631,38 @@ impl CapturedPublicPricingCatalogs {
         let litellm_path = cache_dir.join(CACHED_CATALOG_FILES[0]);
         let openrouter_path = cache_dir.join(CACHED_CATALOG_FILES[1]);
         let models_dev_path = cache_dir.join(CACHED_CATALOG_FILES[2]);
+        let (litellm, (openrouter, models_dev)) = rayon::join(
+            || {
+                capture_catalog_seed(
+                    CapturedPricingFile::read(&litellm_path, MAX_CATALOG_SNAPSHOT_BYTES),
+                    &litellm_path,
+                    "LiteLLM",
+                )
+                .map(PricingService::filter_litellm_data)
+            },
+            || {
+                rayon::join(
+                    || {
+                        capture_catalog_seed(
+                            CapturedPricingFile::read(&openrouter_path, MAX_CATALOG_SNAPSHOT_BYTES),
+                            &openrouter_path,
+                            "OpenRouter",
+                        )
+                    },
+                    || {
+                        capture_catalog_seed(
+                            CapturedPricingFile::read(&models_dev_path, MAX_CATALOG_SNAPSHOT_BYTES),
+                            &models_dev_path,
+                            "models.dev",
+                        )
+                    },
+                )
+            },
+        );
         Self {
-            litellm: capture_catalog_seed(
-                CapturedPricingFile::read(&litellm_path, MAX_CATALOG_SNAPSHOT_BYTES),
-                &litellm_path,
-                "LiteLLM",
-            )
-            .map(PricingService::filter_litellm_data),
-            openrouter: capture_catalog_seed(
-                CapturedPricingFile::read(&openrouter_path, MAX_CATALOG_SNAPSHOT_BYTES),
-                &openrouter_path,
-                "OpenRouter",
-            ),
-            models_dev: capture_catalog_seed(
-                CapturedPricingFile::read(&models_dev_path, MAX_CATALOG_SNAPSHOT_BYTES),
-                &models_dev_path,
-                "models.dev",
-            ),
+            litellm,
+            openrouter,
+            models_dev,
         }
     }
 

@@ -5,7 +5,7 @@ use crate::{
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const MAX_ACQUISITION_WORKERS: usize = 4;
 
@@ -111,6 +111,7 @@ pub struct AcquisitionEngine {
     config: AcquisitionConfig,
     pricing: Arc<crate::pricing::ResolvedPricingSnapshot>,
     input_cache_dir: PathBuf,
+    executor: Arc<Mutex<Option<Arc<AcquisitionExecutor>>>>,
     #[cfg(test)]
     executor_initializations: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -139,6 +140,7 @@ impl AcquisitionEngine {
             config,
             pricing,
             input_cache_dir,
+            executor: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             executor_initializations: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
@@ -167,14 +169,17 @@ impl AcquisitionEngine {
         cancellation
             .check(AcquisitionPhase::Discovery)
             .map_err(AcquisitionError::cancelled)?;
-        let inputs = prepare_inventory(
-            self.config.resolved_home_dir(),
-            self.config.universe().clone(),
-            self.config.date_range().clone(),
-            self.config.scanner(),
-            self.input_cache_dir.clone(),
-            cancellation,
-        )?;
+        let executor = self.executor()?;
+        let inputs = executor.install(|| {
+            prepare_inventory(
+                self.config.resolved_home_dir(),
+                self.config.universe().clone(),
+                self.config.date_range().clone(),
+                self.config.scanner(),
+                self.input_cache_dir.clone(),
+                cancellation,
+            )
+        })?;
         Ok(PreparedAcquisition {
             inputs,
             config: self.config.clone(),
@@ -197,14 +202,10 @@ impl AcquisitionEngine {
         cancellation
             .check(AcquisitionPhase::Pricing)
             .map_err(AcquisitionError::cancelled)?;
-        #[cfg(test)]
-        self.executor_initializations
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let executor =
-            AcquisitionExecutor::new().map_err(GenerationBuildError::ExecutorInitialization)?;
+        let executor = self.executor()?;
         let data = build_generation_data(
             inputs,
-            &executor,
+            executor.as_ref(),
             &self.pricing,
             *config.calendar(),
             cancellation,
@@ -234,6 +235,24 @@ impl AcquisitionEngine {
         cancellation: &AcquisitionCancellation,
     ) -> Result<Generation, GenerationBuildError> {
         self.build_with_cancellation(self.prepare_with_cancellation(cancellation)?, cancellation)
+    }
+
+    fn executor(&self) -> Result<Arc<AcquisitionExecutor>, GenerationBuildError> {
+        let mut slot = self
+            .executor
+            .lock()
+            .expect("acquisition executor lock poisoned");
+        if let Some(executor) = slot.as_ref() {
+            return Ok(Arc::clone(executor));
+        }
+        let executor = Arc::new(
+            AcquisitionExecutor::new().map_err(GenerationBuildError::ExecutorInitialization)?,
+        );
+        #[cfg(test)]
+        self.executor_initializations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *slot = Some(Arc::clone(&executor));
+        Ok(executor)
     }
 
     #[cfg(test)]
@@ -485,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn build_reuses_resolved_pricing_snapshot_after_files_change() {
+    fn build_reuses_resolved_pricing_snapshot_and_acquisition_executor() {
         let home = tempfile::TempDir::new().unwrap();
         let custom_path = home.path().join("custom-pricing.json");
         let cache_dir = home.path().join("cache");
@@ -515,7 +534,7 @@ mod tests {
         .unwrap();
 
         let prepared = engine.prepare().unwrap();
-        assert_eq!(engine.executor_initialization_count(), 0);
+        assert_eq!(engine.executor_initialization_count(), 1);
         std::fs::write(
             &custom_path,
             r#"{"models":{"snapshot-model":{"input_cost_per_token":0.000002}}}"#,
@@ -541,6 +560,10 @@ mod tests {
                 .unwrap(),
             1.0,
         );
+
+        let prepared_again = engine.prepare().unwrap();
+        engine.build(prepared_again).unwrap();
+        assert_eq!(engine.executor_initialization_count(), 1);
     }
 
     #[test]

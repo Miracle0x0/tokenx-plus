@@ -31,6 +31,10 @@ only its identity. `AcquisitionConfig` only validates and normalizes those
 explicit values; neither its constructor nor the acquisition engine rereads
 ambient pricing state.
 
+The three public pricing cache files are captured and parsed concurrently into
+fixed source slots. Resolution and diagnostics still merge in canonical
+LiteLLM, OpenRouter, and models.dev order.
+
 Selected integration bindings own client attribution, while their
 `IntegrationDriver` values own input discovery, input identity, parsing, and
 error classification. Public projection paths do not
@@ -47,6 +51,13 @@ Discovery produces one consumptive `PreparedAcquisition`. It records:
 - one `FingerprintPolicy` per unit, including its primary and decoder-relevant related
   inputs; and
 - one authoritative metadata snapshot per input.
+
+Selected integrations discover their agent roots and snapshot input metadata
+concurrently on the bounded acquisition executor. Their results are restored to
+canonical client order before fingerprinting, health aggregation, or execution.
+`AcquisitionEngine` initializes that executor lazily and reuses it for cache
+planning, parsing, and later refreshes, so a cache-only startup creates no
+worker pool and repeated refreshes do not recreate threads.
 
 `DiscoveredInput` is source-neutral. Its `DecoderKind` directly carries every
 typed detail required to select decoder behavior. Persisted `DecoderVersion`

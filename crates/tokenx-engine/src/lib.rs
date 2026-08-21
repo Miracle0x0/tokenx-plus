@@ -53,6 +53,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 
 use records::UsageRecord;
@@ -448,71 +449,14 @@ fn prepare_inventory(
         .validate()
         .map_err(AcquisitionError::invalid_environment)?;
     let selected_integrations = integrations::selected_integrations(&clients);
+    let prepared = prepare_selected_integrations(selected_integrations, |binding| {
+        prepare_integration(binding, home_dir, scanner_settings, cancellation)
+    })?;
     let mut health = DataHealth::default();
-    let mut groups = Vec::with_capacity(selected_integrations.len());
-    for binding in selected_integrations {
-        cancellation
-            .check(AcquisitionPhase::Discovery)
-            .map_err(AcquisitionError::cancelled)?;
-        #[cfg(test)]
-        PREPARE_DISCOVERY_COUNT.with(|count| count.set(count.get() + 1));
-        let scan_ctx = integrations::DiscoveryContext {
-            client: binding.client,
-            home_dir,
-            scanner_settings,
-            cancellation: cancellation.clone(),
-        };
-        // Third-party input and snapshot failures stay inside their
-        // input's failure domain.
-        let discovered = match binding.driver.discover_inputs(&scan_ctx) {
-            Ok(units) => units,
-            Err(error) => {
-                if error.is_cancelled() {
-                    return Err(AcquisitionError::cancelled(error));
-                }
-                health.record(InputHealth {
-                    client: binding.client,
-                    path: error.path.clone(),
-                    status: InputStatus::Unavailable {
-                        failure: InputFailure::new(error.operation, error.to_string()),
-                    },
-                    rejections: RejectionSummary::default(),
-                });
-                groups.push(integrations::PreparedIntegrationInputs {
-                    binding,
-                    units: Vec::new(),
-                });
-                continue;
-            }
-        };
-        cancellation
-            .check(AcquisitionPhase::Discovery)
-            .map_err(AcquisitionError::cancelled)?;
-        let mut units = Vec::with_capacity(discovered.len());
-        for unit in discovered {
-            cancellation
-                .check(AcquisitionPhase::Discovery)
-                .map_err(AcquisitionError::cancelled)?;
-            let client = binding.client;
-            let path = unit.path.clone();
-            match unit.prepare_snapshot() {
-                Ok(unit) => units.push(unit),
-                Err(source) => {
-                    health.record(InputHealth {
-                        client,
-                        path,
-                        status: InputStatus::Unavailable {
-                            failure: InputFailure::new(
-                                "snapshot input metadata and identity",
-                                source.to_string(),
-                            ),
-                        },
-                        rejections: RejectionSummary::default(),
-                    });
-                }
-            }
-        }
-        groups.push(integrations::PreparedIntegrationInputs { binding, units });
+    let mut groups = Vec::with_capacity(prepared.len());
+    for outcome in prepared {
+        groups.push(outcome.group);
+        health.merge(outcome.health);
     }
     cancellation
         .check(AcquisitionPhase::Discovery)
@@ -526,6 +470,97 @@ fn prepare_inventory(
         input_footprint,
         health,
         input_cache_dir,
+    })
+}
+
+struct PreparedIntegrationOutcome {
+    group: integrations::PreparedIntegrationInputs,
+    health: DataHealth,
+}
+
+fn prepare_selected_integrations<Prepare>(
+    selected: Vec<integrations::IntegrationBinding>,
+    prepare: Prepare,
+) -> Result<Vec<PreparedIntegrationOutcome>, AcquisitionError>
+where
+    Prepare: Fn(integrations::IntegrationBinding) -> Result<PreparedIntegrationOutcome, AcquisitionError>
+        + Sync
+        + Send,
+{
+    selected.into_par_iter().map(prepare).collect()
+}
+
+fn prepare_integration(
+    binding: integrations::IntegrationBinding,
+    home_dir: &Path,
+    scanner_settings: &scanner::ScannerSettings,
+    cancellation: &AcquisitionCancellation,
+) -> Result<PreparedIntegrationOutcome, AcquisitionError> {
+    cancellation
+        .check(AcquisitionPhase::Discovery)
+        .map_err(AcquisitionError::cancelled)?;
+    let scan_ctx = integrations::DiscoveryContext {
+        client: binding.client,
+        home_dir,
+        scanner_settings,
+        cancellation: cancellation.clone(),
+    };
+    let mut health = DataHealth::default();
+    // Third-party input and snapshot failures stay inside their input's
+    // failure domain.
+    let discovered = match binding.driver.discover_inputs(&scan_ctx) {
+        Ok(units) => units,
+        Err(error) => {
+            if error.is_cancelled() {
+                return Err(AcquisitionError::cancelled(error));
+            }
+            health.record(InputHealth {
+                client: binding.client,
+                path: error.path.clone(),
+                status: InputStatus::Unavailable {
+                    failure: InputFailure::new(error.operation, error.to_string()),
+                },
+                rejections: RejectionSummary::default(),
+            });
+            return Ok(PreparedIntegrationOutcome {
+                group: integrations::PreparedIntegrationInputs {
+                    binding,
+                    units: Vec::new(),
+                },
+                health,
+            });
+        }
+    };
+    cancellation
+        .check(AcquisitionPhase::Discovery)
+        .map_err(AcquisitionError::cancelled)?;
+    let mut units = Vec::with_capacity(discovered.len());
+    for unit in discovered {
+        cancellation
+            .check(AcquisitionPhase::Discovery)
+            .map_err(AcquisitionError::cancelled)?;
+        let client = binding.client;
+        let path = unit.path.clone();
+        match unit.prepare_snapshot() {
+            Ok(unit) => units.push(unit),
+            Err(source) => {
+                health.record(InputHealth {
+                    client,
+                    path,
+                    status: InputStatus::Unavailable {
+                        failure: InputFailure::new(
+                            "snapshot input metadata and identity",
+                            source.to_string(),
+                        ),
+                    },
+                    rejections: RejectionSummary::default(),
+                });
+            }
+        }
+    }
+    Ok(PreparedIntegrationOutcome {
+        group: integrations::PreparedIntegrationInputs { binding, units },
+        health,
     })
 }
 
@@ -554,21 +589,6 @@ fn prepare_test_inventory(
         input_cache_dir_for_test_home(&home_dir),
         &AcquisitionCancellation::default(),
     )
-}
-
-#[cfg(test)]
-thread_local! {
-    static PREPARE_DISCOVERY_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn reset_prepare_discovery_count() {
-    PREPARE_DISCOVERY_COUNT.with(|count| count.set(0));
-}
-
-#[cfg(test)]
-fn prepare_discovery_count() -> usize {
-    PREPARE_DISCOVERY_COUNT.with(std::cell::Cell::get)
 }
 
 const SOURCE_FINGERPRINT_VERSION: u32 = 1;

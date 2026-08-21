@@ -2138,6 +2138,42 @@ fn inventory_preparation_rejects_unavailable_primary_snapshots() {
     assert!(error.to_string().contains(missing_a.to_str().unwrap()));
 }
 
+#[test]
+fn selected_integrations_prepare_concurrently_and_restore_catalog_order() {
+    let selected = vec![
+        super::integrations::integration_for(ClientId::Amp),
+        super::integrations::integration_for(ClientId::Codex),
+    ];
+    let barrier = std::sync::Barrier::new(selected.len());
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(selected.len())
+        .build()
+        .unwrap();
+
+    let prepared = pool
+        .install(move || {
+            super::prepare_selected_integrations(selected, |binding| {
+                barrier.wait();
+                Ok(super::PreparedIntegrationOutcome {
+                    group: super::integrations::PreparedIntegrationInputs {
+                        binding,
+                        units: Vec::new(),
+                    },
+                    health: super::DataHealth::default(),
+                })
+            })
+        })
+        .unwrap();
+
+    assert_eq!(
+        prepared
+            .into_iter()
+            .map(|outcome| outcome.group.binding.client)
+            .collect::<Vec<_>>(),
+        [ClientId::Amp, ClientId::Codex]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn inventory_signature_hashes_native_non_utf8_paths() {
@@ -2168,14 +2204,12 @@ fn inventory_signature_hashes_native_non_utf8_paths() {
 }
 
 #[test]
-fn prepare_discovers_once_and_execute_consumes_the_same_inventory() {
+fn execute_consumes_the_prepared_inventory_without_rediscovery() {
     let home = tempfile::TempDir::new().unwrap();
     let amp_dir = home.path().join(".local/share/amp/threads");
     std::fs::create_dir_all(&amp_dir).unwrap();
-    super::reset_prepare_discovery_count();
 
     let prepared = super::prepare_test_inventory(inventory_options(home.path(), &["amp"])).unwrap();
-    assert_eq!(super::prepare_discovery_count(), 1);
 
     std::fs::write(
         amp_dir.join("T-added-after-prepare.json"),
@@ -2197,7 +2231,6 @@ fn prepare_discovers_once_and_execute_consumes_the_same_inventory() {
     .unwrap();
 
     let frozen = super::load_prepared_test_usage(prepared, GroupBy::Model, None).unwrap();
-    assert_eq!(super::prepare_discovery_count(), 1);
     assert_eq!(frozen.total_tokens, 0);
 
     let ordinary = super::load_test_usage(

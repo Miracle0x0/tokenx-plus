@@ -779,10 +779,11 @@ mod tests {
     }
 
     #[test]
-    fn automatic_refresh_is_independent_of_the_current_tab() {
+    fn automatic_refresh_only_queues_local_acquisition_independent_of_the_current_tab() {
         let (mut app, mut controller) = harness(true);
         app.current_tab = Tab::Subscription;
         controller.last_checked = Instant::now() - Duration::from_secs(31);
+        let pricing = controller.acquisition.pricing_snapshot();
 
         controller.on_tick(&mut app, Instant::now());
 
@@ -791,6 +792,11 @@ mod tests {
             Some(PendingRefresh {
                 request: RefreshRequest::Automatic
             })
+        ));
+        assert!(controller.pricing_refresh.is_none());
+        assert!(Arc::ptr_eq(
+            &controller.acquisition.pricing_snapshot(),
+            &pricing
         ));
     }
 
