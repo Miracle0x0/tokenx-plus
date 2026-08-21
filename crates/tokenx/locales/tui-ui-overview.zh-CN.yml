@@ -13,7 +13,7 @@ tui:
       metric_active_days: "活跃天数"
       metric_sessions_scanned: "已扫描会话"
       metric_cache_rate: "缓存命中率"
-      metric_models_eaten: "吃掉的模型"
+      metric_models_eaten: "青睐的模型"
       metric_clients_used: "使用的客户端"
       metric_data_size: "数据大小"
       metric_inputs_healthy: "输入健康度"
