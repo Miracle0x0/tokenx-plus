@@ -106,6 +106,7 @@ mod tests {
             ("open.bigmodel.cn", "Z.AI"),
             ("zhipuai-coding-plan", "Z.AI"),
             ("zhipu", "Z.AI"),
+            ("deepseek-official", "DeepSeek"),
             ("xiaomi-token-plan-cn", "XiaoMi"),
             ("xiaomi-token-plan-sgp", "XiaoMi"),
             ("minimax-code-cn", "MiniMax"),

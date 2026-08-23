@@ -4042,6 +4042,70 @@ fn test_finalize_token_priced_messages_canonicalizes_provider() {
 }
 
 #[test]
+fn test_models_projection_aggregates_deepseek_and_claude_opus_5_identities() {
+    let tokens = TokenBreakdown {
+        input: 1,
+        output: 1,
+        cache_read: 0,
+        cache_write: 0,
+        reasoning: 0,
+    };
+    let mut messages = vec![
+        AttributedUsageRecord::new(
+            ClientId::Dsh,
+            "deepseek-reasoner",
+            "deepseek-official",
+            "deepseek-session",
+            1_733_011_200_000,
+            tokens.clone(),
+            0.0,
+        ),
+        AttributedUsageRecord::new(
+            ClientId::Dsh,
+            "claude-opus-5-preview",
+            "deepseek-official",
+            "claude-session-1",
+            1_733_011_200_000,
+            tokens.clone(),
+            0.0,
+        ),
+        AttributedUsageRecord::new(
+            ClientId::Dsh,
+            "claude-opus-5-20260801",
+            "deepseek-official",
+            "claude-session-2",
+            1_733_011_200_000,
+            tokens,
+            0.0,
+        ),
+    ];
+
+    let rejections = finalize_token_priced_messages(&mut messages, None);
+    assert!(rejections.is_empty());
+    assert_eq!(messages[0].provider_id.as_ref(), "deepseek");
+    assert!(messages[1..].iter().all(|message| {
+        message.model_id.as_ref() == "claude-opus-5" && message.provider_id.as_ref() == "anthropic"
+    }));
+
+    let entries = aggregate_model_usage_entries(messages, &GroupBy::Model);
+    assert_eq!(entries.len(), 2);
+
+    let deepseek = entries
+        .iter()
+        .find(|entry| entry.model_id.as_ref() == "deepseek-reasoner")
+        .unwrap();
+    assert_eq!(deepseek.provider.as_ref(), "deepseek");
+
+    let claude = entries
+        .iter()
+        .find(|entry| entry.model_id.as_ref() == "claude-opus-5")
+        .unwrap();
+    assert_eq!(claude.provider.as_ref(), "anthropic");
+    assert_eq!(claude.session_count, 2);
+    assert_eq!(claude.tokens.total(), 4);
+}
+
+#[test]
 fn test_finalize_token_priced_messages_preserves_custom_provider_literal_tag() {
     let mut litellm = HashMap::new();
     litellm.insert(

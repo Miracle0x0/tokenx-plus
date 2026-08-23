@@ -3,6 +3,7 @@ use std::borrow::Cow;
 pub(crate) const COMMANDCODE_UNKNOWN_MODEL_ID: &str = "commandcode-model-unknown";
 pub(crate) const DEEPSEEK_V4_PRO_BETA_ALIAS: &str = "model1";
 pub(crate) const DEEPSEEK_V4_FLASH_BETA_ALIAS: &str = "model2";
+pub(crate) const CLAUDE_OPUS_5_MODEL_ID: &str = "claude-opus-5";
 
 const CLAUDE_FAMILIES: &[&str] = &["opus", "sonnet", "haiku", "fable"];
 const OPENAI_REASONING_TIERS: &[&str] =
@@ -24,6 +25,16 @@ pub(crate) fn is_deepseek_v4_beta_alias(model: &str) -> bool {
         model_part,
         DEEPSEEK_V4_PRO_BETA_ALIAS | DEEPSEEK_V4_FLASH_BETA_ALIAS
     )
+}
+
+pub(crate) fn is_claude_opus_5_model(model: &str) -> bool {
+    let normalized = normalized_terminal_model_id(model);
+    let model = normalized.as_ref();
+
+    model == CLAUDE_OPUS_5_MODEL_ID
+        || model
+            .strip_prefix(CLAUDE_OPUS_5_MODEL_ID)
+            .is_some_and(|suffix| suffix.len() > 1 && suffix.starts_with('-'))
 }
 
 /// Canonical model-id authority for usage grouping, finalization, and pricing.
@@ -463,6 +474,10 @@ pub(crate) fn canonicalize_longcat_observed_model(model: &str) -> Option<&'stati
 fn canonicalize_modern_claude_observed_model(model: &str) -> Option<String> {
     let model = canonical_model_segment(model);
     let model = model.strip_suffix("-thinking").unwrap_or(model);
+    if is_claude_opus_5_model(model) {
+        return Some(CLAUDE_OPUS_5_MODEL_ID.to_string());
+    }
+
     let parts: Vec<&str> = model
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .filter(|part| !part.is_empty())
@@ -609,6 +624,31 @@ mod tests {
         for (raw, expected) in cases {
             assert_eq!(canonicalize_observed_model_id(raw).as_deref(), expected);
         }
+    }
+
+    #[test]
+    fn canonicalizes_claude_opus_5_dash_variants_to_the_family_id() {
+        let cases = [
+            "claude-opus-5-preview",
+            "claude-opus-5-20260801",
+            "claude-opus-5-1",
+            "anthropic/claude-opus-5-max",
+            "Claude Opus 5 Preview",
+        ];
+
+        for raw in cases {
+            assert_eq!(
+                canonicalize_model_id(raw),
+                CLAUDE_OPUS_5_MODEL_ID,
+                "raw model: {raw}"
+            );
+        }
+
+        assert_eq!(canonicalize_model_id("claude-opus-5.1"), "claude-opus-5.1");
+        assert_eq!(
+            canonicalize_model_id("claude-sonnet-5-preview"),
+            "claude-sonnet-5-preview"
+        );
     }
 
     #[test]

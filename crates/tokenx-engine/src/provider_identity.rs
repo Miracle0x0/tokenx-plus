@@ -98,6 +98,10 @@ pub(crate) fn finalized_provider_id(raw_provider: &str, model_id: &str) -> Strin
         return "owl".to_string();
     }
 
+    if let Some(provider) = provider_override_from_model_and_provider(model_id, raw_provider) {
+        return provider.to_string();
+    }
+
     canonical_provider(raw_provider)
         .or_else(|| first_literal_provider_tag(raw_provider))
         .or_else(|| inferred_provider_from_model(model_id).map(str::to_string))
@@ -204,7 +208,7 @@ fn exact_canonical_provider(normalized: &str) -> Option<&'static str> {
         "unisound" | "uni_sound" | "yunzhisheng" | "yun_zhi_sheng" => "unisound",
         "minimax" | "minimaxai" | "minimax_ai" => "minimax",
         "mistral" | "mistralai" => "mistral",
-        "pandora_deepseek" | "deepseek_ai" => "deepseek",
+        "deepseek" | "deepseek_official" | "pandora_deepseek" | "deepseek_ai" => "deepseek",
         "qwen" | "qwen_portal" => "qwen",
         "ai21" | "ai21labs" | "ai21_labs" => "ai21",
         _ => return None,
@@ -397,6 +401,8 @@ fn contains_delimited_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
 pub(crate) fn provider_override_from_model(model: &str) -> Option<&'static str> {
     if crate::model_aliases::is_deepseek_v4_beta_alias(model) {
         Some("deepseek")
+    } else if crate::model_aliases::is_claude_opus_5_model(model) {
+        Some("anthropic")
     } else {
         None
     }
@@ -689,6 +695,7 @@ mod tests {
             ("z.ai", vec!["zai"]),
             ("bigmodel.cn", vec!["zai"]),
             ("open.bigmodel.cn", vec!["zai"]),
+            ("deepseek-official", vec!["deepseek"]),
             ("stepfun_ai", vec!["stepfun"]),
             ("stepfun-coding-plan", vec!["stepfun"]),
             ("opencode-go", vec!["opencode"]),
@@ -720,6 +727,10 @@ mod tests {
             canonical_provider("pandora-deepseek"),
             Some("deepseek".into())
         );
+        assert_eq!(
+            canonical_provider("deepseek-official"),
+            Some("deepseek".into())
+        );
         assert_eq!(canonical_provider("UniSound"), Some("unisound".into()));
         assert_eq!(canonical_provider("yunzhisheng"), Some("unisound".into()));
         assert_eq!(canonical_provider("openai-pro"), Some("openai".into()));
@@ -745,6 +756,7 @@ mod tests {
             ("bigmodel.cn", "zai"),
             ("open.bigmodel.cn", "zai"),
             ("pandora-deepseek", "deepseek"),
+            ("deepseek-official", "deepseek"),
             ("deepseek-ai", "deepseek"),
             ("deepseek_ai", "deepseek"),
             ("qwen-portal", "qwen"),
@@ -1026,6 +1038,15 @@ mod tests {
         );
         assert_eq!(provider_override_from_model("model10"), None);
         assert_eq!(provider_override_from_model("my-model1"), None);
+        assert_eq!(
+            provider_override_from_model("claude-opus-5-preview"),
+            Some("anthropic")
+        );
+        assert_eq!(
+            provider_override_from_model("claude-opus-5"),
+            Some("anthropic")
+        );
+        assert_eq!(provider_override_from_model("claude-opus-5.1"), None);
     }
 
     #[test]
