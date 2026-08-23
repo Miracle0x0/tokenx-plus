@@ -90,7 +90,7 @@ Client identity is catalog-driven. Update `crates/tokenx-engine/client-catalog.j
 
 ## Releases
 
-Use `bun run release:bump -- <major|minor|patch|version>` to update every Rust, Bun, and npm release manifest together. The standard path is a version-only pull request; merging it to the default branch triggers npm publication, the version tag, and the GitHub Release. See [the release process](releases.md).
+Use `bun run release:bump -- <major|minor|patch|version>` to update every Rust, Bun, and npm release manifest together. The standard path is a version-only pull request; merging it to the default branch triggers native release builds, the version tag, and the GitHub Release. See [the release process](releases.md).
 
 ## Documentation changes
 

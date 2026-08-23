@@ -10,7 +10,7 @@ ROOT = pathlib.Path.cwd()
 WORKFLOWS_DIR = ROOT / ".github/workflows"
 PACKAGE_MANIFEST = ROOT / "package.json"
 BUN_SETUP_ACTION = ROOT / ".github/actions/setup-bun/action.yml"
-PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish.yml"
+RELEASE_WORKFLOW = ROOT / ".github/workflows/publish.yml"
 BUILD_NATIVE_WORKFLOW = ROOT / ".github/workflows/build-native.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 LAUNCHER_VALIDATION_WORKFLOW = ROOT / ".github/workflows/launcher_validation.yml"
@@ -18,19 +18,23 @@ TEST_COVERAGE_WORKFLOW = ROOT / ".github/workflows/test_coverage.yml"
 RELEASE_TOOLING_SCRIPT = ROOT / "scripts/test-release-tooling.sh"
 REQUIRED_ENV_KEYS = ("MACOSX_DEPLOYMENT_TARGET", "CARGO_TERM_COLOR", "CARGO_INCREMENTAL")
 COMMON_BUILD_FIELDS = ("host", "target", "build", "strip", "bin_name")
-TARGET_PACKAGES = {
-    "aarch64-apple-darwin": "tokenx-darwin-arm64",
-    "x86_64-unknown-linux-gnu": "tokenx-linux-x64-gnu",
-    "x86_64-pc-windows-msvc": "tokenx-win32-x64-msvc",
-}
 DEFAULT_RELEASE_BRANCH = "main"
 RELEASE_TRIGGER_PATH = "packages/tokenx/package.json"
 RELEASE_TOOLING_COMMAND = "bash scripts/test-release-tooling.sh"
 LOCAL_BUN_SETUP_ACTION = "./.github/actions/setup-bun"
-RECOVERY_NPM_BASE_VERSION_EXPRESSION = (
-    "${{ needs.prepare-release.outputs.recovery == 'true' "
-    "&& needs.prepare-release.outputs.version "
-    "|| needs.prepare-release.outputs.base_version }}"
+FORBIDDEN_RELEASE_WORKFLOW_FRAGMENTS = (
+    "NPM_TOKEN",
+    "registry.npmjs.org",
+    "scripts/check-npm-release-state.sh",
+    "scripts/publish-npm-package.sh",
+    "actions/setup-node@",
+    "bun install",
+    "bun run build",
+)
+FORBIDDEN_RELEASE_JOBS = (
+    "authorize-publish",
+    "publish-platform-packages",
+    "publish-launcher",
 )
 RELEASE_VALIDATION_PATHS = {
     "scripts/**",
@@ -307,19 +311,8 @@ def by_target(entries: list[dict[str, str]], label: str) -> dict[str, dict[str, 
     return result
 
 
-def package_manifest_name(package_dir: str) -> str:
-    manifest_path = ROOT / "packages" / package_dir / "package.json"
-    if not manifest_path.exists():
-        fail(f"Missing platform package manifest: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    name = manifest.get("name")
-    if not isinstance(name, str) or not name:
-        fail(f"{manifest_path} missing package name")
-    return name
-
-
 def main() -> None:
-    publish_lines = read_lines(PUBLISH_WORKFLOW)
+    release_lines = read_lines(RELEASE_WORKFLOW)
     native_lines = read_lines(BUILD_NATIVE_WORKFLOW)
     ci_lines = read_lines(CI_WORKFLOW)
     launcher_validation_lines = read_lines(LAUNCHER_VALIDATION_WORKFLOW)
@@ -419,18 +412,18 @@ def main() -> None:
         "launcher-smoke",
         "bun install --frozen-lockfile",
     )
-    validate_bun_job(
-        errors,
-        "Publish publish-launcher",
-        publish_lines,
-        "publish-launcher",
-        "bun install",
-    )
-    finalize_block = job_block(publish_lines, "finalize")
+    finalize_block = job_block(release_lines, "finalize")
     if not text_indexes(finalize_block, "gh release create"):
-        errors.append("Publish finalize must create the GitHub Release")
+        errors.append("Release finalize must create the GitHub Release")
     if not text_indexes(finalize_block, "--generate-notes"):
-        errors.append("Publish finalize must request generated GitHub release notes")
+        errors.append("Release finalize must request generated GitHub release notes")
+    if (
+        exact_run_command_count(finalize_block, "bash scripts/check-release-commit.sh")
+        != 1
+    ):
+        errors.append("Release finalize must revalidate the release commit after native builds")
+    if not text_indexes(finalize_block, "needs: [prepare-release, build-native-binary]"):
+        errors.append("Release finalize must wait for every native build")
 
     for event_name in ("push", "pull_request"):
         block = event_block(test_coverage_lines, event_name)
@@ -457,155 +450,109 @@ def main() -> None:
                 f"{missing_launcher_paths}"
             )
 
-    push_block = event_block(publish_lines, "push")
+    push_block = event_block(release_lines, "push")
     if push_block is None:
-        errors.append("publish workflow must run on default-branch pushes")
+        errors.append("release workflow must run on default-branch pushes")
     else:
         branches = nested_list_values(push_block, "branches")
         paths = nested_list_values(push_block, "paths")
         if branches != [DEFAULT_RELEASE_BRANCH]:
             errors.append(
-                f"publish push branches must be [{DEFAULT_RELEASE_BRANCH!r}], found {branches}"
+                f"release push branches must be [{DEFAULT_RELEASE_BRANCH!r}], found {branches}"
             )
         if paths != [RELEASE_TRIGGER_PATH]:
             errors.append(
-                f"publish push paths must be [{RELEASE_TRIGGER_PATH!r}], found {paths}"
+                f"release push paths must be [{RELEASE_TRIGGER_PATH!r}], found {paths}"
             )
 
-    dispatch_block = event_block(publish_lines, "workflow_dispatch")
+    dispatch_block = event_block(release_lines, "workflow_dispatch")
     dispatch_text = "\n".join(dispatch_block or [])
     if dispatch_block is None:
-        errors.append("publish workflow must retain manual recovery dispatch")
+        errors.append("release workflow must retain manual recovery dispatch")
     else:
         for input_name in ("version", "commit"):
             if not re.search(rf"^\s{{6}}{input_name}:\s*$", dispatch_text, re.MULTILINE):
                 errors.append(f"manual recovery is missing required input {input_name}")
 
-    publish_text = "\n".join(publish_lines)
-    if re.search(r"\bgit\s+commit\b", publish_text):
-        errors.append("publish workflow must not create version commits")
+    release_text = "\n".join(release_lines)
+    if re.search(r"\bgit\s+commit\b", release_text):
+        errors.append("release workflow must not create version commits")
     unexpected_pushes = [
         line.strip()
-        for line in publish_lines
+        for line in release_lines
         if "git push " in line and 'git push origin "v$NEW_VERSION"' not in line
     ]
     if unexpected_pushes:
-        errors.append(f"publish workflow contains unexpected git push commands: {unexpected_pushes}")
-    if re.search(r"^\s{2}bump-versions:\s*$", publish_text, re.MULTILINE):
-        errors.append("publish workflow must consume committed versions, not bump them")
-    if publish_text.count("bash scripts/check-release-commit.sh") < 2:
+        errors.append(f"release workflow contains unexpected git push commands: {unexpected_pushes}")
+    if re.search(r"^\s{2}bump-versions:\s*$", release_text, re.MULTILINE):
+        errors.append("release workflow must consume committed versions, not bump them")
+    if release_text.count("bash scripts/check-release-commit.sh") < 2:
         errors.append("release commit must be validated before and after native builds")
-    authorize_publish_text = "\n".join(job_block(publish_lines, "authorize-publish"))
-    recovery_base_version_line = (
-        f"RELEASE_BASE_VERSION: {RECOVERY_NPM_BASE_VERSION_EXPRESSION}"
-    )
-    if recovery_base_version_line not in authorize_publish_text:
-        errors.append(
-            "authorize-publish must pass the recovery target version to the npm state check"
-        )
-    if "cancel-in-progress: false" not in publish_text:
-        errors.append("publish workflow must serialize releases without cancelling in progress")
+    for fragment in FORBIDDEN_RELEASE_WORKFLOW_FRAGMENTS:
+        if fragment in release_text:
+            errors.append(f"release workflow must not contain npm automation: {fragment}")
+    for job_name in FORBIDDEN_RELEASE_JOBS:
+        if re.search(rf"^\s{{2}}{re.escape(job_name)}:\s*$", release_text, re.MULTILINE):
+            errors.append(f"release workflow must not contain npm job: {job_name}")
+    if "cancel-in-progress: false" not in release_text:
+        errors.append("release workflow must serialize releases without cancelling in progress")
 
-    publish_env = top_level_env(publish_lines)
+    release_env = top_level_env(release_lines)
     native_env = top_level_env(native_lines)
     for key in REQUIRED_ENV_KEYS:
-        publish_has_key = key in publish_env
+        release_has_key = key in release_env
         native_has_key = key in native_env
-        if not publish_has_key:
-            errors.append(f"publish workflow missing required env {key}")
+        if not release_has_key:
+            errors.append(f"release workflow missing required env {key}")
         if not native_has_key:
             errors.append(f"build-native workflow missing required env {key}")
         if (
-            publish_has_key
+            release_has_key
             and native_has_key
-            and publish_env.get(key) != native_env.get(key)
+            and release_env.get(key) != native_env.get(key)
         ):
             errors.append(
-                f"env {key} differs: publish={publish_env.get(key)!r}, build-native={native_env.get(key)!r}"
+                f"env {key} differs: release={release_env.get(key)!r}, build-native={native_env.get(key)!r}"
             )
 
-    publish_build = by_target(matrix_settings(publish_lines, "build-native-binary"), "publish build")
+    release_build = by_target(
+        matrix_settings(release_lines, "build-native-binary"), "release build"
+    )
     native_build = by_target(matrix_settings(native_lines, "build"), "build-native")
     validate_native_binary_smoke(
-        errors, "publish native build", publish_lines, "build-native-binary"
+        errors, "release native build", release_lines, "build-native-binary"
     )
     validate_native_binary_smoke(errors, "build-native", native_lines, "build")
 
     unexpected_native_targets = [
-        target for target in native_build if target not in publish_build
+        target for target in native_build if target not in release_build
     ]
-    unverified_publish_targets = [
-        target for target in publish_build if target not in native_build
+    unverified_release_targets = [
+        target for target in release_build if target not in native_build
     ]
     if unexpected_native_targets:
         errors.append(
-            f"build-native matrix contains targets missing from publish: {unexpected_native_targets}"
+            f"build-native matrix contains targets missing from release: {unexpected_native_targets}"
         )
-    if unverified_publish_targets:
+    if unverified_release_targets:
         errors.append(
-            f"publish build matrix contains targets missing from build-native: {unverified_publish_targets}"
+            f"release build matrix contains targets missing from build-native: {unverified_release_targets}"
         )
 
     for target, native_entry in native_build.items():
-        publish_entry = publish_build.get(target)
-        if publish_entry is None:
+        release_entry = release_build.get(target)
+        if release_entry is None:
             continue
         for field in COMMON_BUILD_FIELDS:
-            if publish_entry.get(field, "") != native_entry.get(field, ""):
+            if release_entry.get(field, "") != native_entry.get(field, ""):
                 errors.append(
-                    f"build matrix {target} field {field} differs: publish={publish_entry.get(field)!r}, build-native={native_entry.get(field)!r}"
+                    f"build matrix {target} field {field} differs: release={release_entry.get(field)!r}, build-native={native_entry.get(field)!r}"
                 )
 
-        expected_package_dir = TARGET_PACKAGES.get(target)
-        if publish_entry.get("package_dir") != expected_package_dir:
-            errors.append(
-                f"build matrix {target} package_dir drift: expected {expected_package_dir}, found {publish_entry.get('package_dir')}"
-            )
         expected_artifact = f"tokenx-binary-{target}"
-        if publish_entry.get("artifact_name") != expected_artifact:
+        if release_entry.get("artifact_name") != expected_artifact:
             errors.append(
-                f"build matrix {target} artifact drift: expected {expected_artifact}, found {publish_entry.get('artifact_name')}"
-            )
-
-    publish_platform = matrix_settings(publish_lines, "publish-platform-packages")
-    platform_by_dir: dict[str, dict[str, str]] = {}
-    for entry in publish_platform:
-        package_dir = entry.get("package_dir")
-        if not package_dir:
-            errors.append(f"publish platform entry missing package_dir: {entry}")
-            continue
-        if package_dir in platform_by_dir:
-            errors.append(f"publish platform package_dir is duplicated: {package_dir}")
-            continue
-        platform_by_dir[package_dir] = entry
-
-    expected_package_dirs = {
-        entry["package_dir"] for entry in publish_build.values() if entry.get("package_dir")
-    }
-    if set(platform_by_dir) != expected_package_dirs:
-        errors.append(
-            f"publish platform package_dirs differ from build matrix: publish={sorted(platform_by_dir)}, build={sorted(expected_package_dirs)}"
-        )
-
-    build_by_package_dir = {
-        entry["package_dir"]: entry for entry in publish_build.values() if entry.get("package_dir")
-    }
-    for package_dir, platform_entry in platform_by_dir.items():
-        build_entry = build_by_package_dir.get(package_dir)
-        if build_entry is None:
-            continue
-        expected_package_name = package_manifest_name(package_dir)
-        if platform_entry.get("package_name") != expected_package_name:
-            errors.append(
-                f"publish platform package name drift for {package_dir}: expected {expected_package_name}, found {platform_entry.get('package_name')}"
-            )
-        if platform_entry.get("artifact_name") != build_entry.get("artifact_name"):
-            errors.append(
-                f"publish platform artifact drift for {package_dir}: expected {build_entry.get('artifact_name')}, found {platform_entry.get('artifact_name')}"
-            )
-        if platform_entry.get("binary_name") != build_entry.get("bin_name"):
-            errors.append(
-                f"publish platform binary drift for {package_dir}: expected {build_entry.get('bin_name')}, found {platform_entry.get('binary_name')}"
+                f"release build matrix {target} artifact_name drift: expected {expected_artifact}, found {release_entry.get('artifact_name')}"
             )
 
     if errors:

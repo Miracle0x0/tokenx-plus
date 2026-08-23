@@ -95,7 +95,7 @@ jobs:
           "$TOKENX_BINARY" models --home "$smoke_home" --client amp --json --no-spinner
 EOF_YAML
   cat > "${work}/.github/workflows/publish.yml" <<'EOF_YAML'
-name: Publish
+name: Release
 
 on:
   push:
@@ -111,7 +111,7 @@ on:
         required: true
 
 concurrency:
-  group: publish
+  group: release
   cancel-in-progress: false
 
 env:
@@ -129,7 +129,6 @@ jobs:
         settings:
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            package_dir: tokenx-linux-x64-gnu
             artifact_name: tokenx-binary-x86_64-unknown-linux-gnu
             bin_name: tokenx
             build: cargo zigbuild --release -p tokenx --target x86_64-unknown-linux-gnu
@@ -141,29 +140,11 @@ jobs:
           smoke_home="$(mktemp -d)"
           export TOKENX_CONFIG_DIR="$smoke_home/.tokenx"
           "$TOKENX_BINARY" models --home "$smoke_home" --client amp --json --no-spinner
-  publish-platform-packages:
-    strategy:
-      matrix:
-        settings:
-          - package_name: '@juya-ai/tokenx-linux-x64-gnu'
-            package_dir: tokenx-linux-x64-gnu
-            artifact_name: tokenx-binary-x86_64-unknown-linux-gnu
-            binary_name: tokenx
-  authorize-publish:
-    steps:
-      - run: bash scripts/check-release-commit.sh
-      - name: Check npm release state
-        env:
-          RELEASE_BASE_VERSION: ${{ needs.prepare-release.outputs.recovery == 'true' && needs.prepare-release.outputs.version || needs.prepare-release.outputs.base_version }}
-        run: bash scripts/check-npm-release-state.sh
-  publish-launcher:
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/setup-bun
-      - run: bun install
   finalize:
+    needs: [prepare-release, build-native-binary]
     steps:
       - uses: actions/checkout@v5
+      - run: bash scripts/check-release-commit.sh
       - run: gh release create v3.0.0 --generate-notes
 EOF_YAML
   cat > "${work}/.github/workflows/ci.yml" <<'EOF_YAML'
@@ -234,7 +215,7 @@ EOF_YAML
   git -C "${work}" update-index --chmod=+x scripts/test-release-tooling.sh
 }
 
-test_accepts_matching_publish_and_native_workflows() {
+test_accepts_matching_release_and_native_workflows() {
   local work="${TMP_DIR}/good"
   write_good_workflows "${work}"
 
@@ -279,11 +260,11 @@ PY
     return 1
   fi
 
-  grep -q "build-native matrix contains targets missing from publish" "${output}"
+  grep -q "build-native matrix contains targets missing from release" "${output}"
 }
 
-test_rejects_publish_matrix_target_without_native_coverage() {
-  local work="${TMP_DIR}/unverified-publish-target"
+test_rejects_release_matrix_target_without_native_coverage() {
+  local work="${TMP_DIR}/unverified-release-target"
   write_good_workflows "${work}"
   python3 - "${work}/.github/workflows/publish.yml" <<'PY'
 import pathlib
@@ -293,7 +274,6 @@ path = pathlib.Path(sys.argv[1])
 text = path.read_text()
 insert = """          - host: windows-latest
             target: x86_64-pc-windows-msvc
-            package_dir: tokenx-win32-x64-msvc
             artifact_name: tokenx-binary-x86_64-pc-windows-msvc
             bin_name: tokenx.exe
             build: cargo build --release -p tokenx --target x86_64-pc-windows-msvc
@@ -307,21 +287,13 @@ text = text.replace(
 path.write_text(text)
 PY
 
-  mkdir -p "${work}/packages/tokenx-win32-x64-msvc"
-  cat > "${work}/packages/tokenx-win32-x64-msvc/package.json" <<'EOF_MANIFEST'
-{
-  "name": "@juya-ai/tokenx-win32-x64-msvc",
-  "version": "3.0.0"
-}
-EOF_MANIFEST
-
-  local output="${TMP_DIR}/unverified-publish-target-output.txt"
+  local output="${TMP_DIR}/unverified-release-target-output.txt"
   if (cd "${work}" && python3 "${SCRIPT_UNDER_TEST}" >"${output}" 2>&1); then
-    echo "Expected workflow safety check to reject unverified publish target" >&2
+    echo "Expected workflow safety check to reject unverified release target" >&2
     return 1
   fi
 
-  grep -q "publish build matrix contains targets missing from build-native" "${output}"
+  grep -q "release build matrix contains targets missing from build-native" "${output}"
 }
 
 test_rejects_release_env_drift() {
@@ -381,12 +353,12 @@ PY
     return 1
   fi
 
-  grep -q "publish workflow missing required env CARGO_INCREMENTAL" "${output}"
+  grep -q "release workflow missing required env CARGO_INCREMENTAL" "${output}"
   grep -q "build-native workflow missing required env CARGO_INCREMENTAL" "${output}"
 }
 
-test_rejects_platform_publish_matrix_drift() {
-  local work="${TMP_DIR}/publish-drift"
+test_rejects_release_artifact_name_drift() {
+  local work="${TMP_DIR}/release-artifact-drift"
   write_good_workflows "${work}"
   python3 - "${work}/.github/workflows/publish.yml" <<'PY'
 import pathlib
@@ -397,13 +369,13 @@ text = path.read_text().replace("artifact_name: tokenx-binary-x86_64-unknown-lin
 path.write_text(text)
 PY
 
-  local output="${TMP_DIR}/publish-drift-output.txt"
+  local output="${TMP_DIR}/release-artifact-drift-output.txt"
   if (cd "${work}" && python3 "${SCRIPT_UNDER_TEST}" >"${output}" 2>&1); then
-    echo "Expected workflow safety check to reject platform publish drift" >&2
+    echo "Expected workflow safety check to reject release artifact drift" >&2
     return 1
   fi
 
-  grep -q "publish platform artifact drift" "${output}"
+  grep -q "release build matrix x86_64-unknown-linux-gnu artifact_name drift" "${output}"
 }
 
 test_rejects_missing_default_branch_push_trigger() {
@@ -424,25 +396,22 @@ PY
     return 1
   fi
 
-  grep -q "publish push branches must be" "${output}"
+  grep -q "release push branches must be" "${output}"
 }
 
-test_rejects_recovery_npm_base_version_drift() {
-  local work="${TMP_DIR}/recovery-npm-base-version-drift"
+test_rejects_npm_token_in_release_workflow() {
+  local work="${TMP_DIR}/npm-token"
   write_good_workflows "${work}"
-  replace_text \
-    "${work}/.github/workflows/publish.yml" \
-    'RELEASE_BASE_VERSION: ${{ needs.prepare-release.outputs.recovery == '\''true'\'' && needs.prepare-release.outputs.version || needs.prepare-release.outputs.base_version }}' \
-    'RELEASE_BASE_VERSION: ${{ needs.prepare-release.outputs.base_version }}'
+  printf '      - run: echo "${{ secrets.NPM_TOKEN }}"\n' >> "${work}/.github/workflows/publish.yml"
 
   assert_safety_rejected \
     "${work}" \
-    "${TMP_DIR}/recovery-npm-base-version-drift-output.txt" \
-    "authorize-publish must pass the recovery target version to the npm state check" \
-    "Expected workflow safety check to reject recovery npm base-version drift"
+    "${TMP_DIR}/npm-token-output.txt" \
+    "release workflow must not contain npm automation: NPM_TOKEN" \
+    "Expected workflow safety check to reject NPM_TOKEN"
 }
 
-test_rejects_version_commits_in_publish_workflow() {
+test_rejects_version_commits_in_release_workflow() {
   local work="${TMP_DIR}/version-commit"
   write_good_workflows "${work}"
   python3 - "${work}/.github/workflows/publish.yml" <<'PY'
@@ -464,10 +433,10 @@ PY
     return 1
   fi
 
-  grep -q "publish workflow must not create version commits" "${output}"
+  grep -q "release workflow must not create version commits" "${output}"
 }
 
-test_rejects_branch_pushes_in_publish_workflow() {
+test_rejects_branch_pushes_in_release_workflow() {
   local work="${TMP_DIR}/branch-push"
   write_good_workflows "${work}"
   printf '      - run: git push origin main\n' >> "${work}/.github/workflows/publish.yml"
@@ -478,7 +447,7 @@ test_rejects_branch_pushes_in_publish_workflow() {
     return 1
   fi
 
-  grep -q "publish workflow contains unexpected git push commands" "${output}"
+  grep -q "release workflow contains unexpected git push commands" "${output}"
 }
 
 test_rejects_missing_generated_release_notes() {
@@ -492,7 +461,7 @@ test_rejects_missing_generated_release_notes() {
   assert_safety_rejected \
     "${work}" \
     "${TMP_DIR}/missing-generated-release-notes-output.txt" \
-    "Publish finalize must request generated GitHub release notes" \
+    "Release finalize must request generated GitHub release notes" \
     "Expected workflow safety check to reject missing generated release notes"
 }
 
@@ -664,18 +633,18 @@ test_rejects_missing_launcher_toolchain_trigger() {
     "Expected workflow safety check to reject a missing launcher toolchain trigger"
 }
 
-test_accepts_matching_publish_and_native_workflows
+test_accepts_matching_release_and_native_workflows
 test_reads_workflows_as_utf8_when_locale_is_non_utf8
 test_rejects_build_matrix_target_drift
-test_rejects_publish_matrix_target_without_native_coverage
+test_rejects_release_matrix_target_without_native_coverage
 test_rejects_release_env_drift
 test_rejects_missing_native_binary_smoke
 test_rejects_missing_required_release_env
-test_rejects_platform_publish_matrix_drift
+test_rejects_release_artifact_name_drift
 test_rejects_missing_default_branch_push_trigger
-test_rejects_recovery_npm_base_version_drift
-test_rejects_version_commits_in_publish_workflow
-test_rejects_branch_pushes_in_publish_workflow
+test_rejects_npm_token_in_release_workflow
+test_rejects_version_commits_in_release_workflow
+test_rejects_branch_pushes_in_release_workflow
 test_rejects_missing_generated_release_notes
 test_rejects_release_tooling_command_drift
 test_rejects_missing_release_tooling_entrypoint
