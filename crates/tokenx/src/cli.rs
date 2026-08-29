@@ -435,6 +435,9 @@ impl TerminalState {
 #[derive(Debug)]
 pub(crate) struct ResolvedInputScope {
     pub(crate) home: PathBuf,
+    /// Effective DSH root captured once at command startup. An explicit
+    /// `--home` disables this environment-root override.
+    pub(crate) dsh_home: Option<PathBuf>,
     pub(crate) universe: ClientUniverse,
     pub(crate) restricted: bool,
 }
@@ -698,6 +701,7 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot<PendingPricin
         Some(calendar) => calendar,
         None => CalendarContext::system().map_err(anyhow::Error::new)?,
     };
+    let dsh_home = args.home.is_none().then(resolve_dsh_home).flatten();
     let home = args
         .home
         .or_else(dirs::home_dir)
@@ -707,6 +711,7 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot<PendingPricin
         paths,
         input: ResolvedInputScope {
             home,
+            dsh_home,
             universe,
             restricted,
         },
@@ -714,6 +719,12 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot<PendingPricin
         calendar,
         pricing: PendingPricing,
     })
+}
+
+fn resolve_dsh_home() -> Option<PathBuf> {
+    std::env::var_os("DSH_HOME")
+        .filter(|value| !value.to_string_lossy().trim().is_empty())
+        .map(PathBuf::from)
 }
 
 fn resolve_date(

@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokenx_engine::{AcquisitionConfig, ClientId, Generation};
 
 const CACHE_MAGIC: [u8; 8] = *b"TOKENXG\0";
-const CACHE_SCHEMA_VERSION: u32 = 1;
+const CACHE_SCHEMA_VERSION: u32 = 2;
 const MAX_GENERATION_BODY_BYTES: u64 = 256 * 1024 * 1024;
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
 const RETRY_BASE_DELAY_MS: u64 = 5 * 60 * 1000;

@@ -32,10 +32,19 @@ impl IntegrationDriver for Driver {
         &self,
         ctx: &DiscoveryContext<'_>,
     ) -> Result<Vec<DiscoveredInput>, InputDiscoveryError> {
-        source_discovery::discover_default_scanned_units(
-            ctx.client,
-            SOURCE,
+        let default_root = ctx
+            .dsh_home
+            .map(|root| root.join("sessions"))
+            .unwrap_or_else(|| SOURCE.resolve(ctx.home_dir));
+        let mut paths = source_discovery::scan_roots(ctx, [default_root], SOURCE.matcher())?;
+        paths.extend(source_discovery::scan_roots(
             ctx,
+            source_discovery::extra_roots_for_client(ctx.client, ctx)?,
+            SOURCE.matcher(),
+        )?);
+        source_discovery::input_units_from_paths(
+            ctx.client,
+            paths,
             FingerprintPolicy::PlainFile,
             DecoderKind::plain(DecoderId::Dsh),
         )
@@ -117,9 +126,18 @@ mod tests {
         home_dir: &'a Path,
         settings: &'a crate::scanner::ScannerSettings,
     ) -> DiscoveryContext<'a> {
+        scan_context_with_dsh_home(home_dir, settings, None)
+    }
+
+    fn scan_context_with_dsh_home<'a>(
+        home_dir: &'a Path,
+        settings: &'a crate::scanner::ScannerSettings,
+        dsh_home: Option<&'a Path>,
+    ) -> DiscoveryContext<'a> {
         DiscoveryContext {
             client: ClientId::Dsh,
             home_dir,
+            dsh_home,
             scanner_settings: settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         }
@@ -169,6 +187,27 @@ mod tests {
             unit.fingerprint_policy == FingerprintPolicy::PlainFile
                 && unit.decoder.version() == DecoderVersion::current(DecoderId::Dsh)
         }));
+    }
+
+    #[test]
+    fn driver_uses_the_captured_dsh_home_for_default_sessions() {
+        let home = tempfile::TempDir::new().unwrap();
+        let custom = tempfile::TempDir::new().unwrap();
+        let custom_path = custom
+            .path()
+            .join("sessions/workspace/session/session.jsonl");
+        let ignored_path = home
+            .path()
+            .join(".dsh/sessions/workspace/ignored/session.jsonl");
+        write_file(&custom_path, "");
+        write_file(&ignored_path, "");
+
+        let settings = crate::scanner::ScannerSettings::default();
+        let ctx = scan_context_with_dsh_home(home.path(), &settings, Some(custom.path()));
+        let units = DRIVER.discover_inputs(&ctx).unwrap();
+
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].path, custom_path);
     }
 
     fn duplicate_session_paths(root: &Path) -> Vec<PathBuf> {

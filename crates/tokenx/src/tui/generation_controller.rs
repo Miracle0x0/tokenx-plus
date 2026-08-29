@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::acquisition::{acquisition_engine, build_generation_with_cancellation};
+use crate::acquisition::{acquisition_engine_with_dsh_home, build_generation_with_cancellation};
 use crate::cli::RelativeDateRange;
 use crate::generation_cache::{save_generation_cache_with_retry_backoff, RetryBackoff};
 
@@ -289,7 +289,7 @@ impl GenerationController {
             .relative_date_range
             .map(|relative| relative.resolve(effective_date))
             .unwrap_or_else(|| current.date_range().clone());
-        let replacement = acquisition_engine(
+        let replacement = acquisition_engine_with_dsh_home(
             self.acquisition.input_cache_dir().to_path_buf(),
             current.resolved_home_dir().to_path_buf(),
             current.universe().clone(),
@@ -297,6 +297,7 @@ impl GenerationController {
             current.scanner().clone(),
             *current.calendar(),
             self.acquisition.pricing_snapshot(),
+            current.dsh_home().map(std::path::Path::to_path_buf),
         )?;
         if replacement.config() == current {
             return Ok(false);
@@ -350,7 +351,7 @@ impl GenerationController {
     ) -> Result<bool> {
         let current = self.acquisition.config();
         let context_changed = current.pricing() != pricing.context();
-        let replacement = acquisition_engine(
+        let replacement = acquisition_engine_with_dsh_home(
             self.acquisition.input_cache_dir().to_path_buf(),
             current.resolved_home_dir().to_path_buf(),
             current.universe().clone(),
@@ -358,7 +359,9 @@ impl GenerationController {
             current.scanner().clone(),
             *current.calendar(),
             pricing,
+            current.dsh_home().map(std::path::Path::to_path_buf),
         )?;
+        let context_changed = context_changed || replacement.config() != current;
         self.acquisition = replacement;
         Ok(context_changed)
     }

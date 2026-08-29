@@ -51,8 +51,9 @@ The exhaustive registry owns each `ClientId` binding. Its selected driver owns
 the source definition, discovery, decoder selection, and fold without declaring a
 second identity. The binding is the sole authority associating discovered
 inputs and emitted usage with a client. Discovery remains authoritative for
-fixed default roots beneath the selected home, filename selection, companion
-files, database sidecars, and custom-root support. Additional roots come only from
+fixed default roots beneath the selected home (with any documented
+environment-root override), filename selection, companion files, database
+sidecars, and custom-root support. Additional roots come only from
 `scanner.extraScanPaths`; OpenCode database files come only from
 `scanner.opencodeDbPaths`.
 

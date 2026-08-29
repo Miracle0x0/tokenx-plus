@@ -8,6 +8,7 @@ use tokenx_engine::{
 };
 
 /// Resolve and bind the one immutable acquisition authority used by a command.
+#[cfg(test)]
 pub(crate) fn acquisition_engine(
     input_cache_dir: PathBuf,
     resolved_home_dir: PathBuf,
@@ -17,13 +18,37 @@ pub(crate) fn acquisition_engine(
     calendar: tokenx_engine::CalendarContext,
     pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
 ) -> Result<AcquisitionEngine> {
-    let config = AcquisitionConfig::new(
+    acquisition_engine_with_dsh_home(
+        input_cache_dir,
+        resolved_home_dir,
+        clients,
+        date_range,
+        scanner,
+        calendar,
+        pricing,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn acquisition_engine_with_dsh_home(
+    input_cache_dir: PathBuf,
+    resolved_home_dir: PathBuf,
+    clients: ClientUniverse,
+    date_range: DateRange,
+    scanner: tokenx_engine::scanner::ScannerSettings,
+    calendar: tokenx_engine::CalendarContext,
+    pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
+    dsh_home: Option<PathBuf>,
+) -> Result<AcquisitionEngine> {
+    let config = AcquisitionConfig::new_with_dsh_home(
         resolved_home_dir,
         date_range,
         clients,
         scanner,
         calendar,
         pricing.context().clone(),
+        dsh_home,
     )?;
     Ok(AcquisitionEngine::new(config, pricing, input_cache_dir)?)
 }

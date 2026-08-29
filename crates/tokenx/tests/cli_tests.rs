@@ -476,6 +476,8 @@ fn create_dsh_fixture_dir() -> TempDir {
             "\n",
             r#"{"type":"assistant/message","seq":39,"time":1785730448979,"data":{"turn":1,"message":{"id":"parent-call","source":{"provider":"deepseek","model":"deepseek-reasoner"}},"usage":{"inputTokens":2885,"outputTokens":25,"reasoningTokens":23}}}"#,
             "\n",
+            r#"{"type":"compaction/summary","seq":95,"time":1786358035000,"data":{"message":{"source":{"provider":"deepseek","model":"requested-alias","replayState":{"response":{"responseModel":"deepseek-reasoner"}}}},"usage":{"inputTokens":13,"outputTokens":17,"cacheReadTokens":7,"reasoningTokens":5}}}"#,
+            "\n",
             r#"{"type":"assistant/message","seq":96,"time":1786358035361,"data":{"turn":2,"message":{"id":"child-call","source":{"provider":"deepseek","model":"deepseek-reasoner"}},"usage":{"inputTokens":97,"outputTokens":39,"cacheReadTokens":2816,"reasoningTokens":34}}}"#,
             "\n"
         ),
@@ -489,14 +491,16 @@ fn create_dsh_fixture_dir() -> TempDir {
 fn cmd_with_home(tmp: &Path) -> Command {
     let mut cmd = cargo_bin_cmd!("tokenx");
     cmd.args(["--language", "en"]);
-    cmd.env("HOME", tmp).env_remove("TOKENX_CONFIG_DIR");
+    cmd.env("HOME", tmp)
+        .env_remove("TOKENX_CONFIG_DIR")
+        .env_remove("DSH_HOME");
     cmd
 }
 
 fn cmd_with_process_home(tmp: &Path) -> Command {
     let mut cmd = cargo_bin_cmd!("tokenx");
     cmd.args(["--language", "en"]);
-    cmd.env("HOME", tmp);
+    cmd.env("HOME", tmp).env_remove("DSH_HOME");
     cmd
 }
 
@@ -508,7 +512,8 @@ fn offline_cmd_with_home(tmp: &Path) -> Command {
         .env("HTTP_PROXY", "http://127.0.0.1:9")
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("ALL_PROXY", "http://127.0.0.1:9")
-        .env_remove("TOKENX_CONFIG_DIR");
+        .env_remove("TOKENX_CONFIG_DIR")
+        .env_remove("DSH_HOME");
     cmd
 }
 
@@ -1268,11 +1273,11 @@ fn test_models_dsh_usage_is_stable_across_cold_and_warm_cache() {
         assert_eq!(row["modelId"], "deepseek-reasoner", "{pass} pass");
         assert_eq!(row["provider"], "deepseek", "{pass} pass");
         assert_eq!(row["clients"], serde_json::json!(["dsh"]), "{pass} pass");
-        assert_eq!(row["tokens"]["input"], 2982, "{pass} pass");
-        assert_eq!(row["tokens"]["output"], 7, "{pass} pass");
-        assert_eq!(row["tokens"]["reasoning"], 57, "{pass} pass");
-        assert_eq!(row["tokens"]["cacheRead"], 2816, "{pass} pass");
-        assert_eq!(row["tokens"]["total"], 5862, "{pass} pass");
+        assert_eq!(row["tokens"]["input"], 2995, "{pass} pass");
+        assert_eq!(row["tokens"]["output"], 19, "{pass} pass");
+        assert_eq!(row["tokens"]["reasoning"], 62, "{pass} pass");
+        assert_eq!(row["tokens"]["cacheRead"], 2823, "{pass} pass");
+        assert_eq!(row["tokens"]["total"], 5899, "{pass} pass");
         assert_eq!(row["sessionCount"], 2, "{pass} pass");
         assert_eq!(document["health"]["complete"], true, "{pass} pass");
     }
@@ -1311,6 +1316,90 @@ fn test_models_dsh_corrupt_zstd_is_reported_as_unavailable() {
         .unwrap()
         .iter()
         .any(|issue| issue["client"] == "dsh" && issue["issue"] == "input-unavailable"));
+}
+
+#[test]
+fn test_models_dsh_honors_dsh_home_but_explicit_home_disables_it() {
+    let sandbox = create_empty_fixture_dir();
+    let custom = TempDir::new().unwrap();
+    let custom_path = custom
+        .path()
+        .join("sessions/workspace/custom-session/session.jsonl");
+    fs::create_dir_all(custom_path.parent().unwrap()).unwrap();
+    fs::write(
+        &custom_path,
+        concat!(
+            r#"{"type":"session","id":"custom-session","cwd":"/work"}"#,
+            "\n",
+            r#"{"type":"assistant/message","seq":1,"time":1786669454772,"data":{"message":{"source":{"provider":"p","model":"custom-model"}},"usage":{"inputTokens":10,"outputTokens":20}}}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let default_path = sandbox
+        .path()
+        .join(".dsh/sessions/workspace/default-session/session.jsonl");
+    fs::create_dir_all(default_path.parent().unwrap()).unwrap();
+    fs::write(
+        &default_path,
+        concat!(
+            r#"{"type":"session","id":"default-session","cwd":"/work"}"#,
+            "\n",
+            r#"{"type":"assistant/message","seq":1,"time":1786669454772,"data":{"message":{"source":{"provider":"p","model":"default-model"}},"usage":{"inputTokens":30,"outputTokens":40}}}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+
+    let output = cmd_with_home(sandbox.path())
+        .env("DSH_HOME", custom.path())
+        .args(["models", "--json", "--client", "dsh", "--no-spinner"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(model_rows(&document).len(), 1);
+    assert_eq!(model_rows(&document)[0]["modelId"], "custom-model");
+
+    let output = cmd_with_home(sandbox.path())
+        .env("DSH_HOME", "   ")
+        .args(["models", "--json", "--client", "dsh", "--no-spinner"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(model_rows(&document).len(), 1);
+    assert_eq!(model_rows(&document)[0]["modelId"], "default-model");
+
+    let output = cmd_with_home(sandbox.path())
+        .env("DSH_HOME", custom.path())
+        .args([
+            "models",
+            "--home",
+            sandbox.path().to_str().unwrap(),
+            "--json",
+            "--client",
+            "dsh",
+            "--no-spinner",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(model_rows(&document).len(), 1);
+    assert_eq!(model_rows(&document)[0]["modelId"], "default-model");
 }
 
 #[test]

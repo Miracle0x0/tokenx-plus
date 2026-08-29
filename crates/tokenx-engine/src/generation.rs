@@ -239,6 +239,9 @@ impl PricingContext {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AcquisitionConfig {
     resolved_home_dir: PathBuf,
+    /// The DSH root captured by the command-start composition root. `None`
+    /// means that the home-relative default is authoritative.
+    dsh_home: Option<PathBuf>,
     date_range: crate::DateRange,
     universe: ClientUniverse,
     scanner: ScannerSettings,
@@ -251,13 +254,44 @@ impl AcquisitionConfig {
         resolved_home_dir: PathBuf,
         date_range: crate::DateRange,
         universe: ClientUniverse,
-        mut scanner: ScannerSettings,
+        scanner: ScannerSettings,
         calendar: CalendarContext,
         pricing: PricingContext,
+    ) -> Result<Self, AcquisitionConfigError> {
+        Self::new_with_dsh_home(
+            resolved_home_dir,
+            date_range,
+            universe,
+            scanner,
+            calendar,
+            pricing,
+            None,
+        )
+    }
+
+    /// Construct an acquisition config with an optional, already-resolved DSH
+    /// root. Callers resolve process environment once before constructing this
+    /// value so discovery and cache validation use the same authority for the
+    /// whole generation.
+    pub fn new_with_dsh_home(
+        resolved_home_dir: PathBuf,
+        date_range: crate::DateRange,
+        universe: ClientUniverse,
+        scanner: ScannerSettings,
+        calendar: CalendarContext,
+        pricing: PricingContext,
+        dsh_home: Option<PathBuf>,
     ) -> Result<Self, AcquisitionConfigError> {
         if resolved_home_dir.as_os_str().is_empty() {
             return Err(AcquisitionConfigError::EmptyHomeDirectory);
         }
+        if dsh_home
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err(AcquisitionConfigError::EmptyDshHome);
+        }
+        let mut scanner = scanner;
         scanner.opencode_db_paths.sort();
         scanner.opencode_db_paths.dedup();
         for paths in scanner.extra_scan_paths.values_mut() {
@@ -267,6 +301,7 @@ impl AcquisitionConfig {
         scanner.validate()?;
         Ok(Self {
             resolved_home_dir,
+            dsh_home,
             date_range,
             universe,
             scanner,
@@ -277,6 +312,10 @@ impl AcquisitionConfig {
 
     pub fn resolved_home_dir(&self) -> &std::path::Path {
         &self.resolved_home_dir
+    }
+
+    pub fn dsh_home(&self) -> Option<&std::path::Path> {
+        self.dsh_home.as_deref()
     }
 
     pub fn date_range(&self) -> &crate::DateRange {
@@ -303,6 +342,13 @@ impl AcquisitionConfig {
         if self.resolved_home_dir.as_os_str().is_empty() {
             return Err(AcquisitionConfigError::EmptyHomeDirectory);
         }
+        if self
+            .dsh_home
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err(AcquisitionConfigError::EmptyDshHome);
+        }
         self.scanner.validate()?;
         Ok(())
     }
@@ -312,6 +358,8 @@ impl AcquisitionConfig {
 pub enum AcquisitionConfigError {
     #[error("resolved home directory must not be empty")]
     EmptyHomeDirectory,
+    #[error("DSH home directory must not be empty")]
+    EmptyDshHome,
     #[error(transparent)]
     InvalidScanner(#[from] ScannerSettingsError),
 }
@@ -930,6 +978,46 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, AcquisitionConfigError::EmptyHomeDirectory));
+    }
+
+    #[test]
+    fn acquisition_config_rejects_an_empty_dsh_home() {
+        let error = AcquisitionConfig::new_with_dsh_home(
+            PathBuf::from("/tmp/home"),
+            crate::DateRange::none(),
+            ClientUniverse::new([ClientId::Dsh]).unwrap(),
+            ScannerSettings::default(),
+            CalendarContext::explicit("UTC").unwrap(),
+            PricingContext::explicit_with_catalog("test-custom", "test-catalog"),
+            Some(PathBuf::new()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AcquisitionConfigError::EmptyDshHome));
+    }
+
+    #[test]
+    fn resolved_dsh_home_is_part_of_acquisition_identity() {
+        let config = |dsh_home| {
+            AcquisitionConfig::new_with_dsh_home(
+                PathBuf::from("/tmp/home"),
+                crate::DateRange::none(),
+                ClientUniverse::new([ClientId::Dsh]).unwrap(),
+                ScannerSettings::default(),
+                CalendarContext::explicit("UTC").unwrap(),
+                PricingContext::explicit_with_catalog("test-custom", "test-catalog"),
+                dsh_home,
+            )
+            .unwrap()
+        };
+        let default = config(None);
+        let custom = config(Some(PathBuf::from("/tmp/dsh-home")));
+
+        assert_ne!(default, custom);
+        assert_eq!(
+            custom.dsh_home(),
+            Some(std::path::Path::new("/tmp/dsh-home"))
+        );
     }
 
     #[test]

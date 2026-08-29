@@ -71,8 +71,9 @@ Every accepted explicit argument changes the plan. An option that cannot affect
 its command is rejected.
 
 An explicit `--home` must be an existing directory and is authoritative only
-for input discovery. Every built-in input root is derived from that directory;
-configured extra scan inputs remain explicit additional authorities. Tokenx
+for input discovery. Every built-in default input root is derived from that
+directory, and documented environment-root overrides are disabled; configured
+extra scan inputs remain explicit additional authorities. Tokenx
 product state remains under `~/.tokenx` or `TOKENX_CONFIG_DIR`, so selecting a
 source home cannot silently redirect settings, pricing, or caches. Client ids
 come from the current ADR 0002 catalog and are deduplicated. Date presets are

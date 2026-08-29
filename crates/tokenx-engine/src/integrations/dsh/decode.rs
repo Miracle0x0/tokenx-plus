@@ -20,6 +20,20 @@ use crate::{provider_identity, TokenBreakdown};
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 const ZSTD_CHUNK_BYTES: usize = 128 * 1024;
 
+/// Bound the amount of one transcript that can be retained from disk.
+///
+/// DSH transcripts are parsed in parallel.  A file-controlled allocation here
+/// would therefore be multiplied by the number of acquisition workers before
+/// any record-level validation can run.
+const MAX_TRANSCRIPT_FILE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Bound the expansion of a compressed transcript before it is materialized.
+///
+/// Zstandard permits very high expansion ratios, so limiting only the bytes
+/// read from disk does not bound memory use.
+const MAX_DECODED_TRANSCRIPT_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug)]
 struct DecodedSession {
     bytes: Vec<u8>,
     interrupted: Option<InputFailure>,
@@ -101,7 +115,8 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     .map(str::to_string);
             }
             "user/message" => pending_user_turn = true,
-            "assistant/message" => {
+            "assistant/message" | "compaction/summary" => {
+                let is_summary = event_type == "compaction/summary";
                 if seed_length > 0
                     && value
                         .get("seq")
@@ -126,8 +141,7 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 };
 
                 let source = value.pointer("/data/message/source");
-                let model_id = source
-                    .and_then(|source| non_empty_str(source.get("model")))
+                let model_id = served_model(source)
                     .map(str::to_string)
                     .or_else(|| request_model.clone());
                 let Some(model_id) = model_id else {
@@ -170,9 +184,17 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 let identity = value
                     .pointer("/data/message/id")
                     .and_then(|id| non_empty_str(Some(id)))
-                    .map_or_else(|| format!("sid:{sid}"), |id| format!("msg:{id}"));
+                    .map(|id| format!("msg:{id}"))
+                    .or_else(|| {
+                        value
+                            .get("seq")
+                            .and_then(Value::as_i64)
+                            .map(|seq| format!("seq:{seq}"))
+                    })
+                    .unwrap_or_else(|| format!("sid:{sid}"));
+                let kind = if is_summary { "summary:" } else { "" };
                 let dedup_key = dedup_hash_str(&format!(
-                    "dsh:{identity}:{timestamp}:{provider_id}:{model_id}:{}:{}:{}:{}:{}",
+                    "dsh:{kind}{identity}:{timestamp}:{provider_id}:{model_id}:{}:{}:{}:{}:{}",
                     tokens.input,
                     tokens.output,
                     tokens.cache_read,
@@ -183,9 +205,13 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     continue;
                 }
 
-                let is_turn_start = match value.pointer("/data/turn").and_then(Value::as_i64) {
-                    Some(turn) => started_turns.insert(turn),
-                    None => std::mem::take(&mut pending_user_turn),
+                let is_turn_start = if is_summary {
+                    false
+                } else {
+                    match value.pointer("/data/turn").and_then(Value::as_i64) {
+                        Some(turn) => started_turns.insert(turn),
+                        None => std::mem::take(&mut pending_user_turn),
+                    }
                 };
 
                 let mut message = UsageRecord::new_with_dedup(
@@ -212,9 +238,29 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
 }
 
 fn read_session_bytes(path: &Path) -> SessionParseResult<DecodedSession> {
-    let raw = std::fs::read(path)
-        .map_err(|error| SessionParseError::at_path(path, "read DSH session", error))?;
+    read_session_bytes_bounded(
+        path,
+        MAX_TRANSCRIPT_FILE_BYTES,
+        MAX_DECODED_TRANSCRIPT_BYTES,
+    )
+}
+
+fn read_session_bytes_bounded(
+    path: &Path,
+    max_file_bytes: usize,
+    max_decoded_bytes: usize,
+) -> SessionParseResult<DecodedSession> {
+    let raw = read_bounded_file(path, max_file_bytes)?;
     if !raw.starts_with(&ZSTD_MAGIC) {
+        if raw.len() > max_decoded_bytes {
+            return Err(size_limit_error(
+                path,
+                "read DSH session",
+                "decoded",
+                max_decoded_bytes,
+                raw.len(),
+            ));
+        }
         return Ok(DecodedSession {
             bytes: raw,
             interrupted: None,
@@ -226,8 +272,28 @@ fn read_session_bytes(path: &Path) -> SessionParseResult<DecodedSession> {
     let mut bytes = Vec::new();
     let mut chunk = vec![0_u8; ZSTD_CHUNK_BYTES];
     loop {
-        match decoder.read(&mut chunk) {
+        let remaining = max_decoded_bytes.saturating_sub(bytes.len());
+        let want = remaining.saturating_add(1).min(chunk.len());
+        if want == 0 {
+            return Err(size_limit_error(
+                path,
+                "decode DSH zstd stream",
+                "decoded",
+                max_decoded_bytes,
+                bytes.len(),
+            ));
+        }
+        match decoder.read(&mut chunk[..want]) {
             Ok(0) => break,
+            Ok(read) if bytes.len().saturating_add(read) > max_decoded_bytes => {
+                return Err(size_limit_error(
+                    path,
+                    "decode DSH zstd stream",
+                    "decoded",
+                    max_decoded_bytes,
+                    max_decoded_bytes.saturating_add(1),
+                ));
+            }
             Ok(read) => bytes.extend_from_slice(&chunk[..read]),
             Err(error) => {
                 let error = SessionParseError::at_path(path, "decode DSH zstd stream", error);
@@ -248,6 +314,45 @@ fn read_session_bytes(path: &Path) -> SessionParseResult<DecodedSession> {
     })
 }
 
+fn read_bounded_file(path: &Path, max_bytes: usize) -> SessionParseResult<Vec<u8>> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| SessionParseError::at_path(path, "read DSH session", error))?;
+    let mut raw = Vec::new();
+    let limit = u64::try_from(max_bytes)
+        .expect("DSH transcript byte limit must fit in u64")
+        .saturating_add(1);
+    file.take(limit)
+        .read_to_end(&mut raw)
+        .map_err(|error| SessionParseError::at_path(path, "read DSH session", error))?;
+    if raw.len() > max_bytes {
+        return Err(size_limit_error(
+            path,
+            "read DSH session",
+            "read",
+            max_bytes,
+            raw.len(),
+        ));
+    }
+    Ok(raw)
+}
+
+fn size_limit_error(
+    path: &Path,
+    operation: &'static str,
+    kind: &str,
+    limit: usize,
+    observed: usize,
+) -> SessionParseError {
+    SessionParseError::at_path(
+        path,
+        operation,
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("DSH {kind} transcript exceeds {limit} bytes (observed {observed})"),
+        ),
+    )
+}
+
 fn complete_prefix_len(bytes: &[u8], interrupted: bool) -> usize {
     if !interrupted || bytes.ends_with(b"\n") {
         return bytes.len();
@@ -263,6 +368,13 @@ fn non_empty_str(value: Option<&Value>) -> Option<&str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+}
+
+fn served_model(source: Option<&Value>) -> Option<&str> {
+    source
+        .and_then(|source| source.pointer("/replayState/response/responseModel"))
+        .and_then(|value| non_empty_str(Some(value)))
+        .or_else(|| source.and_then(|source| non_empty_str(source.get("model"))))
 }
 
 fn is_observed_provider(provider: &str) -> bool {
@@ -420,6 +532,120 @@ mod tests {
     }
 
     #[test]
+    fn compaction_summary_is_counted_without_consuming_the_pending_turn() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write_plain_session(
+            dir.path(),
+            "summary-session",
+            &[
+                r#"{"type":"session","id":"summary-session","cwd":"/work"}"#,
+                r#"{"type":"user/message","time":1786669450001,"data":{}}"#,
+                r#"{"type":"compaction/summary","seq":8,"time":1786669450002,"data":{"message":{"source":{"provider":"p","model":"m"}},"usage":{"inputTokens":10,"outputTokens":20}}}"#,
+                r#"{"type":"assistant/message","seq":9,"time":1786669450003,"data":{"message":{"source":{"provider":"p","model":"m"}},"usage":{"inputTokens":30,"outputTokens":40}}}"#,
+            ],
+        );
+
+        let scanned = parse_dsh_file(&path).unwrap();
+
+        assert_eq!(scanned.messages.len(), 2);
+        assert_eq!(scanned.messages[0].tokens.total(), 30);
+        assert!(!scanned.messages[0].is_turn_start);
+        assert!(scanned.messages[1].is_turn_start);
+        assert_ne!(scanned.messages[0].dedup_key, scanned.messages[1].dedup_key);
+    }
+
+    #[test]
+    fn compaction_summary_obeys_seed_length_and_skips_rows_without_usage() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write_plain_session(
+            dir.path(),
+            "summary-seed",
+            &[
+                r#"{"type":"session","id":"summary-seed","seedLength":8}"#,
+                r#"{"type":"compaction/summary","seq":7,"time":1786669450001,"data":{"message":{"source":{"provider":"p","model":"m"}},"usage":{"inputTokens":10}}}"#,
+                r#"{"type":"compaction/summary","seq":8,"time":1786669450002,"data":{"message":{"source":{"provider":"p","model":"m"}}}}"#,
+                r#"{"type":"compaction/summary","seq":9,"time":1786669450003,"data":{"message":{"source":{"provider":"p","model":"m"}},"usage":{"inputTokens":0,"outputTokens":0}}}"#,
+                r#"{"type":"compaction/summary","seq":10,"time":1786669450004,"data":{"message":{"source":{"provider":"p","model":"m"}},"usage":{"inputTokens":11,"outputTokens":12}}}"#,
+            ],
+        );
+
+        let scanned = parse_dsh_file(&path).unwrap();
+
+        assert_eq!(scanned.messages.len(), 1);
+        assert_eq!(scanned.messages[0].timestamp, 1786669450004);
+        assert_eq!(scanned.messages[0].tokens.total(), 23);
+    }
+
+    #[test]
+    fn response_model_takes_precedence_for_attribution_and_deduplication() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write_plain_session(
+            dir.path(),
+            "served-model",
+            &[
+                r#"{"type":"assistant/message","seq":1,"time":1786669450002,"data":{"message":{"source":{"provider":"p","model":"requested-model","replayState":{"response":{"responseModel":" served-model "}}}},"usage":{"inputTokens":10,"outputTokens":20}}}"#,
+            ],
+        );
+
+        let scanned = parse_dsh_file(&path).unwrap();
+
+        assert_eq!(scanned.messages.len(), 1);
+        assert_eq!(scanned.messages[0].model_id.as_ref(), "served-model");
+    }
+
+    #[test]
+    fn invalid_response_model_falls_back_to_source_then_request_header() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write_plain_session(
+            dir.path(),
+            "served-model-fallback",
+            &[
+                r#"{"type":"request/header","data":{"header":{"config":{"provider":"p","model":"header-model"}}}}"#,
+                r#"{"type":"assistant/message","seq":1,"time":1786669450001,"data":{"message":{"source":{"provider":"p","model":"source-model","replayState":{"response":{"responseModel":"   "}}}},"usage":{"inputTokens":10}}}"#,
+                r#"{"type":"compaction/summary","seq":2,"time":1786669450002,"data":{"message":{"source":{"provider":"p","replayState":{"response":{"responseModel":42}}}},"usage":{"inputTokens":20}}}"#,
+            ],
+        );
+
+        let scanned = parse_dsh_file(&path).unwrap();
+
+        assert_eq!(scanned.messages.len(), 2);
+        assert_eq!(scanned.messages[0].model_id.as_ref(), "source-model");
+        assert_eq!(scanned.messages[1].model_id.as_ref(), "header-model");
+    }
+
+    #[test]
+    fn idless_rows_use_seq_for_cross_file_deduplication() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let row = r#"{"type":"assistant/message","seq":7,"time":1786669450002,"data":{"message":{"source":{"provider":"p","model":"m"}},"usage":{"inputTokens":10,"outputTokens":20}}}"#;
+        let parent = write_plain_session(dir.path(), "parent", &[row]);
+        let child = write_plain_session(dir.path(), "child", &[row]);
+
+        let parent = parse_dsh_file(&parent).unwrap();
+        let child = parse_dsh_file(&child).unwrap();
+
+        assert_eq!(parent.messages.len(), 1);
+        assert_eq!(child.messages.len(), 1);
+        assert_eq!(parent.messages[0].dedup_key, child.messages[0].dedup_key);
+    }
+
+    #[test]
+    fn idless_summary_uses_seq_across_files_without_colliding_with_a_reply() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let summary = r#"{"type":"compaction/summary","seq":7,"time":1786669450002,"data":{"message":{"source":{"provider":"p","model":"m"}},"usage":{"inputTokens":10,"outputTokens":20}}}"#;
+        let reply = r#"{"type":"assistant/message","seq":7,"time":1786669450002,"data":{"message":{"source":{"provider":"p","model":"m"}},"usage":{"inputTokens":10,"outputTokens":20}}}"#;
+        let parent = write_plain_session(dir.path(), "parent-summary", &[summary]);
+        let child = write_plain_session(dir.path(), "child-summary", &[summary]);
+        let reply = write_plain_session(dir.path(), "reply", &[reply]);
+
+        let parent = parse_dsh_file(&parent).unwrap();
+        let child = parse_dsh_file(&child).unwrap();
+        let reply = parse_dsh_file(&reply).unwrap();
+
+        assert_eq!(parent.messages[0].dedup_key, child.messages[0].dedup_key);
+        assert_ne!(parent.messages[0].dedup_key, reply.messages[0].dedup_key);
+    }
+
+    #[test]
     fn missing_provider_uses_central_model_inference() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = write_plain_session(
@@ -552,5 +778,33 @@ mod tests {
         assert_eq!(rejection_count(&scanned, "malformed-record"), 2);
         assert_eq!(rejection_count(&scanned, "missing-model"), 1);
         assert_eq!(rejection_count(&scanned, "missing-timestamp"), 1);
+    }
+
+    #[test]
+    fn bounded_plain_reads_fail_before_buffering_past_the_limit() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = session_path(dir.path(), "oversized", false);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"0123456789").unwrap();
+
+        let error = read_session_bytes_bounded(&path, 9, 64).unwrap_err();
+
+        assert_eq!(error.operation(), "read DSH session");
+        assert!(error.to_string().contains("exceeds 9 bytes"));
+    }
+
+    #[test]
+    fn bounded_zstd_reads_fail_before_materializing_expansion_past_the_limit() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = session_path(dir.path(), "expanded", true);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let compressed = zstd::encode_all(vec![b'a'; 4096].as_slice(), 3).unwrap();
+        assert!(compressed.len() < 128);
+        std::fs::write(&path, compressed).unwrap();
+
+        let error = read_session_bytes_bounded(&path, 128, 1024).unwrap_err();
+
+        assert_eq!(error.operation(), "decode DSH zstd stream");
+        assert!(error.to_string().contains("exceeds 1024 bytes"));
     }
 }

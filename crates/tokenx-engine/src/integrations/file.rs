@@ -212,6 +212,7 @@ not-json
         DiscoveryContext {
             client,
             home_dir,
+            dsh_home: None,
             scanner_settings: settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         }

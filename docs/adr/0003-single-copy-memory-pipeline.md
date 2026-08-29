@@ -21,15 +21,16 @@ current formats, and ADR 0007 owns the TUI lifecycle built on this pipeline.
 
 ### Acquisition authority
 
-The application composition root resolves environment-backed home and calendar
-state plus one immutable runtime pricing snapshot. The snapshot binds its
+The application composition root resolves environment-backed home, documented
+client environment roots, and calendar state plus one immutable runtime
+pricing snapshot. The snapshot binds its
 serializable identity, loaded pricing service, and diagnostics from the same
 bounded, single-read file captures. Invalid pricing inputs remain explicit
 diagnostics rather than aborting usage acquisition. The acquisition engine
 shares the snapshot across every build and refresh while generations persist
 only its identity. `AcquisitionConfig` only validates and normalizes those
 explicit values; neither its constructor nor the acquisition engine rereads
-ambient pricing state.
+ambient environment or pricing state during discovery and refresh.
 
 The three public pricing cache files are captured and parsed concurrently into
 fixed source slots. Resolution and diagnostics still merge in canonical

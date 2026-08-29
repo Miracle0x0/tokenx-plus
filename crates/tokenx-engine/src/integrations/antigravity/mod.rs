@@ -180,6 +180,7 @@ mod tests {
         DiscoveryContext {
             client: ClientId::Antigravity,
             home_dir,
+            dsh_home: None,
             scanner_settings: settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         }

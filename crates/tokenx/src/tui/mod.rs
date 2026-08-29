@@ -38,6 +38,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+#[cfg(test)]
 use crate::acquisition::acquisition_engine;
 use crate::generation_cache::{load_generation_cache, CacheResult, RetryBackoff};
 use anyhow::Result;
@@ -269,6 +270,7 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -
                 input:
                     crate::cli::ResolvedInputScope {
                         home: home_dir,
+                        dsh_home,
                         universe,
                         restricted: _,
                     },
@@ -301,7 +303,7 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -
     };
 
     // Single file read: load cache and check freshness in one pass.
-    let acquisition = acquisition_engine(
+    let acquisition = crate::acquisition::acquisition_engine_with_dsh_home(
         paths.cache_dir(),
         home_dir,
         universe,
@@ -309,6 +311,7 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -
         settings.scanner.clone(),
         calendar,
         pricing,
+        dsh_home,
     )?;
     let pricing_diagnostics = acquisition.pricing_snapshot().diagnostics().to_vec();
     let (cached_snapshot, mut needs_background_load, retry_backoff, cache_startup_warning) =

@@ -17,7 +17,8 @@ are reported by Models Data Health and the TUI rather than by a second path
 inventory.
 
 Every built-in input root in the table is a fixed platform path beneath the
-current home directory. `**` means recursive discovery under the stated root.
+current home directory unless the row documents an environment override. `**`
+means recursive discovery under the stated root.
 
 ## Current discovery table
 
@@ -51,7 +52,7 @@ current home directory. `**` means recursive discovery under the stated root.
 | `cline` | Cline | `~/.cline/data/sessions/**/*.messages.json` | Reads the SDK v1 messages envelope and optional root manifest workspace metadata. |
 | `commandcode` | Command Code | `~/.commandcode/projects/**/*.jsonl` with optional same-stem `.meta.json` sidecars | Estimates transcript tokens. A non-empty session metadata model is authoritative; otherwise the record uses the explicit unpriced `commandcode-model-unknown` identity. The current global config never relabels historical sessions. |
 | `grok` | Grok | `~/.grok/sessions/**/updates.jsonl` with optional `summary.json` and `events.jsonl` siblings | Reads positive total-token deltas and optional session metadata. |
-| `dsh` | DeepSeek Harness | `~/.dsh/sessions/**/session.jsonl.zstd`; uncompressed `session.jsonl` | Reads per-call assistant usage, separates reasoning from its inclusive output total, and deduplicates forked session prefixes. |
+| `dsh` | DeepSeek Harness | `$DSH_HOME/sessions/**/session.jsonl.zstd` when `DSH_HOME` is non-empty, otherwise `~/.dsh/sessions/**`; uncompressed `session.jsonl` | Reads per-call assistant and compaction-summary usage, separates reasoning from its inclusive output total, uses the provider-served response model when present, and deduplicates forked session prefixes. |
 
 ## Scanner extensions
 
@@ -96,8 +97,9 @@ Data Health. Automatic OpenCode discovery selects only `opencode.db` and
 
 Extra roots use the same filename and schema rules as the integration's default
 root; they do not broaden accepted formats. Canonical paths are deduplicated
-before parsing. An explicit `--home` resolves the same fixed built-in layout
-beneath the supplied home; configured extra roots remain additional inputs.
+before parsing. An explicit `--home` resolves the same built-in layout beneath
+the supplied home and disables environment-root overrides; configured extra
+roots remain additional inputs.
 
 ## Shared parsing and health rules
 

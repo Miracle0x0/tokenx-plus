@@ -103,6 +103,10 @@ pub(crate) trait IntegrationDriver: Sync {
 pub(crate) struct DiscoveryContext<'a> {
     pub client: ClientId,
     pub home_dir: &'a Path,
+    /// Effective DSH root captured by the immutable acquisition config. `None`
+    /// means environment roots are disabled or `DSH_HOME` was not set, so the
+    /// driver must use its home-relative default.
+    pub dsh_home: Option<&'a Path>,
     pub scanner_settings: &'a scanner::ScannerSettings,
     pub cancellation: crate::engine::AcquisitionCancellation,
 }

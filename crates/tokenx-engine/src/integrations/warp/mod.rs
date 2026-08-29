@@ -142,6 +142,7 @@ mod tests {
         let ctx = DiscoveryContext {
             client: ClientId::Warp,
             home_dir: home.path(),
+            dsh_home: None,
             scanner_settings: &settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         };
