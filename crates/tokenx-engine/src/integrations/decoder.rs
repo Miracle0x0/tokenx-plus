@@ -23,6 +23,7 @@ pub(crate) enum DecoderKind {
     KiroFile,
     KiroSqlite,
     KiroGlobalStorage,
+    ZcodeSqlite,
     CodeBuddyJsonl,
     CodeBuddyExtensionLog {
         origin: CodeBuddyLogOrigin,
@@ -62,6 +63,10 @@ impl DecoderKind {
         Self::KiroGlobalStorage
     }
 
+    pub(crate) const fn zcode_sqlite() -> Self {
+        Self::ZcodeSqlite
+    }
+
     pub(crate) const fn codebuddy_jsonl() -> Self {
         Self::CodeBuddyJsonl
     }
@@ -86,6 +91,7 @@ impl DecoderKind {
             Self::KiroFile => DecoderVersion::current(DecoderId::KiroFile),
             Self::KiroSqlite => DecoderVersion::current(DecoderId::KiroSqlite),
             Self::KiroGlobalStorage => DecoderVersion::current(DecoderId::KiroGlobalStorage),
+            Self::ZcodeSqlite => DecoderVersion::current(DecoderId::ZcodeSqlite),
             Self::CodeBuddyJsonl => DecoderVersion::current(DecoderId::CodeBuddy)
                 .with_variant(DecoderVariant::CodeBuddyJsonl),
             Self::CodeBuddyExtensionLog { origin } => DecoderVersion::current(DecoderId::CodeBuddy)
@@ -110,6 +116,7 @@ impl DecoderKind {
             Self::KiroFile => ("kiro-file", None),
             Self::KiroSqlite => ("kiro-sqlite", None),
             Self::KiroGlobalStorage => ("kiro-global-storage", None),
+            Self::ZcodeSqlite => ("zcode-sqlite", None),
             Self::CodeBuddyJsonl => ("codebuddy-jsonl", None),
             Self::CodeBuddyExtensionLog { origin, .. } => (
                 "codebuddy-extension-log",

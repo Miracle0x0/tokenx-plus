@@ -188,6 +188,12 @@ pub(crate) const DECODER_CONTRACTS: &[DecoderContractSpec] = &[
         integration: "zcode",
     },
     DecoderContractSpec {
+        variant: "ZcodeSqlite",
+        stable_name: "zcode-sqlite",
+        plain_kind: false,
+        integration: "zcode",
+    },
+    DecoderContractSpec {
         variant: "Warp",
         stable_name: "warp",
         plain_kind: true,

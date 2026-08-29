@@ -1099,7 +1099,6 @@ model = "claude-sonnet-4"
                 COMMANDCODE_ADAPTER.decoder.version(),
                 DecoderId::CommandCode,
             ),
-            (ZCODE_ADAPTER.decoder.version(), DecoderId::Zcode),
         ] {
             assert_eq!(actual, DecoderVersion::current(decoder_id));
         }

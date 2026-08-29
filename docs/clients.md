@@ -44,7 +44,7 @@ current home directory. `**` means recursive discovery under the stated root.
 | `codebuddy` | CodeBuddy | `~/.codebuddy/projects/**/*.jsonl`; on Windows, CodeBuddy IDE and VS Code extension `*.log` trees under `AppData` | Reads assistant/function-call usage and final agent usage, then deduplicates mirrored JSONL and extension-log records. Other-platform or cross-environment log trees require `scanner.extraScanPaths.codebuddy`. |
 | `antigravity` | Antigravity | `~/.gemini/antigravity-cli/conversations/*.db` | Reads AGY CLI SQLite with committed WAL state and decodes the current protobuf token-accounting fields. |
 | `zed` | Zed Agent | `~/.local/share/zed/threads/threads.db`; fixed macOS and Windows application-data equivalents | Reads hosted Zed assistant usage from SQLite with committed WAL state and excludes external-agent records by ownership fields. |
-| `zcode` | ZCode | `~/.zcode/projects/**/*.jsonl` | Reads Z.ai ADE assistant usage from project transcripts. |
+| `zcode` | ZCode | `~/.zcode/cli/db/db.sqlite`; `~/.zcode/projects/**/*.jsonl` | Reads v2 model usage from the WAL-aware SQLite store and legacy Z.ai ADE assistant usage from project transcripts. |
 | `kiro` | Kiro | `~/.kiro/sessions/cli/**/*.json` with optional `.jsonl` sidecars; platform `kiro-cli/data.sqlite3`; Kiro `globalStorage/kiro.kiroagent` execution/session files | Combines CLI file, CLI SQLite, and IDE workspace inputs under the `kiro` identity. |
 | `junie` | Junie | `~/.junie/sessions/**/events.jsonl` | Reads JetBrains Junie session events and token usage. |
 | `warp` | Warp | Platform `warp.sqlite` roots listed under [Warp local token parsing](#warp-local-token-parsing) | Reads local conversation/model token totals from SQLite with committed WAL state. |
