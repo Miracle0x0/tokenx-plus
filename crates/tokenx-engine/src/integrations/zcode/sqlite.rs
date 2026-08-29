@@ -7,7 +7,8 @@ use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::open_readonly_sqlite;
 use crate::records::{
-    dedup_hash_str, normalize_workspace_key, workspace_label_from_key, UsageRecord,
+    dedup_hash_str, normalize_agent_name, normalize_workspace_key, workspace_label_from_key,
+    UsageRecord,
 };
 use crate::TokenBreakdown;
 
@@ -247,7 +248,8 @@ fn parse_usage_row(
     let agent = [row.agent, row.mode]
         .into_iter()
         .flatten()
-        .find_map(|value| non_empty(Some(value)));
+        .find_map(|value| non_empty(Some(value)))
+        .map(|value| normalize_agent_name(&value));
     let turn_key = non_empty(row.turn_id).map(|turn_id| (session_id.clone(), turn_id));
     let mut message = UsageRecord::new_with_agent(
         model_id,
@@ -557,7 +559,7 @@ mod tests {
         assert_eq!(message.tokens.cache_read, 7);
         assert_eq!(message.tokens.cache_write, 3);
         assert_eq!(message.tokens.total(), 120);
-        assert_eq!(message.agent.as_deref(), Some("zcode-agent"));
+        assert_eq!(message.agent.as_deref(), Some("ZCode Agent"));
         assert_eq!(
             message.dedup_key,
             Some(dedup_hash_str("zcode-sqlite:usage-1"))

@@ -229,6 +229,7 @@ fn titlecase_word(word: &str) -> String {
         "ui" => "UI".to_string(),
         "ux" => "UX".to_string(),
         "api" => "API".to_string(),
+        "zcode" => "ZCode".to_string(),
         _ => {
             let mut chars = word.chars();
             match chars.next() {
@@ -688,6 +689,8 @@ mod tests {
         assert_eq!(normalize_agent_name("Sisyphus"), "Sisyphus");
         assert_eq!(normalize_agent_name("omo"), "Omo");
         assert_eq!(normalize_agent_name("sisyphus"), "Sisyphus");
+        assert_eq!(normalize_agent_name("zcode-agent"), "ZCode Agent");
+        assert_eq!(normalize_agent_name("zcode-Explore"), "ZCode Explore");
         assert_eq!(
             normalize_agent_name("Sisyphus (Ultraworker)"),
             "Sisyphus (Ultraworker)"
