@@ -1,6 +1,8 @@
-use super::litellm::ModelPricing;
+use super::litellm::{ModelPricing, TimePeriodPrice};
 use super::{cache, emit_warning, PricingDiagnosticSink, PricingDiagnostics};
+use crate::model_aliases;
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -15,15 +17,43 @@ const MAX_CONCURRENT_REQUESTS: usize = 10;
 /// Structs for `/api/v1/models` endpoint (list all models).
 
 #[derive(Deserialize)]
-struct ModelListPricing {
+struct PricingOverride {
+    #[serde(default)]
+    utc_days: Option<Vec<String>>,
+    #[serde(default)]
+    utc_start: Option<u32>,
+    #[serde(default)]
+    utc_end: Option<u32>,
+    #[serde(default)]
+    min_prompt_tokens: Option<u64>,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    completion: Option<String>,
+    #[serde(default)]
+    input_cache_read: Option<String>,
+    #[serde(default)]
+    input_cache_write: Option<String>,
+    #[serde(flatten)]
+    unrecognized_fields: HashMap<String, Value>,
+}
+
+#[derive(Deserialize)]
+struct OpenRouterPricing {
     prompt: String,
     completion: String,
+    #[serde(default)]
+    input_cache_read: Option<String>,
+    #[serde(default)]
+    input_cache_write: Option<String>,
+    #[serde(default)]
+    overrides: Vec<PricingOverride>,
 }
 
 #[derive(Deserialize)]
 struct ModelListItem {
     id: String,
-    pricing: Option<ModelListPricing>,
+    pricing: Option<OpenRouterPricing>,
 }
 
 #[derive(Deserialize)]
@@ -34,19 +64,9 @@ struct ModelsListResponse {
 /// Structs for `/api/v1/models/{id}/endpoints` endpoint (author pricing).
 
 #[derive(Deserialize)]
-struct EndpointPricing {
-    prompt: String,
-    completion: String,
-    #[serde(default)]
-    input_cache_read: Option<String>,
-    #[serde(default)]
-    input_cache_write: Option<String>,
-}
-
-#[derive(Deserialize)]
 struct Endpoint {
     provider_name: String,
-    pricing: EndpointPricing,
+    pricing: OpenRouterPricing,
 }
 
 #[derive(Deserialize)]
@@ -101,14 +121,154 @@ fn parse_price(s: &str) -> Option<f64> {
         .filter(|v| v.is_finite() && *v >= 0.0)
 }
 
-fn parse_model_list_pricing(pricing: ModelListPricing) -> Option<ModelPricing> {
-    let input = parse_price(&pricing.prompt)?;
-    let output = parse_price(&pricing.completion)?;
-    Some(ModelPricing {
+fn parse_optional_price(value: Option<&str>, field: &str) -> Result<Option<f64>, String> {
+    value
+        .map(|value| parse_price(value).ok_or_else(|| format!("invalid {field} price")))
+        .transpose()
+}
+
+fn valid_hhmm(value: u32) -> bool {
+    value <= 2359 && value % 100 < 60
+}
+
+fn normalize_utc_days(days: Vec<String>) -> Result<Vec<String>, String> {
+    if days.is_empty() {
+        return Err("utc_days must not be empty".to_string());
+    }
+
+    let mut normalized = Vec::with_capacity(days.len());
+    for day in days {
+        let day = day.trim().to_ascii_lowercase();
+        if !matches!(
+            day.as_str(),
+            "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
+        ) {
+            return Err(format!("invalid UTC weekday `{day}`"));
+        }
+        if normalized.iter().any(|existing| existing == &day) {
+            return Err(format!("duplicate UTC weekday `{day}`"));
+        }
+        normalized.push(day);
+    }
+    Ok(normalized)
+}
+
+fn parse_time_period_prices(
+    model_id: &str,
+    overrides: Vec<PricingOverride>,
+) -> Result<Option<Vec<TimePeriodPrice>>, String> {
+    if !model_aliases::is_deepseek_v4_model(model_id) {
+        return Ok(None);
+    }
+
+    let mut periods = Vec::new();
+    for (index, pricing_override) in overrides.into_iter().enumerate() {
+        let has_time_condition = pricing_override.utc_days.is_some()
+            || pricing_override.utc_start.is_some()
+            || pricing_override.utc_end.is_some();
+        if !has_time_condition {
+            continue;
+        }
+        if !pricing_override.unrecognized_fields.is_empty() {
+            let mut fields: Vec<_> = pricing_override
+                .unrecognized_fields
+                .keys()
+                .cloned()
+                .collect();
+            fields.sort();
+            return Err(format!(
+                "override {index} contains unsupported fields: {}",
+                fields.join(", ")
+            ));
+        }
+        if pricing_override.min_prompt_tokens.is_some() {
+            return Err(format!(
+                "override {index} combines time pricing with unsupported min_prompt_tokens"
+            ));
+        }
+
+        let utc_days = pricing_override
+            .utc_days
+            .map(normalize_utc_days)
+            .transpose()
+            .map_err(|error| format!("override {index}: {error}"))?;
+        let (utc_start, utc_end) = match (pricing_override.utc_start, pricing_override.utc_end) {
+            (Some(start), Some(end)) => {
+                if !valid_hhmm(start) || !valid_hhmm(end) || start == end {
+                    return Err(format!(
+                        "override {index} has invalid UTC HHMM window {start}-{end}"
+                    ));
+                }
+                (Some(start), Some(end))
+            }
+            (None, None) => (None, None),
+            _ => {
+                return Err(format!(
+                    "override {index} must define utc_start and utc_end together"
+                ));
+            }
+        };
+
+        let input_cost_per_token =
+            parse_optional_price(pricing_override.prompt.as_deref(), "override prompt")
+                .map_err(|error| format!("override {index}: {error}"))?;
+        let output_cost_per_token = parse_optional_price(
+            pricing_override.completion.as_deref(),
+            "override completion",
+        )
+        .map_err(|error| format!("override {index}: {error}"))?;
+        let cache_read_input_token_cost = parse_optional_price(
+            pricing_override.input_cache_read.as_deref(),
+            "override input_cache_read",
+        )
+        .map_err(|error| format!("override {index}: {error}"))?;
+        let cache_creation_input_token_cost = parse_optional_price(
+            pricing_override.input_cache_write.as_deref(),
+            "override input_cache_write",
+        )
+        .map_err(|error| format!("override {index}: {error}"))?;
+
+        if input_cost_per_token.is_none()
+            && output_cost_per_token.is_none()
+            && cache_read_input_token_cost.is_none()
+            && cache_creation_input_token_cost.is_none()
+        {
+            continue;
+        }
+
+        periods.push(TimePeriodPrice {
+            utc_days,
+            utc_start,
+            utc_end,
+            input_cost_per_token,
+            output_cost_per_token,
+            cache_read_input_token_cost,
+            cache_creation_input_token_cost,
+        });
+    }
+
+    Ok((!periods.is_empty()).then_some(periods))
+}
+
+fn parse_openrouter_pricing(
+    model_id: &str,
+    pricing: OpenRouterPricing,
+) -> Result<ModelPricing, String> {
+    let input = parse_price(&pricing.prompt).ok_or_else(|| "invalid prompt price".to_string())?;
+    let output =
+        parse_price(&pricing.completion).ok_or_else(|| "invalid completion price".to_string())?;
+    let cache_read_input_token_cost =
+        parse_optional_price(pricing.input_cache_read.as_deref(), "input_cache_read")?;
+    let cache_creation_input_token_cost =
+        parse_optional_price(pricing.input_cache_write.as_deref(), "input_cache_write")?;
+    let time_period_prices = parse_time_period_prices(model_id, pricing.overrides)?;
+
+    Ok(ModelPricing {
         input_cost_per_token: Some(input),
         output_cost_per_token: Some(output),
-        cache_read_input_token_cost: None,
-        cache_creation_input_token_cost: None,
+        cache_read_input_token_cost,
+        cache_creation_input_token_cost,
+        time_period_prices,
         ..Default::default()
     })
 }
@@ -147,33 +307,15 @@ async fn fetch_author_pricing(
     let author_endpoint = match data
         .data
         .endpoints
-        .iter()
+        .into_iter()
         .find(|e| e.provider_name == author_name)
     {
         Some(ep) => ep,
         None => return Ok((model_id, None)),
     };
 
-    let input_cost = parse_price(&author_endpoint.pricing.prompt)
-        .ok_or_else(|| format!("{model_id}: author endpoint has invalid prompt price"))?;
-    let output_cost = parse_price(&author_endpoint.pricing.completion)
-        .ok_or_else(|| format!("{model_id}: author endpoint has invalid completion price"))?;
-
-    let pricing = ModelPricing {
-        input_cost_per_token: Some(input_cost),
-        output_cost_per_token: Some(output_cost),
-        cache_read_input_token_cost: author_endpoint
-            .pricing
-            .input_cache_read
-            .as_ref()
-            .and_then(|s| parse_price(s)),
-        cache_creation_input_token_cost: author_endpoint
-            .pricing
-            .input_cache_write
-            .as_ref()
-            .and_then(|s| parse_price(s)),
-        ..Default::default()
-    };
+    let pricing = parse_openrouter_pricing(&model_id, author_endpoint.pricing)
+        .map_err(|error| format!("{model_id}: author endpoint {error}"))?;
 
     Ok((model_id, Some(pricing)))
 }
@@ -303,8 +445,16 @@ async fn fetch_all_models_with_sink(
     let mut result = HashMap::new();
     let mut model_ids = Vec::with_capacity(model_items.len());
     for model in model_items {
-        if let Some(pricing) = model.pricing.and_then(parse_model_list_pricing) {
-            result.insert(model.id.clone(), pricing);
+        if let Some(pricing) = model.pricing {
+            match parse_openrouter_pricing(&model.id, pricing) {
+                Ok(pricing) => {
+                    result.insert(model.id.clone(), pricing);
+                }
+                Err(error) => emit_warning(
+                    diagnostics,
+                    format!("[tokenx] OpenRouter {} pricing skipped: {error}", model.id),
+                ),
+            }
         }
         model_ids.push(model.id);
     }
@@ -376,9 +526,11 @@ pub(crate) async fn fetch_all_mapped_with_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::{
-        fetch_all_models_with_sink, get_author_provider_name, parse_model_list_pricing,
-        select_models_for_author_pricing, ModelListPricing, MAX_RETRIES,
+        fetch_all_models_with_sink, get_author_provider_name, load_cached,
+        parse_openrouter_pricing, select_models_for_author_pricing, ModelsListResponse,
+        OpenRouterPricing, CACHE_FILENAME, MAX_RETRIES,
     };
+    use std::collections::HashMap;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -441,13 +593,101 @@ mod tests {
 
     #[test]
     fn parses_model_list_pricing_as_baseline_pricing() {
-        let pricing = parse_model_list_pricing(ModelListPricing {
-            prompt: "0.00000085".to_string(),
-            completion: "0.00000125".to_string(),
-        })
+        let pricing = parse_openrouter_pricing(
+            "openai/gpt-5",
+            OpenRouterPricing {
+                prompt: "0.00000085".to_string(),
+                completion: "0.00000125".to_string(),
+                input_cache_read: None,
+                input_cache_write: None,
+                overrides: Vec::new(),
+            },
+        )
         .expect("valid model list pricing");
 
         assert_eq!(pricing.input_cost_per_token, Some(0.00000085));
         assert_eq!(pricing.output_cost_per_token, Some(0.00000125));
+    }
+
+    #[test]
+    fn rejects_invalid_deepseek_v4_time_window() {
+        let pricing: OpenRouterPricing = serde_json::from_value(serde_json::json!({
+            "prompt": "0.00000085",
+            "completion": "0.00000125",
+            "overrides": [{
+                "utc_start": 1260,
+                "utc_end": 1400,
+                "prompt": "0.00000042"
+            }]
+        }))
+        .unwrap();
+
+        let error = parse_openrouter_pricing("deepseek/deepseek-v4-flash", pricing).unwrap_err();
+
+        assert!(error.contains("invalid UTC HHMM window"));
+    }
+
+    #[test]
+    fn rejects_unknown_conditions_in_deepseek_v4_time_override() {
+        let pricing: OpenRouterPricing = serde_json::from_value(serde_json::json!({
+            "prompt": "0.00000085",
+            "completion": "0.00000125",
+            "overrides": [{
+                "utc_start": 100,
+                "utc_end": 400,
+                "future_condition": true,
+                "prompt": "0.00000042"
+            }]
+        }))
+        .unwrap();
+
+        let error = parse_openrouter_pricing("deepseek/deepseek-v4-flash", pricing).unwrap_err();
+
+        assert!(error.contains("unsupported fields: future_condition"));
+    }
+
+    #[test]
+    fn parses_deepseek_v4_time_period_pricing_fixture() {
+        let response: ModelsListResponse = serde_json::from_str(include_str!(
+            "../../tests/fixtures/openrouter_deepseek_v4_pricing.json"
+        ))
+        .unwrap();
+        let model = response.data.into_iter().next().unwrap();
+        let pricing = parse_openrouter_pricing(&model.id, model.pricing.unwrap()).unwrap();
+        let periods = pricing.time_period_prices.as_ref().unwrap();
+
+        assert_eq!(pricing.cache_read_input_token_cost, Some(0.000000014));
+        assert_eq!(periods.len(), 6);
+        assert_eq!(periods[0].utc_days.as_ref().unwrap()[0], "saturday");
+        assert_eq!(periods[1].utc_start, Some(0));
+        assert_eq!(periods[1].utc_end, Some(100));
+        assert_eq!(periods[5].utc_start, Some(1000));
+        assert_eq!(periods[5].utc_end, Some(0));
+        assert_eq!(periods[5].input_cost_per_token, Some(0.00000022));
+    }
+
+    #[test]
+    fn openrouter_cache_round_trip_preserves_time_period_prices() {
+        let response: ModelsListResponse = serde_json::from_str(include_str!(
+            "../../tests/fixtures/openrouter_deepseek_v4_pricing.json"
+        ))
+        .unwrap();
+        let model = response.data.into_iter().next().unwrap();
+        let model_id = model.id.clone();
+        let pricing = parse_openrouter_pricing(&model.id, model.pricing.unwrap()).unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+
+        super::cache::save_cache(
+            cache_dir.path(),
+            CACHE_FILENAME,
+            &HashMap::from([(model_id.clone(), pricing)]),
+        )
+        .unwrap();
+        let cached = load_cached(cache_dir.path()).unwrap();
+
+        assert_eq!(
+            cached[&model_id].time_period_prices.as_ref().unwrap().len(),
+            6
+        );
     }
 }

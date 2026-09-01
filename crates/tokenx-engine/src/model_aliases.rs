@@ -27,6 +27,16 @@ pub(crate) fn is_deepseek_v4_beta_alias(model: &str) -> bool {
     )
 }
 
+pub(crate) fn is_deepseek_v4_model(model: &str) -> bool {
+    let normalized = normalized_terminal_model_id(model);
+    let model = normalized.as_ref();
+
+    model == "deepseek-v4"
+        || model
+            .strip_prefix("deepseek-v4-")
+            .is_some_and(|suffix| !suffix.is_empty())
+}
+
 pub(crate) fn is_claude_opus_5_model(model: &str) -> bool {
     let normalized = normalized_terminal_model_id(model);
     let model = normalized.as_ref();

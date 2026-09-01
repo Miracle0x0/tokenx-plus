@@ -675,10 +675,11 @@ fn apply_token_pricing(
         return Ok(());
     }
 
-    let calculated_cost = pricing.calculate_cost_with_provider(
+    let calculated_cost = pricing.calculate_cost_with_provider_and_time(
         &message.model_id,
         Some(message.provider_id.as_ref()),
         &message.tokens,
+        Some(message.timestamp),
     )?;
 
     if calculated_cost > 0.0 {

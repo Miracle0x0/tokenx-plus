@@ -1,5 +1,7 @@
-use super::litellm::ModelPricing;
+use super::litellm::{ModelPricing, TimePeriodPrice};
 use crate::{model_aliases, provider_identity, TokenBreakdown};
+use chrono::{Datelike, Timelike, Utc, Weekday};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -36,6 +38,8 @@ pub struct LookupResult {
 pub enum PricingComputationError {
     #[error("output and reasoning token counts exceed i64::MAX")]
     OutputReasoningTokenOverflow,
+    #[error("invalid pricing timestamp in milliseconds: {timestamp_ms}")]
+    InvalidTimestamp { timestamp_ms: i64 },
     #[error("pricing produced a non-finite {component} cost")]
     NonFiniteCost { component: &'static str },
 }
@@ -170,6 +174,20 @@ impl PricingLookup {
     }
 
     fn lookup_auto(&self, model_id: &str, provider_scope: Option<&str>) -> Option<LookupResult> {
+        if model_aliases::is_deepseek_v4_model(model_id) {
+            let time_priced = lookup_catalog(
+                &self.openrouter,
+                &self.openrouter_keys,
+                "OpenRouter",
+                model_id,
+                provider_scope,
+            )
+            .filter(|result| has_time_period_pricing(&result.pricing));
+            if time_priced.is_some() {
+                return time_priced;
+            }
+        }
+
         if let Some(provider_scope) = provider_scope {
             for (dataset, keys, source) in [
                 (&self.litellm, &self.litellm_keys, "LiteLLM"),
@@ -222,12 +240,28 @@ impl PricingLookup {
         provider_id: Option<&str>,
         usage: &TokenBreakdown,
     ) -> Result<f64, PricingComputationError> {
+        self.calculate_cost_with_provider_and_time(model_id, provider_id, usage, None)
+    }
+
+    pub fn calculate_cost_with_provider_and_time(
+        &self,
+        model_id: &str,
+        provider_id: Option<&str>,
+        usage: &TokenBreakdown,
+        timestamp_ms: Option<i64>,
+    ) -> Result<f64, PricingComputationError> {
         let Some(result) = self.lookup_with_provider(model_id, provider_id) else {
             return Ok(0.0);
         };
 
+        let pricing = if model_aliases::is_deepseek_v4_model(model_id) {
+            effective_pricing_at(&result.pricing, timestamp_ms)?
+        } else {
+            Cow::Borrowed(&result.pricing)
+        };
+
         compute_cost(
-            &result.pricing,
+            &pricing,
             usage.input,
             usage.output,
             usage.cache_read,
@@ -333,6 +367,98 @@ fn has_any_usable_pricing(pricing: &ModelPricing) -> bool {
     ]
     .into_iter()
     .any(|price| price.is_some_and(is_valid_price_value))
+        || pricing.time_period_prices.as_ref().is_some_and(|periods| {
+            periods.iter().any(|period| {
+                [
+                    period.input_cost_per_token,
+                    period.output_cost_per_token,
+                    period.cache_read_input_token_cost,
+                    period.cache_creation_input_token_cost,
+                ]
+                .into_iter()
+                .any(|price| price.is_some_and(is_valid_price_value))
+            })
+        })
+}
+
+fn has_time_period_pricing(pricing: &ModelPricing) -> bool {
+    pricing
+        .time_period_prices
+        .as_ref()
+        .is_some_and(|periods| !periods.is_empty())
+}
+
+fn utc_weekday_name(weekday: Weekday) -> &'static str {
+    match weekday {
+        Weekday::Mon => "monday",
+        Weekday::Tue => "tuesday",
+        Weekday::Wed => "wednesday",
+        Weekday::Thu => "thursday",
+        Weekday::Fri => "friday",
+        Weekday::Sat => "saturday",
+        Weekday::Sun => "sunday",
+    }
+}
+
+fn time_period_matches(period: &TimePeriodPrice, timestamp: &chrono::DateTime<Utc>) -> bool {
+    if let Some(days) = period.utc_days.as_ref() {
+        let weekday = utc_weekday_name(timestamp.weekday());
+        if !days.iter().any(|day| day.eq_ignore_ascii_case(weekday)) {
+            return false;
+        }
+    }
+
+    match (period.utc_start, period.utc_end) {
+        (None, None) => true,
+        (Some(start), Some(end)) if start < end => {
+            let hhmm = timestamp.hour() * 100 + timestamp.minute();
+            hhmm >= start && hhmm < end
+        }
+        (Some(start), Some(end)) if start > end => {
+            let hhmm = timestamp.hour() * 100 + timestamp.minute();
+            hhmm >= start || hhmm < end
+        }
+        _ => false,
+    }
+}
+
+fn effective_pricing_at(
+    pricing: &ModelPricing,
+    timestamp_ms: Option<i64>,
+) -> Result<Cow<'_, ModelPricing>, PricingComputationError> {
+    let Some(periods) = pricing.time_period_prices.as_ref() else {
+        return Ok(Cow::Borrowed(pricing));
+    };
+    let Some(timestamp_ms) = timestamp_ms else {
+        return Ok(Cow::Borrowed(pricing));
+    };
+    let timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp_ms)
+        .ok_or(PricingComputationError::InvalidTimestamp { timestamp_ms })?;
+
+    let mut effective = None;
+    for period in periods
+        .iter()
+        .filter(|period| time_period_matches(period, &timestamp))
+    {
+        let effective = effective.get_or_insert_with(|| pricing.clone());
+        if let Some(price) = period.input_cost_per_token {
+            effective.input_cost_per_token = Some(price);
+        }
+        if let Some(price) = period.output_cost_per_token {
+            effective.output_cost_per_token = Some(price);
+        }
+        if let Some(price) = period.cache_read_input_token_cost {
+            effective.cache_read_input_token_cost = Some(price);
+        }
+        if let Some(price) = period.cache_creation_input_token_cost {
+            effective.cache_creation_input_token_cost = Some(price);
+        }
+    }
+
+    Ok(match effective {
+        Some(effective) => Cow::Owned(effective),
+        None => Cow::Borrowed(pricing),
+    })
 }
 
 fn lookup_result_if_usable(

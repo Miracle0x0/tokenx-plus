@@ -1,4 +1,5 @@
 use super::*;
+use chrono::{TimeZone, Utc};
 
 fn pricing(input: f64, output: f64) -> ModelPricing {
     ModelPricing {
@@ -14,6 +15,13 @@ fn lookup_with_all_catalogs(
     models_dev: HashMap<String, ModelPricing>,
 ) -> PricingLookup {
     PricingLookup::new_with_models_dev(litellm, openrouter, models_dev)
+}
+
+fn timestamp_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> i64 {
+    Utc.with_ymd_and_hms(year, month, day, hour, minute, 0)
+        .single()
+        .unwrap()
+        .timestamp_millis()
 }
 
 #[test]
@@ -101,6 +109,58 @@ fn catalog_order_breaks_ties_inside_unscoped_class() {
     );
 
     let result = lookup.lookup("mystery-model").unwrap();
+
+    assert_eq!(result.pricing_source, "LiteLLM");
+    assert_eq!(result.pricing.input_cost_per_token, Some(1.0));
+}
+
+#[test]
+fn deepseek_v4_time_pricing_precedes_other_public_catalogs() {
+    let lookup = lookup_with_all_catalogs(
+        HashMap::from([("deepseek/deepseek-v4-flash".into(), pricing(1.0, 1.0))]),
+        HashMap::from([(
+            "deepseek/deepseek-v4-flash".into(),
+            ModelPricing {
+                input_cost_per_token: Some(2.0),
+                output_cost_per_token: Some(2.0),
+                time_period_prices: Some(vec![TimePeriodPrice {
+                    utc_days: Some(vec!["monday".into()]),
+                    input_cost_per_token: Some(0.5),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            },
+        )]),
+        HashMap::new(),
+    );
+
+    let result = lookup.lookup("deepseek-v4-flash").unwrap();
+
+    assert_eq!(result.pricing_source, "OpenRouter");
+    assert_eq!(result.pricing.input_cost_per_token, Some(2.0));
+}
+
+#[test]
+fn non_deepseek_models_keep_existing_catalog_priority() {
+    let lookup = lookup_with_all_catalogs(
+        HashMap::from([("openai/gpt-5".into(), pricing(1.0, 1.0))]),
+        HashMap::from([(
+            "openai/gpt-5".into(),
+            ModelPricing {
+                input_cost_per_token: Some(2.0),
+                output_cost_per_token: Some(2.0),
+                time_period_prices: Some(vec![TimePeriodPrice {
+                    utc_days: Some(vec!["monday".into()]),
+                    input_cost_per_token: Some(0.5),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            },
+        )]),
+        HashMap::new(),
+    );
+
+    let result = lookup.lookup("gpt-5").unwrap();
 
     assert_eq!(result.pricing_source, "LiteLLM");
     assert_eq!(result.pricing.input_cost_per_token, Some(1.0));
@@ -277,6 +337,156 @@ fn calculate_cost_combines_reasoning_with_output_and_clamps_negative_tokens() {
         .unwrap();
 
     assert_eq!(cost, 10.0);
+}
+
+#[test]
+fn deepseek_v4_cost_selects_utc_hhmm_periods_at_boundaries() {
+    let lookup = PricingLookup::new(
+        HashMap::new(),
+        HashMap::from([(
+            "deepseek/deepseek-v4-flash".into(),
+            ModelPricing {
+                input_cost_per_token: Some(9.0),
+                time_period_prices: Some(vec![
+                    TimePeriodPrice {
+                        utc_days: Some(vec!["monday".into()]),
+                        utc_start: Some(0),
+                        utc_end: Some(100),
+                        input_cost_per_token: Some(1.0),
+                        ..Default::default()
+                    },
+                    TimePeriodPrice {
+                        utc_days: Some(vec!["monday".into()]),
+                        utc_start: Some(100),
+                        utc_end: Some(400),
+                        input_cost_per_token: Some(2.0),
+                        ..Default::default()
+                    },
+                    TimePeriodPrice {
+                        utc_days: Some(vec!["monday".into()]),
+                        utc_start: Some(1000),
+                        utc_end: Some(0),
+                        input_cost_per_token: Some(3.0),
+                        ..Default::default()
+                    },
+                    TimePeriodPrice {
+                        utc_days: Some(
+                            vec!["saturday", "sunday"]
+                                .into_iter()
+                                .map(str::to_string)
+                                .collect(),
+                        ),
+                        input_cost_per_token: Some(4.0),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            },
+        )]),
+    );
+    let usage = TokenBreakdown {
+        input: 1,
+        ..Default::default()
+    };
+    let cost_at = |timestamp_ms| {
+        lookup
+            .calculate_cost_with_provider_and_time(
+                "deepseek-v4-flash",
+                Some("deepseek"),
+                &usage,
+                timestamp_ms,
+            )
+            .unwrap()
+    };
+
+    assert_eq!(cost_at(Some(timestamp_ms(2026, 8, 31, 0, 59))), 1.0);
+    assert_eq!(cost_at(Some(timestamp_ms(2026, 8, 31, 1, 0))), 2.0);
+    assert_eq!(cost_at(Some(timestamp_ms(2026, 8, 31, 4, 0))), 9.0);
+    assert_eq!(cost_at(Some(timestamp_ms(2026, 8, 31, 10, 0))), 3.0);
+    assert_eq!(cost_at(Some(timestamp_ms(2026, 8, 30, 12, 0))), 4.0);
+    assert_eq!(cost_at(None), 9.0);
+}
+
+#[test]
+fn matching_time_periods_merge_in_source_order() {
+    let lookup = PricingLookup::new(
+        HashMap::new(),
+        HashMap::from([(
+            "deepseek/deepseek-v4-pro".into(),
+            ModelPricing {
+                input_cost_per_token: Some(10.0),
+                output_cost_per_token: Some(20.0),
+                time_period_prices: Some(vec![
+                    TimePeriodPrice {
+                        utc_days: Some(vec!["monday".into()]),
+                        input_cost_per_token: Some(1.0),
+                        output_cost_per_token: Some(2.0),
+                        ..Default::default()
+                    },
+                    TimePeriodPrice {
+                        utc_days: Some(vec!["monday".into()]),
+                        input_cost_per_token: Some(3.0),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            },
+        )]),
+    );
+    let usage = TokenBreakdown {
+        input: 1,
+        output: 1,
+        ..Default::default()
+    };
+
+    let cost = lookup
+        .calculate_cost_with_provider_and_time(
+            "deepseek-v4-pro",
+            Some("deepseek"),
+            &usage,
+            Some(timestamp_ms(2026, 8, 31, 12, 0)),
+        )
+        .unwrap();
+
+    assert_eq!(cost, 5.0);
+}
+
+#[test]
+fn invalid_explicit_pricing_timestamp_is_an_error() {
+    let lookup = PricingLookup::new(
+        HashMap::new(),
+        HashMap::from([(
+            "deepseek/deepseek-v4-pro".into(),
+            ModelPricing {
+                input_cost_per_token: Some(1.0),
+                time_period_prices: Some(vec![TimePeriodPrice {
+                    utc_days: Some(vec!["monday".into()]),
+                    input_cost_per_token: Some(0.5),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            },
+        )]),
+    );
+
+    let error = lookup
+        .calculate_cost_with_provider_and_time(
+            "deepseek-v4-pro",
+            Some("deepseek"),
+            &TokenBreakdown {
+                input: 1,
+                ..Default::default()
+            },
+            Some(i64::MAX),
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        PricingComputationError::InvalidTimestamp {
+            timestamp_ms: i64::MAX
+        }
+    );
 }
 
 #[test]

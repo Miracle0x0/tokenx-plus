@@ -171,6 +171,7 @@ impl CustomModelPricing {
                 "cache_read_input_token_cost_per_million_tokens_above_272k_tokens",
                 "cache_read_input_token_cost_above_272k_tokens",
             )?,
+            time_period_prices: None,
         })
     }
 }

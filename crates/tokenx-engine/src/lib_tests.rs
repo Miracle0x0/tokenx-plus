@@ -4269,6 +4269,48 @@ fn test_apply_token_pricing_overrides_cost_when_pricing_exists() {
 }
 
 #[test]
+fn test_apply_token_pricing_uses_deepseek_v4_message_timestamp() {
+    use chrono::TimeZone as _;
+
+    let openrouter = HashMap::from([(
+        "deepseek/deepseek-v4-flash".into(),
+        pricing::ModelPricing {
+            input_cost_per_token: Some(0.01),
+            time_period_prices: Some(vec![pricing::TimePeriodPrice {
+                utc_days: Some(vec!["monday".into()]),
+                utc_start: Some(0),
+                utc_end: Some(100),
+                input_cost_per_token: Some(0.001),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        },
+    )]);
+    let pricing = pricing::PricingService::new(HashMap::new(), openrouter);
+    let timestamp_ms = chrono::Utc
+        .with_ymd_and_hms(2026, 8, 31, 0, 30, 0)
+        .single()
+        .unwrap()
+        .timestamp_millis();
+    let mut msg = AttributedUsageRecord::new(
+        ClientId::Codex,
+        "deepseek-v4-flash",
+        "deepseek",
+        "session-1",
+        timestamp_ms,
+        TokenBreakdown {
+            input: 10,
+            ..Default::default()
+        },
+        0.0,
+    );
+
+    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+
+    assert_eq!(msg.cost, 0.01);
+}
+
+#[test]
 fn test_apply_token_pricing_returns_non_finite_cost_as_typed_error() {
     let pricing = pricing::PricingService::new(
         HashMap::from([(

@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::{model_aliases, TokenBreakdown};
 
-pub use litellm::ModelPricing;
+pub use litellm::{ModelPricing, TimePeriodPrice};
 pub use lookup::PricingComputationError;
 
 const CACHED_CATALOG_FILES: [&str; 3] = [
@@ -427,6 +427,16 @@ impl PricingService {
         provider_id: Option<&str>,
         usage: &TokenBreakdown,
     ) -> Result<f64, PricingComputationError> {
+        self.calculate_cost_with_provider_and_time(model_id, provider_id, usage, None)
+    }
+
+    pub fn calculate_cost_with_provider_and_time(
+        &self,
+        model_id: &str,
+        provider_id: Option<&str>,
+        usage: &TokenBreakdown,
+        timestamp_ms: Option<i64>,
+    ) -> Result<f64, PricingComputationError> {
         let canonical_model_id = model_aliases::canonicalize_model_id(model_id);
         if let Some(result) = self.custom.lookup_with_key(&canonical_model_id) {
             return compute_cost(
@@ -439,8 +449,12 @@ impl PricingService {
             );
         }
 
-        self.lookup
-            .calculate_cost_with_provider(&canonical_model_id, provider_id, usage)
+        self.lookup.calculate_cost_with_provider_and_time(
+            &canonical_model_id,
+            provider_id,
+            usage,
+            timestamp_ms,
+        )
     }
 
     fn lookup_custom(&self, model_id: &str) -> Option<LookupResult> {
@@ -778,7 +792,7 @@ impl ResolvedPublicPricingCatalogs {
 
     fn fingerprint(&self) -> String {
         let mut digest = Sha256::new();
-        digest.update(b"tokenx-pricing-catalog-data-v1\0");
+        digest.update(b"tokenx-pricing-catalog-data-v2\0");
         update_catalog_digest(&mut digest, CACHED_CATALOG_FILES[0], self.litellm.as_ref());
         update_catalog_digest(
             &mut digest,
@@ -1186,6 +1200,29 @@ mod tests {
         let second = ResolvedPricingSnapshot::resolve_from(&custom_path, &cache_dir);
 
         assert_eq!(first.context(), second.context());
+    }
+
+    #[test]
+    fn catalog_identity_tracks_time_period_prices() {
+        let base = model_pricing(0.000001, 0.000002);
+        let mut timed = base.clone();
+        timed.time_period_prices = Some(vec![TimePeriodPrice {
+            utc_days: Some(vec!["monday".into()]),
+            utc_start: Some(0),
+            utc_end: Some(100),
+            input_cost_per_token: Some(0.0000005),
+            ..Default::default()
+        }]);
+        let catalogs = |pricing| ResolvedPublicPricingCatalogs {
+            litellm: Some(HashMap::new()),
+            openrouter: Some(HashMap::from([(
+                "deepseek/deepseek-v4-flash".into(),
+                pricing,
+            )])),
+            models_dev: Some(HashMap::new()),
+        };
+
+        assert_ne!(catalogs(base).fingerprint(), catalogs(timed).fingerprint());
     }
 
     #[test]
@@ -1849,6 +1886,45 @@ mod tests {
         assert_eq!(result.pricing_source, "Custom");
         assert_eq!(result.matched_key, "grok-code");
         assert_eq!(result.pricing.output_cost_per_token, Some(0.000008));
+    }
+
+    #[test]
+    fn custom_deepseek_v4_price_wins_over_openrouter_time_period() {
+        use chrono::TimeZone as _;
+
+        let custom = HashMap::from([("deepseek-v4-flash".into(), model_pricing(7.0, 0.0))]);
+        let openrouter = HashMap::from([(
+            "deepseek/deepseek-v4-flash".into(),
+            ModelPricing {
+                input_cost_per_token: Some(2.0),
+                time_period_prices: Some(vec![TimePeriodPrice {
+                    utc_days: Some(vec!["monday".into()]),
+                    input_cost_per_token: Some(0.5),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            },
+        )]);
+        let service = custom_service(custom, HashMap::new(), openrouter);
+        let timestamp_ms = chrono::Utc
+            .with_ymd_and_hms(2026, 8, 31, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+
+        let cost = service
+            .calculate_cost_with_provider_and_time(
+                "deepseek-v4-flash",
+                Some("deepseek"),
+                &TokenBreakdown {
+                    input: 1,
+                    ..Default::default()
+                },
+                Some(timestamp_ms),
+            )
+            .unwrap();
+
+        assert_eq!(cost, 7.0);
     }
 
     #[test]

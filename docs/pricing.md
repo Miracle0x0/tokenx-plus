@@ -31,7 +31,9 @@ See [ADR 0004](adr/0004-period-views-derive-from-daily.md).
 
 ## Pricing Source authority
 
-Exact custom overrides from `custom-pricing.json` are checked first. Otherwise,
+Exact custom overrides from `custom-pricing.json` are checked first. For a
+canonical `deepseek-v4` family model, an exact OpenRouter row carrying
+time-period prices is checked before the general public-catalog order. Otherwise,
 Tokenx searches LiteLLM, OpenRouter, and models.dev in that order. A forced
 `--pricing-source` limits lookup to one catalog. Public lookup receives the
 canonical model component without a provider or route prefix and considers only
@@ -44,6 +46,22 @@ each class. With unknown provider scope, only an exact unscoped row is eligible.
 Prefix, substring, fuzzy/edit-distance, arbitrary separator, and private alias
 matching are not pricing strategies.
 
+### DeepSeek V4 time-period pricing
+
+OpenRouter time-period prices use the usage record's request timestamp in UTC.
+`utc_start` and `utc_end` are `HHMM` clock values rather than minute offsets.
+The start is inclusive, the end is exclusive, and a start later than the end
+wraps across midnight. `utc_days` is evaluated from the UTC weekday at the
+request instant; an entry with days but no clock window applies for those whole
+UTC days.
+
+All matching entries are applied in source order. Later entries replace only
+the price fields they contain, while omitted price fields retain the base rate
+or an earlier matching value. A missing timestamp or no matching time entry uses
+the model's base price. Time-period selection is currently limited to the
+`deepseek-v4` family; token accounting and all non-DeepSeek V4 pricing behavior
+remain unchanged.
+
 Global private aliases are not a substitute for input parsing. Client-specific
 model decoding may happen in the parser, but local usage finalization,
 grouping, and pricing all use the core `canonicalize_model_id` path before
@@ -54,7 +72,7 @@ pricing lookup.
 Tokenx canonicalizes parsed model ids before pricing lookup. Parsers may
 clean obvious observed model labels early, but the usage finalization path still
 normalizes every `AttributedUsageRecord.model_id` through the core model canonicalizer
-before aggregation and `PricingService::calculate_cost_with_provider`.
+before aggregation and `PricingService::calculate_cost_with_provider_and_time`.
 
 The pricing resolver is therefore not a route cleanup layer. It receives the
 final canonical usage model id and matches that id against custom overrides
@@ -132,7 +150,9 @@ tokenx pricing overrides --json
 
 Standalone lookup does not infer arbitrary observed-model prefixes, route
 prefixes, private aliases, or reasoning-tier suffixes. It is a pricing catalog
-query over the exact canonical model component, not a parser repair path.
+query over the exact canonical model component, not a parser repair path. When
+the matched row carries time-period pricing, text output lists the UTC schedule
+and JSON output includes `pricing.timePeriodPrices`.
 
 ## Subscription usage is separate
 

@@ -10,6 +10,24 @@ const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TimePeriodPrice {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utc_days: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utc_start: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utc_end: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_cost_per_token: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_cost_per_token: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_token_cost: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_token_cost: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelPricing {
     pub input_cost_per_token: Option<f64>,
     pub input_cost_per_token_above_128k_tokens: Option<f64>,
@@ -26,6 +44,8 @@ pub struct ModelPricing {
     pub cache_read_input_token_cost: Option<f64>,
     pub cache_read_input_token_cost_above_200k_tokens: Option<f64>,
     pub cache_read_input_token_cost_above_272k_tokens: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_period_prices: Option<Vec<TimePeriodPrice>>,
 }
 
 pub type PricingDataset = HashMap<String, ModelPricing>;

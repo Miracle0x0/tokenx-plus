@@ -581,7 +581,16 @@ fn write_fireworks_pricing_cache(base: &Path) {
         "data": {
             "deepseek/deepseek-v4-pro": {
                 "input_cost_per_token": 0.000001,
-                "output_cost_per_token": 0.000002
+                "output_cost_per_token": 0.000002,
+                "time_period_prices": [
+                    {
+                        "utc_days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+                        "utc_start": 0,
+                        "utc_end": 100,
+                        "input_cost_per_token": 0.0000005,
+                        "output_cost_per_token": 0.000001
+                    }
+                ]
             }
         }
     });
@@ -2223,6 +2232,32 @@ fn test_pricing_command_canonicalizes_input_before_exact_lookup() {
         !stdout.contains("deepseek-r1-0528-distill-qwen3-8b"),
         "an exact lookup must not report an unrelated catalog row: {stdout}"
     );
+}
+
+#[test]
+fn test_pricing_command_json_preserves_time_period_prices() {
+    let tmp = TempDir::new().expect("failed to create temp dir");
+    write_fireworks_pricing_cache(tmp.path());
+
+    let output = cmd_with_home(tmp.path())
+        .args([
+            "pricing",
+            "lookup",
+            "deepseek-v4-pro",
+            "--json",
+            "--no-spinner",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let periods = json["pricing"]["timePeriodPrices"].as_array().unwrap();
+
+    assert_eq!(periods.len(), 1);
+    assert_eq!(periods[0]["utcStart"], 0);
+    assert_eq!(periods[0]["utcEnd"], 100);
+    assert_eq!(periods[0]["inputCostPerToken"], 0.0000005);
 }
 
 #[test]

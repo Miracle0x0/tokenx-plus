@@ -1,4 +1,41 @@
 use anyhow::Result;
+use tokenx_engine::pricing::TimePeriodPrice;
+
+fn format_hhmm(value: u32) -> String {
+    format!("{:02}:{:02}", value / 100, value % 100)
+}
+
+fn localized_utc_day(day: &str) -> String {
+    match day.to_ascii_lowercase().as_str() {
+        "monday" => rust_i18n::t!("commands.pricing.day_monday").into_owned(),
+        "tuesday" => rust_i18n::t!("commands.pricing.day_tuesday").into_owned(),
+        "wednesday" => rust_i18n::t!("commands.pricing.day_wednesday").into_owned(),
+        "thursday" => rust_i18n::t!("commands.pricing.day_thursday").into_owned(),
+        "friday" => rust_i18n::t!("commands.pricing.day_friday").into_owned(),
+        "saturday" => rust_i18n::t!("commands.pricing.day_saturday").into_owned(),
+        "sunday" => rust_i18n::t!("commands.pricing.day_sunday").into_owned(),
+        _ => day.to_string(),
+    }
+}
+
+fn format_time_period_scope(period: &TimePeriodPrice) -> String {
+    let days = period
+        .utc_days
+        .as_ref()
+        .map(|days| {
+            days.iter()
+                .map(|day| localized_utc_day(day))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|| rust_i18n::t!("commands.pricing.every_day").into_owned());
+    let window = match (period.utc_start, period.utc_end) {
+        (Some(start), Some(end)) => format!("{}-{}", format_hhmm(start), format_hhmm(end)),
+        (None, None) => rust_i18n::t!("commands.pricing.all_day").into_owned(),
+        (start, end) => format!("{start:?}-{end:?}"),
+    };
+    format!("{days}  {window}")
+}
 
 pub(crate) async fn run_pricing_lookup(
     paths: &crate::product_paths::ProductPaths,
@@ -64,6 +101,27 @@ pub(crate) async fn run_pricing_lookup(
                     cache_read_input_token_cost: Option<f64>,
                     #[serde(skip_serializing_if = "Option::is_none")]
                     cache_creation_input_token_cost: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    time_period_prices: Option<Vec<TimePeriodPricingValues>>,
+                }
+
+                #[derive(serde::Serialize)]
+                #[serde(rename_all = "camelCase")]
+                struct TimePeriodPricingValues {
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    utc_days: Option<Vec<String>>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    utc_start: Option<u32>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    utc_end: Option<u32>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    input_cost_per_token: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    output_cost_per_token: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    cache_read_input_token_cost: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    cache_creation_input_token_cost: Option<f64>,
                 }
 
                 #[derive(serde::Serialize)]
@@ -86,6 +144,24 @@ pub(crate) async fn run_pricing_lookup(
                         cache_creation_input_token_cost: pricing
                             .pricing
                             .cache_creation_input_token_cost,
+                        time_period_prices: pricing.pricing.time_period_prices.as_ref().map(
+                            |periods| {
+                                periods
+                                    .iter()
+                                    .map(|period| TimePeriodPricingValues {
+                                        utc_days: period.utc_days.clone(),
+                                        utc_start: period.utc_start,
+                                        utc_end: period.utc_end,
+                                        input_cost_per_token: period.input_cost_per_token,
+                                        output_cost_per_token: period.output_cost_per_token,
+                                        cache_read_input_token_cost: period
+                                            .cache_read_input_token_cost,
+                                        cache_creation_input_token_cost: period
+                                            .cache_creation_input_token_cost,
+                                    })
+                                    .collect()
+                            },
+                        ),
                     },
                 };
 
@@ -157,6 +233,49 @@ pub(crate) async fn run_pricing_lookup(
                             price = format!("${:.2}", cache_write * 1_000_000.0)
                         )
                     );
+                }
+                if let Some(periods) = pricing.pricing.time_period_prices.as_ref() {
+                    println!();
+                    println!("  {}", rust_i18n::t!("commands.pricing.time_periods_title"));
+                    for period in periods {
+                        println!("    {}", format_time_period_scope(period));
+                        if let Some(input) = period.input_cost_per_token {
+                            println!(
+                                "      {}",
+                                rust_i18n::t!(
+                                    "commands.pricing.rate_input",
+                                    price = format!("${:.2}", input * 1_000_000.0)
+                                )
+                            );
+                        }
+                        if let Some(output) = period.output_cost_per_token {
+                            println!(
+                                "      {}",
+                                rust_i18n::t!(
+                                    "commands.pricing.rate_output",
+                                    price = format!("${:.2}", output * 1_000_000.0)
+                                )
+                            );
+                        }
+                        if let Some(cache_read) = period.cache_read_input_token_cost {
+                            println!(
+                                "      {}",
+                                rust_i18n::t!(
+                                    "commands.pricing.rate_cache_read",
+                                    price = format!("${:.2}", cache_read * 1_000_000.0)
+                                )
+                            );
+                        }
+                        if let Some(cache_write) = period.cache_creation_input_token_cost {
+                            println!(
+                                "      {}",
+                                rust_i18n::t!(
+                                    "commands.pricing.rate_cache_write",
+                                    price = format!("${:.2}", cache_write * 1_000_000.0)
+                                )
+                            );
+                        }
+                    }
                 }
                 println!();
             }
