@@ -191,6 +191,29 @@ impl GenerationController {
         self.publish_status(app);
     }
 
+    pub(super) fn start_initial_background_work(
+        &mut self,
+        app: &mut TuiModel,
+        tasks: &mut TaskSupervisor,
+        cache_dir: std::path::PathBuf,
+        needs_generation_load: bool,
+    ) {
+        let needs_generation_load_after_pricing = if needs_generation_load {
+            self.request_initial_load(true);
+            self.start_pending(app, tasks);
+            self.active.is_none()
+        } else {
+            false
+        };
+
+        self.start_initial_pricing_refresh(
+            app,
+            tasks,
+            cache_dir,
+            needs_generation_load_after_pricing,
+        );
+    }
+
     pub(super) fn consume_app_intents(&mut self, app: &mut TuiModel) {
         for control in app.take_refresh_controls() {
             self.apply_control(app, control);
@@ -870,6 +893,31 @@ mod tests {
                 request: RefreshRequest::Manual
             })
         ));
+    }
+
+    #[test]
+    fn initial_generation_load_starts_before_pricing_refresh() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let mut tasks = TaskSupervisor::new(runtime.handle().clone());
+        let (mut app, mut controller) = harness(false);
+
+        controller.start_initial_background_work(
+            &mut app,
+            &mut tasks,
+            std::path::PathBuf::from("/tmp/tokenx-generation-controller-pricing-cache"),
+            true,
+        );
+
+        assert!(controller.active.is_some());
+        assert!(controller.pricing_refresh.is_some());
+        assert!(
+            !controller
+                .pricing_refresh
+                .expect("pricing refresh is active")
+                .needs_generation_load
+        );
+
+        tasks.drain();
     }
 
     #[test]

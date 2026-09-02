@@ -347,7 +347,7 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -
     )
     .with_relative_date_range(relative_date_range);
     generation_controller.set_retry_backoff(retry_backoff);
-    generation_controller.start_initial_pricing_refresh(
+    generation_controller.start_initial_background_work(
         &mut model,
         &mut tasks,
         paths.cache_dir(),
