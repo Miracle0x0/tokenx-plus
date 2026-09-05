@@ -570,7 +570,8 @@ impl StartupSnapshot<PendingPricing> {
             tokenx_engine::pricing::ResolvedPricingSnapshot::resolve_from(
                 &self.paths.custom_pricing_file(),
                 &self.paths.cache_dir(),
-            ),
+            )
+            .with_source_order(self.settings.pricing_source_order),
         );
         self.with_pricing(pricing)
     }
@@ -581,7 +582,8 @@ impl StartupSnapshot<PendingPricing> {
                 &self.paths.custom_pricing_file(),
                 &self.paths.cache_dir(),
             )
-            .await,
+            .await
+            .with_source_order(self.settings.pricing_source_order),
         );
         self.with_pricing(pricing)
     }

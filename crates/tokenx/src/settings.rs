@@ -165,6 +165,10 @@ pub struct Settings {
     /// spellings are parse errors, never a silent default.
     #[serde(default)]
     pub language: Option<Language>,
+    /// Complete public-catalog priority order; fixed custom and time-period
+    /// authorities are resolved before this order.
+    #[serde(default)]
+    pub pricing_source_order: tokenx_engine::pricing::SourceOrder,
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,6 +207,7 @@ impl Default for Settings {
             time_zone: None,
             subscription: SubscriptionSettings::default(),
             language: None,
+            pricing_source_order: tokenx_engine::pricing::SourceOrder::default(),
         }
     }
 }

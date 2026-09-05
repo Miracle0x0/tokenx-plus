@@ -34,6 +34,10 @@ tokenx tui --theme blue --refresh 30
 tokenx tui --no-refresh
 ```
 
+Press `o` in the TUI to open the pricing-source order panel. Move the selected
+public catalog with `k/j`, press `r` to restore the default order, and press
+Enter to save and recalculate costs in the background.
+
 `--tab` launches the same complete TUI and sets its initial focus. It does not
 run a hidden one-tab application. Every real TUI tab is accepted:
 `overview`, `subscription`, `models`, `monthly`, `weekly`, `daily`, `hourly`,

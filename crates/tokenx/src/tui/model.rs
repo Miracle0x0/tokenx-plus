@@ -37,7 +37,9 @@ use super::local_usage::{
 use super::model_family::ModelFamily;
 use super::session_data::SessionSnapshot;
 use super::themes::{Theme, ThemeName};
-use super::ui::dialog::{ClientPickerDialog, DialogResult, DialogStack, UiCommand};
+use super::ui::dialog::{
+    ClientPickerDialog, DialogResult, DialogStack, PricingSourceOrderDialog, UiCommand,
+};
 use crate::date_display::{format_period_label, format_year_month_day};
 use crate::i18n::Language;
 use crate::product_paths::ProductPaths;
@@ -869,13 +871,21 @@ impl TuiModel {
     }
 
     fn apply_ui_command(&mut self, command: UiCommand) {
-        let (selected_clients, group_by) = match command {
-            UiCommand::ProjectClients(clients) => (clients, self.group_by()),
+        match command {
+            UiCommand::ProjectClients(clients) => self.apply_projection(clients, self.group_by()),
             UiCommand::ProjectGroupBy(group_by) => {
-                (self.selected_clients().collect::<HashSet<_>>(), group_by)
+                self.apply_projection(self.selected_clients().collect(), group_by)
             }
-        };
-        self.apply_projection(selected_clients, group_by);
+            UiCommand::PricingSourceOrder(order) => {
+                if self.settings.pricing_source_order != order {
+                    self.settings.pricing_source_order = order;
+                    self.refresh_requests.push_back(RefreshRequest::Manual);
+                    self.queue_settings_persistence(
+                        rust_i18n::t!("tui.model.status.pricing_source_order_changed").into_owned(),
+                    );
+                }
+            }
+        }
     }
 
     fn apply_projection(
@@ -1452,6 +1462,7 @@ impl TuiModel {
             }
             Intent::Sort(field) => self.set_sort(field),
             Intent::Theme => self.cycle_theme(),
+            Intent::PricingSources => self.open_pricing_source_order_picker(),
             Intent::Language => self.cycle_language(),
             Intent::RefreshLocal if self.current_tab != Tab::Subscription => {
                 self.refresh_requests.push_back(RefreshRequest::Manual);
@@ -2160,6 +2171,13 @@ impl TuiModel {
             self.group_by(),
             tokenx_engine::GroupBy::Model | tokenx_engine::GroupBy::ClientModel
         )
+    }
+
+    fn open_pricing_source_order_picker(&mut self) {
+        self.dialog_stack
+            .show(Box::new(PricingSourceOrderDialog::new(
+                self.settings.pricing_source_order,
+            )));
     }
 
     pub fn is_model_detail_active(&self) -> bool {

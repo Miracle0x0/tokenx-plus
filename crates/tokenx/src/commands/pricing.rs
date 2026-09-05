@@ -48,6 +48,7 @@ pub(crate) async fn run_pricing_lookup(
     use indicatif::ProgressBar;
     use indicatif::ProgressStyle;
     use tokenx_engine::pricing::PricingService;
+    let settings = crate::settings::Settings::load(paths)?;
 
     let pricing_source_normalized = pricing_source.map(|value| value.to_lowercase());
 
@@ -68,8 +69,12 @@ pub(crate) async fn run_pricing_lookup(
     };
 
     let result = match async {
-        let svc =
-            PricingService::fetch_current(&paths.custom_pricing_file(), &paths.cache_dir()).await?;
+        let svc = PricingService::fetch_current_with_order(
+            &paths.custom_pricing_file(),
+            &paths.cache_dir(),
+            settings.pricing_source_order,
+        )
+        .await?;
         Ok::<_, String>(
             svc.lookup_with_pricing_source(model_id, pricing_source_normalized.as_deref()),
         )

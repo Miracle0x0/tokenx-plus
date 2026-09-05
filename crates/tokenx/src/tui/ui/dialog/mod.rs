@@ -1,6 +1,7 @@
 pub mod client_picker;
 pub mod group_by_picker;
 pub mod overlay;
+mod pricing_source_order;
 pub mod stack;
 
 use crossterm::event::{KeyEvent, MouseEvent};
@@ -13,12 +14,14 @@ use crate::tui::themes::Theme;
 
 pub use client_picker::ClientPickerDialog;
 pub use group_by_picker::GroupByPickerDialog;
+pub use pricing_source_order::PricingSourceOrderDialog;
 pub use stack::DialogStack;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiCommand {
     ProjectClients(HashSet<ClientId>),
     ProjectGroupBy(GroupBy),
+    PricingSourceOrder(tokenx_engine::pricing::SourceOrder),
 }
 
 /// Result of handling a dialog event.

@@ -24,6 +24,7 @@ pub(crate) enum Intent {
     Clients,
     GroupBy,
     Theme,
+    PricingSources,
     Language,
     ToggleAutoRefresh,
     IncreaseRefreshInterval,
@@ -62,6 +63,7 @@ impl Intent {
             KeyCode::Char('s') => Some(Self::Clients),
             KeyCode::Char('g') => Some(Self::GroupBy),
             KeyCode::Char('p') => Some(Self::Theme),
+            KeyCode::Char('o') => Some(Self::PricingSources),
             KeyCode::Char('L') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 Some(Self::Language)
             }
@@ -91,6 +93,7 @@ impl Intent {
             Self::Clients => Some(Action::Clients),
             Self::GroupBy => Some(Action::GroupBy),
             Self::Theme => Some(Action::Theme),
+            Self::PricingSources => Some(Action::PricingSources),
             Self::Language => Some(Action::Language),
             Self::ToggleAutoRefresh => Some(Action::ToggleAutoRefresh),
             Self::IncreaseRefreshInterval => Some(Action::IncreaseRefreshInterval),

@@ -265,7 +265,9 @@ impl GenerationController {
             return;
         };
 
-        let context_changed = match self.refresh_acquisition_context(app.effective_date()) {
+        let context_changed = match self
+            .refresh_acquisition_context(app.effective_date(), app.settings.pricing_source_order)
+        {
             Ok(changed) => changed,
             Err(error) => {
                 generation_background_failure(
@@ -306,12 +308,21 @@ impl GenerationController {
         );
     }
 
-    fn refresh_acquisition_context(&mut self, effective_date: chrono::NaiveDate) -> Result<bool> {
+    fn refresh_acquisition_context(
+        &mut self,
+        effective_date: chrono::NaiveDate,
+        order: tokenx_engine::pricing::SourceOrder,
+    ) -> Result<bool> {
         let current = self.acquisition.config();
         let date_range = self
             .relative_date_range
             .map(|relative| relative.resolve(effective_date))
             .unwrap_or_else(|| current.date_range().clone());
+        let pricing = if current.pricing().source_order() == order {
+            self.acquisition.pricing_snapshot()
+        } else {
+            Arc::new(self.acquisition.pricing_snapshot().with_source_order(order))
+        };
         let replacement = acquisition_engine_with_dsh_home(
             self.acquisition.input_cache_dir().to_path_buf(),
             current.resolved_home_dir().to_path_buf(),
@@ -319,7 +330,7 @@ impl GenerationController {
             date_range,
             current.scanner().clone(),
             *current.calendar(),
-            self.acquisition.pricing_snapshot(),
+            pricing,
             current.dsh_home().map(std::path::Path::to_path_buf),
         )?;
         if replacement.config() == current {
@@ -836,7 +847,9 @@ mod tests {
         let pricing_snapshot = controller.acquisition.pricing_snapshot();
         let next_day = chrono::NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
 
-        assert!(controller.refresh_acquisition_context(next_day).unwrap());
+        assert!(controller
+            .refresh_acquisition_context(next_day, tokenx_engine::pricing::SourceOrder::default())
+            .unwrap());
 
         assert_eq!(
             controller.acquisition.config().date_range(),

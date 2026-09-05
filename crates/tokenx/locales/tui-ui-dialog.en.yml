@@ -28,3 +28,9 @@ tui:
           workspace_model:
             label: "Workspace + Model"
             description: "Group local usage by workspace, then model"
+      pricing_sources:
+        title: " Pricing source order "
+        hint: "Up/Down select | k/j move | Enter apply | Esc cancel"
+        priority: "Priority (highest first): custom overrides are always applied before this list."
+        deepseek: "DeepSeek V4: OpenRouter time-period pricing remains first when available."
+        description: "Use Up/Down to select a catalog, k/j to move it, r to restore the default order."

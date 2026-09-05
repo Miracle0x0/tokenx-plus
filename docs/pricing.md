@@ -34,10 +34,19 @@ See [ADR 0004](adr/0004-period-views-derive-from-daily.md).
 Exact custom overrides from `custom-pricing.json` are checked first. For a
 canonical `deepseek-v4` family model, an exact OpenRouter row carrying
 time-period prices is checked before the general public-catalog order. Otherwise,
-Tokenx searches LiteLLM, OpenRouter, and models.dev in that order. A forced
+Tokenx searches public catalogs in the configured order, whose default is
+LiteLLM, OpenRouter, and models.dev. A forced
 `--pricing-source` limits lookup to one catalog. Public lookup receives the
 canonical model component without a provider or route prefix and considers only
 catalog rows with that exact component.
+
+The public-catalog order can be changed with `pricingSourceOrder` in
+`settings.json`, or from the TUI pricing-source order panel (`o`). The setting
+must contain all three public catalogs exactly once. Changing it invalidates the
+Generation pricing identity. Valid input-record shards for unchanged inputs are
+reused and their records are re-priced and re-aggregated; raw transcript parsing
+is not repeated for those cache hits. The DeepSeek V4
+OpenRouter time-period rule remains ahead of this configurable order.
 
 A non-empty observed provider, or otherwise shared deterministic model-family
 inference, defines provider scope. Exact rows for a known provider are selected
@@ -125,6 +134,11 @@ Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:
 
 Deleting these files forces Tokenx to fetch pricing data again on the next
 lookup or usage load that needs pricing.
+
+Input-record shards are cost-free: they retain token buckets, timestamps, and
+model/provider identity, but not derived prices. The Generation cache contains
+aggregated costs and is invalidated when the pricing context, including source
+order, changes.
 
 Headless usage commands refresh missing or expired public catalogs before
 building their generation. The TUI enters immediately from its captured local

@@ -56,6 +56,7 @@ tui:
     error:
       tab_disabled: "TUI 标签页 `%{tab}` 已在 settings.json 中禁用"
     status:
+      pricing_source_order_changed: "价格来源顺序已保存，正在重新计算费用…"
       settings_save_failed: "%{message}（保存失败：%{error}）"
       copied: "已复制到剪贴板"
       copy_failed: "复制失败"

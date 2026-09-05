@@ -1,9 +1,10 @@
 use super::litellm::{ModelPricing, TimePeriodPrice};
+use super::{CatalogSource, SourceOrder};
 use crate::{model_aliases, provider_identity, TokenBreakdown};
 use chrono::{Datelike, Timelike, Utc, Weekday};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 const MAX_LOOKUP_CACHE_ENTRIES: usize = 512;
 const TIERED_PRICING_THRESHOLD_128K_TOKENS: f64 = 128_000.0;
@@ -19,12 +20,13 @@ struct CachedResult {
 }
 
 pub struct PricingLookup {
-    litellm: HashMap<String, ModelPricing>,
-    openrouter: HashMap<String, ModelPricing>,
-    models_dev: HashMap<String, ModelPricing>,
-    litellm_keys: Vec<String>,
-    openrouter_keys: Vec<String>,
-    models_dev_keys: Vec<String>,
+    litellm: Arc<HashMap<String, ModelPricing>>,
+    openrouter: Arc<HashMap<String, ModelPricing>>,
+    models_dev: Arc<HashMap<String, ModelPricing>>,
+    litellm_keys: Arc<[String]>,
+    openrouter_keys: Arc<[String]>,
+    models_dev_keys: Arc<[String]>,
+    order: SourceOrder,
     lookup_cache: RwLock<HashMap<String, Option<CachedResult>>>,
 }
 
@@ -57,23 +59,46 @@ impl PricingLookup {
         openrouter: HashMap<String, ModelPricing>,
         models_dev: HashMap<String, ModelPricing>,
     ) -> Self {
+        Self::new_with_models_dev_and_order(litellm, openrouter, models_dev, SourceOrder::default())
+    }
+
+    pub fn new_with_models_dev_and_order(
+        litellm: HashMap<String, ModelPricing>,
+        openrouter: HashMap<String, ModelPricing>,
+        models_dev: HashMap<String, ModelPricing>,
+        order: SourceOrder,
+    ) -> Self {
         let litellm_keys = sorted_catalog_keys(&litellm);
         let openrouter_keys = sorted_catalog_keys(&openrouter);
         let models_dev_keys = sorted_catalog_keys(&models_dev);
 
         Self {
-            litellm,
-            openrouter,
-            models_dev,
-            litellm_keys,
-            openrouter_keys,
-            models_dev_keys,
+            litellm: Arc::new(litellm),
+            openrouter: Arc::new(openrouter),
+            models_dev: Arc::new(models_dev),
+            litellm_keys: litellm_keys.into(),
+            openrouter_keys: openrouter_keys.into(),
+            models_dev_keys: models_dev_keys.into(),
+            order,
             lookup_cache: RwLock::new(HashMap::with_capacity(64)),
         }
     }
 
     pub fn lookup(&self, model_id: &str) -> Option<LookupResult> {
         self.lookup_with_provider(model_id, None)
+    }
+
+    pub(super) fn with_order(&self, order: SourceOrder) -> Self {
+        Self {
+            litellm: Arc::clone(&self.litellm),
+            openrouter: Arc::clone(&self.openrouter),
+            models_dev: Arc::clone(&self.models_dev),
+            litellm_keys: Arc::clone(&self.litellm_keys),
+            openrouter_keys: Arc::clone(&self.openrouter_keys),
+            models_dev_keys: Arc::clone(&self.models_dev_keys),
+            order,
+            lookup_cache: RwLock::new(HashMap::with_capacity(64)),
+        }
     }
 
     pub fn lookup_with_provider(
@@ -189,30 +214,35 @@ impl PricingLookup {
         }
 
         if let Some(provider_scope) = provider_scope {
-            for (dataset, keys, source) in [
-                (&self.litellm, &self.litellm_keys, "LiteLLM"),
-                (&self.openrouter, &self.openrouter_keys, "OpenRouter"),
-                (&self.models_dev, &self.models_dev_keys, "Models.dev"),
-            ] {
+            for source in self.order.sources() {
+                let (dataset, keys, label) = self.catalog(*source);
                 if let Some(result) =
-                    lookup_provider_scoped_exact(dataset, keys, source, model_id, provider_scope)
+                    lookup_provider_scoped_exact(dataset, keys, label, model_id, provider_scope)
                 {
                     return Some(result);
                 }
             }
         }
 
-        for (dataset, keys, source) in [
-            (&self.litellm, &self.litellm_keys, "LiteLLM"),
-            (&self.openrouter, &self.openrouter_keys, "OpenRouter"),
-            (&self.models_dev, &self.models_dev_keys, "Models.dev"),
-        ] {
-            if let Some(result) = lookup_unscoped_exact(dataset, keys, source, model_id) {
+        for source in self.order.sources() {
+            let (dataset, keys, label) = self.catalog(*source);
+            if let Some(result) = lookup_unscoped_exact(dataset, keys, label, model_id) {
                 return Some(result);
             }
         }
 
         None
+    }
+
+    fn catalog(
+        &self,
+        source: CatalogSource,
+    ) -> (&HashMap<String, ModelPricing>, &[String], &'static str) {
+        match source {
+            CatalogSource::Litellm => (&self.litellm, &self.litellm_keys, "LiteLLM"),
+            CatalogSource::Openrouter => (&self.openrouter, &self.openrouter_keys, "OpenRouter"),
+            CatalogSource::ModelsDev => (&self.models_dev, &self.models_dev_keys, "Models.dev"),
+        }
     }
 
     pub fn calculate_cost(

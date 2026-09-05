@@ -48,6 +48,7 @@ tui:
         sessions: " (%{count} sessions)"
         clients_sessions: " (%{clients} clients · %{sessions} sessions)"
       help:
+        pricing_sources: "[o:pricing order]"
         refresh_subscription: "[u:refresh]"
         scroll: "↑↓ scroll"
         tab_view: "←→/tab view"

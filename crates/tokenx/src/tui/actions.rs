@@ -19,6 +19,7 @@ pub(crate) enum Action {
     Clients,
     GroupBy,
     Theme,
+    PricingSources,
     Language,
     ToggleAutoRefresh,
     IncreaseRefreshInterval,
@@ -54,6 +55,7 @@ impl ActionSet {
             if !app.is_background_loading() {
                 actions.push(Action::RefreshLocal);
             }
+            actions.push(Action::PricingSources);
             actions.extend([
                 Action::PreviousTab,
                 Action::NextTab,
@@ -99,6 +101,7 @@ impl ActionSet {
         if !app.is_background_loading() {
             actions.push(Action::RefreshLocal);
         }
+        actions.push(Action::PricingSources);
         if installed {
             actions.push(Action::Export);
             if supports_copy(app) {

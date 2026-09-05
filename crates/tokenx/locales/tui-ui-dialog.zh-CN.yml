@@ -28,3 +28,9 @@ tui:
           workspace_model:
             label: "工作区 + 模型"
             description: "先按工作区、再按模型分组本地用量"
+      pricing_sources:
+        title: " 价格来源顺序 "
+        hint: "上下选择 | k/j 移动 | Enter 应用 | Esc 取消"
+        priority: "优先级（从高到低）：自定义覆盖始终先于此列表。"
+        deepseek: "DeepSeek V4：可用时仍优先使用 OpenRouter 分时价格。"
+        description: "使用上下键选择目录，k/j 移动位置，r 恢复默认顺序。"

@@ -56,6 +56,7 @@ tui:
     error:
       tab_disabled: "TUI tab `%{tab}` is disabled in settings.json"
     status:
+      pricing_source_order_changed: "Pricing source order saved; recalculating costs..."
       settings_save_failed: "%{message} (save failed: %{error})"
       copied: "Copied to clipboard"
       copy_failed: "Failed to copy"

@@ -14,6 +14,8 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0008](0008-semantic-tui-theme-contract.md) | Semantic TUI theme contract | Accepted |
 | [0009](0009-canonical-generation-architecture.md) | Canonical generation architecture | Accepted |
 | [0010](0010-tokenx-clean-target.md) | Tokenx clean target | Accepted |
+| [0011](0011-frame-owned-tui-protocol.md) | Frame-owned TUI protocol | Accepted |
+| [0012](0012-configurable-pricing-source-order.md) | Configurable public pricing-source order | Accepted |
 
 ## Conventions
 

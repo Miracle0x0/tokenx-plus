@@ -19,6 +19,9 @@ use crate::{model_aliases, TokenBreakdown};
 pub use litellm::{ModelPricing, TimePeriodPrice};
 pub use lookup::PricingComputationError;
 
+mod source_order;
+pub use source_order::{CatalogSource, SourceOrder};
+
 const CACHED_CATALOG_FILES: [&str; 3] = [
     "pricing-litellm.json",
     "pricing-openrouter.json",
@@ -189,12 +192,29 @@ impl PricingService {
         openrouter_data: HashMap<String, ModelPricing>,
         models_dev_data: HashMap<String, ModelPricing>,
     ) -> Self {
+        Self::new_with_custom_and_order(
+            custom,
+            litellm_data,
+            openrouter_data,
+            models_dev_data,
+            SourceOrder::default(),
+        )
+    }
+
+    pub fn new_with_custom_and_order(
+        custom: CustomPricing,
+        litellm_data: HashMap<String, ModelPricing>,
+        openrouter_data: HashMap<String, ModelPricing>,
+        models_dev_data: HashMap<String, ModelPricing>,
+        order: SourceOrder,
+    ) -> Self {
         Self {
             custom,
-            lookup: PricingLookup::new_with_models_dev(
+            lookup: PricingLookup::new_with_models_dev_and_order(
                 litellm_data,
                 openrouter_data,
                 models_dev_data,
+                order,
             ),
         }
     }
@@ -276,16 +296,6 @@ impl PricingService {
         })
     }
 
-    async fn fetch_inner(custom_path: &Path, cache_dir: &Path) -> Result<Self, String> {
-        let catalogs = Self::fetch_public_catalogs(cache_dir).await?;
-        Ok(Self::new_with_custom_and_models_dev(
-            CustomPricing::load_from_path(custom_path),
-            catalogs.litellm,
-            catalogs.openrouter,
-            catalogs.models_dev,
-        ))
-    }
-
     async fn fetch_inner_with_diagnostics(
         custom_path: &Path,
         cache_dir: &Path,
@@ -339,9 +349,25 @@ impl PricingService {
         custom_path: &Path,
         cache_dir: &Path,
     ) -> Result<Arc<PricingService>, String> {
-        Self::fetch_inner(custom_path, cache_dir)
+        Self::fetch_current_with_order(custom_path, cache_dir, SourceOrder::default()).await
+    }
+
+    pub async fn fetch_current_with_order(
+        custom_path: &Path,
+        cache_dir: &Path,
+        order: SourceOrder,
+    ) -> Result<Arc<PricingService>, String> {
+        Self::fetch_public_catalogs(cache_dir)
             .await
-            .map(Arc::new)
+            .map(|catalogs| {
+                Arc::new(Self::new_with_custom_and_order(
+                    CustomPricing::load_from_path(custom_path),
+                    catalogs.litellm,
+                    catalogs.openrouter,
+                    catalogs.models_dev,
+                    order,
+                ))
+            })
     }
 
     pub async fn fetch_current_with_diagnostics(
@@ -564,6 +590,23 @@ impl ResolvedPricingSnapshot {
             .refresh(cache_dir)
             .await;
         Self::from_parts(self.custom.clone(), catalogs, diagnostics)
+            .with_source_order(self.context.source_order())
+    }
+
+    /// Rebind catalog priority without file or network I/O. Catalog storage is
+    /// shared; lookup results are scoped to the new immutable pricing service.
+    pub fn with_source_order(&self, order: SourceOrder) -> Self {
+        Self {
+            context: self.context.clone().with_source_order(order),
+            service: self.service.as_ref().map(|service| {
+                Arc::new(PricingService {
+                    custom: service.custom.clone(),
+                    lookup: service.lookup.with_order(order),
+                })
+            }),
+            diagnostics: self.diagnostics.clone(),
+            custom: self.custom.clone(),
+        }
     }
 
     fn resolve_custom(
@@ -1426,6 +1469,32 @@ mod tests {
             openrouter,
             models_dev,
         )
+    }
+
+    #[test]
+    fn configured_public_source_order_controls_auto_lookup() {
+        let mut litellm = HashMap::new();
+        litellm.insert("shared-model".into(), model_pricing(1.0, 1.0));
+        let mut openrouter = HashMap::new();
+        openrouter.insert("shared-model".into(), model_pricing(2.0, 2.0));
+        let mut models_dev = HashMap::new();
+        models_dev.insert("shared-model".into(), model_pricing(3.0, 3.0));
+
+        let order: SourceOrder =
+            serde_json::from_value(serde_json::json!(["openrouter", "litellm", "models.dev"]))
+                .unwrap();
+        let service = PricingService::new_with_custom_and_order(
+            CustomPricing::default(),
+            litellm,
+            openrouter,
+            models_dev,
+            order,
+        );
+        let result = service
+            .lookup_with_pricing_source("shared-model", None)
+            .unwrap();
+        assert_eq!(result.pricing_source, "OpenRouter");
+        assert_eq!(result.pricing.input_cost_per_token, Some(2.0));
     }
 
     #[test]

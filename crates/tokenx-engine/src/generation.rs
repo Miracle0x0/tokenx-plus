@@ -206,6 +206,7 @@ pub enum CalendarContextError {
 pub struct PricingContext {
     custom_pricing_fingerprint: String,
     catalog_fingerprint: String,
+    source_order: crate::pricing::SourceOrder,
 }
 
 impl PricingContext {
@@ -216,6 +217,7 @@ impl PricingContext {
         Self {
             custom_pricing_fingerprint: custom_pricing_fingerprint.into(),
             catalog_fingerprint: catalog_fingerprint.into(),
+            source_order: crate::pricing::SourceOrder::default(),
         }
     }
 
@@ -225,6 +227,15 @@ impl PricingContext {
 
     pub fn catalog_fingerprint(&self) -> &str {
         &self.catalog_fingerprint
+    }
+
+    pub fn source_order(&self) -> crate::pricing::SourceOrder {
+        self.source_order
+    }
+
+    pub fn with_source_order(mut self, order: crate::pricing::SourceOrder) -> Self {
+        self.source_order = order;
+        self
     }
 }
 

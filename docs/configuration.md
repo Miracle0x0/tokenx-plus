@@ -12,6 +12,7 @@ cross-platform product root:
 {
   "colorPalette": "blue",
   "timeZone": "Asia/Shanghai",
+  "pricingSourceOrder": ["litellm", "openrouter", "models.dev"],
   "defaultClients": ["opencode", "claude"],
   "subscription": {
     "enabled": true,
@@ -51,6 +52,7 @@ cross-platform product root:
 | `subscription.enabled` | boolean | Show the remote Subscription tab in the TUI. |
 | `subscription.providers` | string[] | Explicit allowlist of subscription providers the TUI may fetch. Empty means cache-display mode. |
 | `language` | string | Optional interface language: `en` or `zh-CN`. When absent, the environment (`LC_ALL`, then `LANG`) decides, with `zh*` values mapping to `zh-CN` and everything else to English. In the TUI, `Shift+L` switches immediately between English and Chinese and persists the selected language. On later invocations, an explicit `--language` flag still overrides this saved value; unknown spellings are parse errors. |
+| `pricingSourceOrder` | string[] | Complete priority order for `litellm`, `openrouter`, and `models.dev`, each exactly once. Custom overrides remain highest priority. DeepSeek V4 OpenRouter time-period pricing remains a special first choice. |
 | `scanner.opencodeDbPaths` | string[] | Authoritative absolute paths to additional current-format OpenCode SQLite database files. Missing, unreadable, relative, or invalid entries fail explicitly. This is the only custom OpenCode scan setting. |
 | `scanner.extraScanPaths` | object | Persistent absolute extra scan roots by client id. Relative paths are rejected so acquisition identity cannot depend on the process working directory. |
 
@@ -62,6 +64,8 @@ Settings are strict typed input. Unknown top-level keys and unknown keys inside
 `subscription` are parse errors.
 Theme names and client ids in `settings.json` use their documented canonical
 lowercase spelling; unknown or differently cased strings are parse errors.
+`pricingSourceOrder` must list `litellm`, `openrouter`, and `models.dev` exactly
+once; unknown, duplicate, or differently cased values are parse errors.
 `timeZone` must be a canonical IANA timezone name; POSIX `TZ` expressions and
 per-shell overrides are not configuration inputs.
 TUI, models, and cache-warm commands read settings once at startup, so a file

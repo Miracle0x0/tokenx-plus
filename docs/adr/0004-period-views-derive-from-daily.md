@@ -148,9 +148,11 @@ secondary projection and never controls eligibility.
 - In automatic lookup, custom pricing has highest priority and matches the
   final canonical model id exactly, case-insensitively. A forced Pricing Source
   limits lookup to that source, including when the selected source is custom.
-- Public Pricing Sources have the deterministic order LiteLLM, OpenRouter, then
-  models.dev. A forced `--pricing-source` limits lookup to that catalog. An
-  explicit `0.0` row is valid; a row without price fields is not pricing data.
+- Public Pricing Sources use the complete `pricingSourceOrder` permutation from
+  settings (default: LiteLLM, OpenRouter, then models.dev). A forced
+  `--pricing-source` limits lookup to that catalog. An explicit `0.0` row is
+  valid; a row without price fields is not pricing data. DeepSeek V4 retains
+  its OpenRouter time-period pricing first-choice rule.
 - Public lookup receives one canonical model id without a provider or route
   prefix. It admits only catalog rows whose model component equals that id
   case-insensitively.

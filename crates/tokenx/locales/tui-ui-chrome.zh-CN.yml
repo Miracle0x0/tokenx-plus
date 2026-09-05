@@ -48,6 +48,7 @@ tui:
         sessions: "（%{count} 个会话）"
         clients_sessions: "（%{clients} 个客户端 · %{sessions} 个会话）"
       help:
+        pricing_sources: "[o:价格顺序]"
         refresh_subscription: "[u:刷新]"
         scroll: "↑↓ 滚动"
         tab_view: "←→/tab 视图"

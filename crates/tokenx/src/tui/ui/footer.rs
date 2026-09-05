@@ -946,7 +946,11 @@ pub(super) fn action_help_row_line(
         if actions.is_empty_view()
             && !matches!(
                 action,
-                Action::Clients | Action::RefreshLocal | Action::PreviousTab | Action::NextTab
+                Action::Clients
+                    | Action::RefreshLocal
+                    | Action::PricingSources
+                    | Action::PreviousTab
+                    | Action::NextTab
             )
         {
             continue;
@@ -1002,6 +1006,10 @@ pub(super) fn action_help_row_line(
             Action::Theme => (
                 format!("[p:{}]", theme_label(app.theme.name)),
                 "[p]".to_string(),
+            ),
+            Action::PricingSources => (
+                rust_i18n::t!("tui.ui.footer.help.pricing_sources").into_owned(),
+                "[o]".to_string(),
             ),
             Action::Language => (
                 format!("[L:{}]", app.language().native_name()),
@@ -1075,9 +1083,11 @@ fn toggle_action_labels(
 fn action_style(app: &TuiModel, action: Action) -> Style {
     let color = match action {
         Action::Sort(_) => app.theme.chrome.current,
-        Action::Clients | Action::GroupBy | Action::Theme | Action::Language => {
-            app.theme.chrome.focus
-        }
+        Action::Clients
+        | Action::GroupBy
+        | Action::Theme
+        | Action::PricingSources
+        | Action::Language => app.theme.chrome.focus,
         Action::ToggleAutoRefresh if app.auto_refresh_enabled() => app.theme.status.success,
         Action::OpenDetails | Action::Back | Action::ToggleView | Action::RefreshLocal => {
             app.theme.chrome.focus
