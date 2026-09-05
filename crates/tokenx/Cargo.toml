@@ -17,6 +17,7 @@ tokenx-engine = { workspace = true }
 
 clap = { workspace = true }
 ratatui = { workspace = true }
+tui-piechart = { workspace = true }
 crossterm = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

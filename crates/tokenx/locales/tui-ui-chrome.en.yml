@@ -67,6 +67,8 @@ tui:
         view: "view"
         profile: "profile"
         table: "table"
+        pie: "pie"
+        graph: "graph"
       status:
         refreshing: "Refreshing cached data in background..."
         last_updated: "Last updated: %{ago}"

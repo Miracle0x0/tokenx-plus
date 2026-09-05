@@ -52,9 +52,22 @@ pub(crate) fn render(
     let content = match app.current_tab {
         Tab::Sessions => sessions_content(app, state, actions),
         Tab::Daily if !app.is_daily_detail_active() => daily_content(app, state, actions),
+        Tab::Stats => stats_content(app, state, actions),
         _ => footer::standard_content(app, state, actions),
     };
     footer::render(frame, app, artifacts, area, content);
+}
+
+fn stats_content(app: &TuiModel, state: &PageStates, actions: &ActionSet) -> FooterContent {
+    let toggle_target = match state.stats_view_mode() {
+        crate::tui::model::StatsViewMode::Graph => rust_i18n::t!("tui.ui.footer.toggle.pie"),
+        crate::tui::model::StatsViewMode::Pie => rust_i18n::t!("tui.ui.footer.toggle.graph"),
+    };
+    FooterContent::new(
+        Vec::new(),
+        footer::summary_row_line(app, actions),
+        footer::action_help_row_line(app, state, actions, Some(toggle_target)),
+    )
 }
 
 fn sessions_content(app: &TuiModel, state: &PageStates, actions: &ActionSet) -> FooterContent {

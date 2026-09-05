@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use super::intent::Intent;
 use super::interaction::{ListInteraction, MoveCommand, TextViewport, WrapMode};
-use super::model::{ChartGranularity, HourlyViewMode, SortDirection, SortField, Tab, TuiModel};
+use super::model::{
+    ChartGranularity, HourlyViewMode, SortDirection, SortField, StatsViewMode, Tab, TuiModel,
+};
 use super::render_artifacts::RenderArtifacts;
 use super::session_data::ClientSummary;
 #[cfg(test)]
@@ -36,6 +38,7 @@ struct SessionOrderCache {
 pub(crate) struct PageStates {
     overview_granularity: ChartGranularity,
     hourly_mode: HourlyViewMode,
+    stats_view_mode: StatsViewMode,
     hourly_profile_viewport: TextViewport,
     hourly_profile_total_lines: usize,
     subscription_viewport: TextViewport,
@@ -70,6 +73,13 @@ impl PageStates {
                 };
                 app.reset_current_list_interaction();
                 self.hourly_profile_viewport.scroll = 0;
+                return true;
+            }
+            (Tab::Stats, Intent::ToggleView) => {
+                self.stats_view_mode = match self.stats_view_mode {
+                    StatsViewMode::Graph => StatsViewMode::Pie,
+                    StatsViewMode::Pie => StatsViewMode::Graph,
+                };
                 return true;
             }
             (Tab::Subscription, Intent::Move(command)) => {
@@ -152,6 +162,10 @@ impl PageStates {
 
     pub(crate) fn hourly_mode(&self) -> HourlyViewMode {
         self.hourly_mode
+    }
+
+    pub(crate) fn stats_view_mode(&self) -> StatsViewMode {
+        self.stats_view_mode
     }
 
     #[cfg(test)]
@@ -522,5 +536,25 @@ mod tests {
                 .as_ref(),
             "replacement"
         );
+    }
+
+    #[test]
+    fn stats_toggle_switches_between_graph_and_pie() {
+        let mut app = TuiModel::new_for_test(TuiConfig {
+            theme: Some(ThemeName::Blue),
+            refresh: 0,
+            no_refresh: true,
+            client_universe: tokenx_engine::ClientUniverse::all(),
+            initial_tab: Some(Tab::Stats),
+            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        })
+        .unwrap();
+        let mut state = PageStates::default();
+
+        assert_eq!(state.stats_view_mode(), StatsViewMode::Graph);
+        assert!(state.handle_intent(&mut app, Intent::ToggleView));
+        assert_eq!(state.stats_view_mode(), StatsViewMode::Pie);
+        assert!(state.handle_intent(&mut app, Intent::ToggleView));
+        assert_eq!(state.stats_view_mode(), StatsViewMode::Graph);
     }
 }

@@ -112,7 +112,7 @@ fn render_current_tab(
         Tab::Hourly => hourly::render(frame, app, state, artifacts, area, empty, actions),
         Tab::Monthly => period::render_monthly(frame, app, artifacts, area, empty, actions),
         Tab::Weekly => period::render_weekly(frame, app, artifacts, area, empty, actions),
-        Tab::Stats => stats::render(frame, app, artifacts, area, empty, actions),
+        Tab::Stats => stats::render(frame, app, state, artifacts, area, empty, actions),
         Tab::Subscription => {
             let Presentation::Subscription(subscription) = presentation else {
                 unreachable!("Subscription must carry SubscriptionPresentation");

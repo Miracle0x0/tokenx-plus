@@ -214,6 +214,13 @@ pub enum HourlyViewMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum StatsViewMode {
+    #[default]
+    Graph,
+    Pie,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum StatusMessageKind {
     #[default]
     General,

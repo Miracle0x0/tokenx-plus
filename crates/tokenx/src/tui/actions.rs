@@ -198,9 +198,10 @@ fn view_actions(app: &TuiModel, state: &PageStates) -> Vec<Action> {
             .then_some(Action::OpenDetails)
             .into_iter()
             .collect(),
-        Tab::Stats if app.selected_graph_cell.is_some() => vec![Action::Back],
+        Tab::Stats if app.selected_graph_cell.is_some() => vec![Action::Back, Action::ToggleView],
         Tab::Overview => vec![Action::ToggleView],
-        Tab::Subscription | Tab::Stats | Tab::Agents => Vec::new(),
+        Tab::Stats => vec![Action::ToggleView],
+        Tab::Subscription | Tab::Agents => Vec::new(),
     }
 }
 
@@ -441,6 +442,7 @@ mod tests {
         daily.current_tab = Tab::Stats;
         let stats_set = action_set(&daily, &PageStates::default());
         assert!(!stats_set.contains(Action::Scroll));
+        assert!(stats_set.contains(Action::ToggleView));
         assert!(!stats_set
             .iter()
             .any(|action| matches!(action, Action::Sort(_))));

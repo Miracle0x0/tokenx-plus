@@ -10,10 +10,13 @@ use crate::terminal_text::{truncate as truncate_terminal_text, width as text_wid
 use crate::tui::actions::ActionSet;
 use crate::tui::data::{ContributionDay, ContributionGrade, DailyClientInfo, DailyUsage};
 use crate::tui::intent::Intent;
+use crate::tui::model::StatsViewMode;
 use crate::tui::model::TuiModel;
+use crate::tui::model_family::ModelFamily;
 use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
 use tokenx_engine::ClientId;
+use tui_piechart::{LegendPosition, PieChart, PieSlice, Resolution};
 
 use super::empty_state;
 use super::radar::{render_radar, RadarAxis};
@@ -60,6 +63,9 @@ const HOUR_STRIP_LEN: usize = 24;
 const RADAR_MIN_H: u16 = 9;
 const RADAR_MIN_W: u16 = 24;
 const SIDE_BY_SIDE_MIN_W: u16 = 72;
+const PIE_LEGEND_RESERVED_W: u16 = 21;
+const PIE_BODY_WIDTH_NUMERATOR: u16 = 5;
+const PIE_BODY_WIDTH_DENOMINATOR: u16 = 4;
 const LEFT_COL_W: u16 = 44;
 const WEEKDAYS: [Weekday; 7] = [
     Weekday::Sun,
@@ -75,6 +81,7 @@ const MONTH_COUNT: usize = 12;
 pub fn render(
     frame: &mut Frame,
     app: &TuiModel,
+    state: &crate::tui::page_state::PageStates,
     artifacts: &mut RenderArtifacts,
     area: Rect,
     empty: Option<EmptySubject>,
@@ -102,7 +109,64 @@ pub fn render(
         .split(area);
 
     render_graph(frame, app, artifacts, chunks[0]);
-    render_day_insights(frame, app, chunks[1]);
+    render_day_insights(frame, app, state, chunks[1]);
+}
+
+fn model_family_slices<'a>(
+    app: &TuiModel,
+    models: &[RankedModel],
+    labels: &'a [String],
+) -> Vec<PieSlice<'a>> {
+    let mut totals = [0_u64; ModelFamily::COUNT];
+    for model in models {
+        if model.tokens > 0 {
+            let family = ModelFamily::from_model_id(&model.canonical_id);
+            totals[family.index()] = totals[family.index()]
+                .checked_add(model.tokens)
+                .expect("model family token total exceeds u64::MAX");
+        }
+    }
+
+    ModelFamily::ALL
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| totals[*index] > 0)
+        .map(|(index, family)| {
+            PieSlice::new(
+                &labels[index],
+                totals[index] as f64,
+                app.family_color(family),
+            )
+        })
+        .collect()
+}
+
+fn render_day_pie(frame: &mut Frame, app: &TuiModel, area: Rect, models: &[RankedModel]) {
+    let labels = ModelFamily::ALL
+        .into_iter()
+        .map(super::portraits::display_name)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let slices = model_family_slices(app, models, &labels);
+    let target_width = area
+        .height
+        .saturating_mul(PIE_BODY_WIDTH_NUMERATOR)
+        .saturating_div(PIE_BODY_WIDTH_DENOMINATOR)
+        .saturating_add(PIE_LEGEND_RESERVED_W)
+        .min(area.width);
+    let chart_area = Rect::new(
+        area.x + area.width.saturating_sub(target_width) / 2,
+        area.y,
+        target_width,
+        area.height,
+    );
+    let pie = PieChart::new(slices)
+        .show_legend(true)
+        .show_percentages(true)
+        .legend_position(LegendPosition::Right)
+        .resolution(Resolution::Braille)
+        .style(app.theme.panel_style());
+    frame.render_widget(pie, chart_area);
 }
 
 fn graph_block(app: &TuiModel) -> Block<'_> {
@@ -516,16 +580,32 @@ fn hourly_contribution_symbol(grade: ContributionGrade) -> &'static str {
     }
 }
 
-fn render_day_insights(frame: &mut Frame, app: &TuiModel, area: Rect) {
+fn render_day_insights(
+    frame: &mut Frame,
+    app: &TuiModel,
+    state: &crate::tui::page_state::PageStates,
+    area: Rect,
+) {
+    let toggle_label = match state.stats_view_mode() {
+        StatsViewMode::Graph => rust_i18n::t!("tui.ui.footer.toggle.pie"),
+        StatsViewMode::Pie => rust_i18n::t!("tui.ui.footer.toggle.graph"),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.chrome.border))
-        .title(Span::styled(
-            format!(" {} ", rust_i18n::t!("tui.ui.stats.day_insights_title")),
-            Style::default()
-                .fg(app.theme.chrome.heading)
-                .add_modifier(Modifier::BOLD),
-        ))
+        .title(Line::from(vec![
+            Span::styled(
+                format!(" {} ", rust_i18n::t!("tui.ui.stats.day_insights_title")),
+                Style::default()
+                    .fg(app.theme.chrome.heading)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("[v:{toggle_label}]"),
+                Style::default().fg(app.theme.chrome.focus),
+            ),
+            Span::raw(" "),
+        ]))
         .style(app.theme.panel_style());
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -591,7 +671,11 @@ fn render_day_insights(frame: &mut Frame, app: &TuiModel, area: Rect) {
             radar_width.min(2 * content.height + 28),
             content.height,
         );
-        render_day_radar(frame, app, radar_area, &ranked_models);
+        if state.stats_view_mode() == StatsViewMode::Pie {
+            render_day_pie(frame, app, radar_area, &ranked_models);
+        } else {
+            render_day_radar(frame, app, radar_area, &ranked_models);
+        }
     }
 }
 
@@ -847,6 +931,41 @@ mod tests {
         assert_eq!(streak_days_for_locale(31, "zh-CN"), "31天");
     }
 
+    #[test]
+    fn pie_render_shows_model_family_legend() {
+        let mut app = make_app(120);
+        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        app.usage_mut_for_test().daily = vec![day_usage(
+            date,
+            100,
+            1.0,
+            vec![(
+                "codex",
+                client_info(
+                    100,
+                    1.0,
+                    vec![("gpt", model_info("openai", "gpt-5", "gpt-5", 100, 1.0))],
+                ),
+            )],
+        )];
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let frame = terminal
+            .draw(|frame| {
+                let models = rank_canonical_models(&app.usage().daily[0]);
+                render_day_pie(frame, &app, frame.area(), &models)
+            })
+            .unwrap();
+        let rendered = (0..20u16)
+            .map(|y| {
+                (0..120u16)
+                    .map(|x| frame.buffer.cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("gpt"));
+    }
+
     fn make_app(width: u16) -> TuiModel {
         let mut app = TuiModel::new_for_test(TuiConfig {
             theme: Some(crate::theme::ThemeName::Blue),
@@ -983,6 +1102,7 @@ mod tests {
                 render(
                     frame,
                     app,
+                    &crate::tui::page_state::PageStates::default(),
                     &mut artifacts,
                     Rect::new(0, 0, width, height),
                     None,
@@ -1731,6 +1851,7 @@ mod tests {
                 render(
                     frame,
                     &app,
+                    &crate::tui::page_state::PageStates::default(),
                     &mut RenderArtifacts::default(),
                     Rect::new(0, 0, 120, 30),
                     None,
@@ -1816,6 +1937,7 @@ mod tests {
                 render(
                     f,
                     &app,
+                    &crate::tui::page_state::PageStates::default(),
                     &mut RenderArtifacts::default(),
                     Rect::new(0, 0, 120, 40),
                     None,
@@ -1869,6 +1991,7 @@ mod tests {
                 render(
                     frame,
                     &app,
+                    &crate::tui::page_state::PageStates::default(),
                     &mut RenderArtifacts::default(),
                     Rect::new(0, 0, 120, 40),
                     None,

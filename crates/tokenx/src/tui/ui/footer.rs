@@ -1075,6 +1075,17 @@ fn toggle_action_labels(
                 }
             },
         ),
+        Tab::Stats => (
+            'v',
+            match state.stats_view_mode() {
+                crate::tui::model::StatsViewMode::Graph => {
+                    rust_i18n::t!("tui.ui.footer.toggle.pie")
+                }
+                crate::tui::model::StatsViewMode::Pie => {
+                    rust_i18n::t!("tui.ui.footer.toggle.graph")
+                }
+            },
+        ),
         _ => ('v', target.unwrap_or_else(default_view)),
     };
     (format!("[{key}:{target}]"), key.to_string())

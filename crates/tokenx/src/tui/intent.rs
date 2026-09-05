@@ -59,7 +59,9 @@ impl Intent {
             KeyCode::Enter => Some(Self::OpenDetails),
             KeyCode::Esc | KeyCode::Backspace => Some(Self::Back),
             KeyCode::Char('h') if tab == Tab::Overview => Some(Self::ToggleView),
-            KeyCode::Char('v') if matches!(tab, Tab::Daily | Tab::Hourly) => Some(Self::ToggleView),
+            KeyCode::Char('v') if matches!(tab, Tab::Daily | Tab::Hourly | Tab::Stats) => {
+                Some(Self::ToggleView)
+            }
             KeyCode::Char('s') => Some(Self::Clients),
             KeyCode::Char('g') => Some(Self::GroupBy),
             KeyCode::Char('p') => Some(Self::Theme),
@@ -122,5 +124,12 @@ mod tests {
         );
         assert_eq!(Intent::from_key(Tab::Overview, lowercase), None);
         assert_eq!(Intent::Language.action(), Some(Action::Language));
+    }
+
+    #[test]
+    fn stats_view_uses_v_for_the_pie_toggle() {
+        let key = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE);
+        assert_eq!(Intent::from_key(Tab::Stats, key), Some(Intent::ToggleView));
+        assert_eq!(Intent::from_key(Tab::Models, key), None);
     }
 }
