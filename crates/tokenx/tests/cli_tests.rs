@@ -1152,6 +1152,60 @@ fn test_codex_models_home_override_uses_the_explicit_home() {
 }
 
 #[test]
+fn test_codex_cache_write_tokens_and_cost_survive_cached_models_projection() {
+    let tmp = TempDir::new().unwrap();
+    prime_pricing_cache(tmp.path());
+    let sessions = tmp.path().join(".codex/sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(
+        sessions.join("cache-write.jsonl"),
+        concat!(
+            r#"{"type":"session_meta","payload":{"id":"cache-write","model_provider":"openai"}}"#,
+            "\n",
+            r#"{"type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-06T03:19:35Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2600,"cached_input_tokens":2000,"cache_write_input_tokens":400,"output_tokens":100,"total_tokens":2700},"last_token_usage":{"input_tokens":2600,"cached_input_tokens":2000,"cache_write_input_tokens":400,"output_tokens":100,"total_tokens":2700}}}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join(".tokenx/custom-pricing.json"),
+        r#"{"models":{"gpt-5.6-sol":{
+            "input_cost_per_million_tokens":4,
+            "output_cost_per_million_tokens":20,
+            "cache_read_input_token_cost_per_million_tokens":0.4,
+            "cache_creation_input_token_cost_per_million_tokens":5
+        }}}"#,
+    )
+    .unwrap();
+
+    // Exercise both cold acquisition and a subsequent cached invocation.
+    for _ in 0..2 {
+        let output = offline_cmd_with_home(tmp.path())
+            .args(["models", "--json", "--client", "codex", "--no-spinner"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(model_rows(&json).len(), 1);
+        assert_eq!(model_token_sum(&json, "input"), 200);
+        assert_eq!(model_token_sum(&json, "output"), 100);
+        assert_eq!(model_token_sum(&json, "cacheRead"), 2000);
+        assert_eq!(model_token_sum(&json, "cacheWrite"), 400);
+        assert_eq!(json["data"]["totals"]["tokens"], 2700);
+        // (200 * 4 + 100 * 20 + 2000 * 0.4 + 400 * 5) / 1_000_000.
+        let expected_cost = 0.0056;
+        assert!((json["data"]["totals"]["cost"].as_f64().unwrap() - expected_cost).abs() < 1e-12);
+        assert!((model_rows(&json)[0]["cost"].as_f64().unwrap() - expected_cost).abs() < 1e-12);
+    }
+}
+
+#[test]
 fn test_language_flag_selects_chinese_output() {
     let tmp = TempDir::new().unwrap();
 

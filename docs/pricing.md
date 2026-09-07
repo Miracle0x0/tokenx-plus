@@ -18,6 +18,14 @@ buckets:
 - cache write or cache creation tokens
 - reasoning tokens
 
+Codex includes cache reads and writes in `input_tokens`. Tokenx subtracts
+`cached_input_tokens` (or `cache_read_input_tokens`) and
+`cache_write_input_tokens` from that inclusive input count, then prices the three
+buckets separately. Cache writes use the catalog's
+`cache_creation_input_token_cost`, including custom overrides. An absent
+`cache_write_input_tokens` means zero; no write volume or model-specific write
+rate is inferred. See [Codex token usage](facts/codex.md).
+
 Rows without positive token buckets are not usage rows. Cost-only or
 credits-only records are dropped instead of being converted into local token
 cost.
