@@ -12,6 +12,8 @@ on:
       - "packages/tokenx/package.json"
       - "packages/tokenx-*/package.json"
       - "scripts/check-release-workflow-safety.py"
+      - "scripts/build-linux-gnu.sh"
+      - "scripts/zig-linker.py"
 
 concurrency:
   group: build-native-${{ github.workflow }}-${{ github.ref }}
@@ -40,7 +42,7 @@ jobs:
             bin_name: tokenx
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: cargo zigbuild --locked --release -p tokenx --target x86_64-unknown-linux-gnu
+            build: bash scripts/build-linux-gnu.sh
             strip: strip target/x86_64-unknown-linux-gnu/release/tokenx
             bin_name: tokenx
           - host: windows-latest
@@ -84,7 +86,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
-          tool: cargo-zigbuild@0.23.0
+          tool: cargo-zigbuild
 
       - name: Build native binary
         shell: bash

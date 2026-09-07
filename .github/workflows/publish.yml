@@ -84,7 +84,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact_name: tokenx-binary-x86_64-unknown-linux-gnu
             bin_name: tokenx
-            build: cargo zigbuild --locked --release -p tokenx --target x86_64-unknown-linux-gnu
+            build: bash scripts/build-linux-gnu.sh
             strip: strip target/x86_64-unknown-linux-gnu/release/tokenx
           - host: windows-latest
             target: x86_64-pc-windows-msvc
@@ -126,7 +126,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
-          tool: cargo-zigbuild@0.23.0
+          tool: cargo-zigbuild
 
       - name: Build native binary
         shell: bash

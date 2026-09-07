@@ -83,7 +83,7 @@ jobs:
         settings:
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: cargo zigbuild --release -p tokenx --target x86_64-unknown-linux-gnu
+            build: bash scripts/build-linux-gnu.sh
             strip: strip target/x86_64-unknown-linux-gnu/release/tokenx
             bin_name: tokenx
     steps:
@@ -131,7 +131,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact_name: tokenx-binary-x86_64-unknown-linux-gnu
             bin_name: tokenx
-            build: cargo zigbuild --release -p tokenx --target x86_64-unknown-linux-gnu
+            build: bash scripts/build-linux-gnu.sh
             strip: strip target/x86_64-unknown-linux-gnu/release/tokenx
     steps:
       - name: Smoke native binary
