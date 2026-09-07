@@ -347,11 +347,13 @@ interface CodexEntry {
         input_tokens: number;
         output_tokens: number;
         cached_input_tokens: number;
+        cache_write_input_tokens: number;
       };
       total_token_usage?: {
         input_tokens: number;
         output_tokens: number;
         cached_input_tokens: number;
+        cache_write_input_tokens: number;
       };
     };
   };
@@ -387,15 +389,18 @@ function generateCodexData(config: GeneratorConfig): void {
     let totalInput = 0;
     let totalOutput = 0;
     let totalCached = 0;
+    let totalCacheWrite = 0;
 
     for (let e = 0; e < eventsPerSession; e++) {
       const inputTokens = randomInt(500, 10000);
       const outputTokens = randomInt(200, 5000);
-      const cachedTokens = Math.random() > 0.5 ? randomInt(200, 5000) : 0;
+      const cachedTokens = Math.random() > 0.5 ? randomInt(200, inputTokens) : 0;
+      const cacheWriteTokens = Math.random() > 0.5 ? randomInt(0, inputTokens - cachedTokens) : 0;
 
       totalInput += inputTokens;
       totalOutput += outputTokens;
       totalCached += cachedTokens;
+      totalCacheWrite += cacheWriteTokens;
 
       const timestamp = new Date(sessionStart + e * randomInt(5000, 30000)).toISOString();
 
@@ -409,11 +414,13 @@ function generateCodexData(config: GeneratorConfig): void {
               input_tokens: inputTokens,
               output_tokens: outputTokens,
               cached_input_tokens: cachedTokens,
+              cache_write_input_tokens: cacheWriteTokens,
             },
             total_token_usage: {
               input_tokens: totalInput,
               output_tokens: totalOutput,
               cached_input_tokens: totalCached,
+              cache_write_input_tokens: totalCacheWrite,
             },
           },
         },

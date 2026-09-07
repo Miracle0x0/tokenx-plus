@@ -73,6 +73,7 @@ pub struct CodexTokenUsage {
     pub output_tokens: Option<i64>,
     pub cached_input_tokens: Option<i64>,
     pub cache_read_input_tokens: Option<i64>,
+    pub cache_write_input_tokens: Option<i64>,
     pub reasoning_output_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
 }
@@ -82,6 +83,7 @@ pub(crate) struct CodexTotals {
     input: i64,
     output: i64,
     cached: i64,
+    cache_write: i64,
     reasoning: i64,
 }
 
@@ -94,6 +96,7 @@ impl CodexTotals {
                 .cached_input_tokens
                 .unwrap_or(0)
                 .max(usage.cache_read_input_tokens.unwrap_or(0)),
+            cache_write: usage.cache_write_input_tokens.unwrap_or(0),
             reasoning: usage.reasoning_output_tokens.unwrap_or(0),
         }
     }
@@ -102,6 +105,7 @@ impl CodexTotals {
         if self.input < previous.input
             || self.output < previous.output
             || self.cached < previous.cached
+            || self.cache_write < previous.cache_write
             || self.reasoning < previous.reasoning
         {
             return None;
@@ -111,20 +115,28 @@ impl CodexTotals {
             input: self.input - previous.input,
             output: self.output - previous.output,
             cached: self.cached - previous.cached,
+            cache_write: self.cache_write - previous.cache_write,
             reasoning: self.reasoning - previous.reasoning,
         })
     }
 
     fn checked_total(self) -> Option<i64> {
-        [self.input, self.output, self.cached, self.reasoning]
-            .into_iter()
-            .try_fold(0_i64, i64::checked_add)
+        [
+            self.input,
+            self.output,
+            self.cached,
+            self.cache_write,
+            self.reasoning,
+        ]
+        .into_iter()
+        .try_fold(0_i64, i64::checked_add)
     }
 
     fn is_within(self, baseline: Self) -> bool {
         self.input <= baseline.input
             && self.output <= baseline.output
             && self.cached <= baseline.cached
+            && self.cache_write <= baseline.cache_write
             && self.reasoning <= baseline.reasoning
     }
 
@@ -151,10 +163,10 @@ impl CodexTotals {
 
     fn into_tokens(self) -> TokenBreakdown {
         TokenBreakdown {
-            input: self.input - self.cached,
+            input: self.input - self.cached - self.cache_write,
             output: self.output,
             cache_read: self.cached,
-            cache_write: 0,
+            cache_write: self.cache_write,
             reasoning: self.reasoning,
         }
     }
@@ -166,6 +178,7 @@ fn validate_codex_token_usage(usage: &CodexTokenUsage) -> SessionParseResult<Cod
         usage.output_tokens,
         usage.cached_input_tokens,
         usage.cache_read_input_tokens,
+        usage.cache_write_input_tokens,
         usage.reasoning_output_tokens,
         usage.total_tokens,
     ]
@@ -180,10 +193,12 @@ fn validate_codex_token_usage(usage: &CodexTokenUsage) -> SessionParseResult<Cod
     }
 
     let totals = CodexTotals::from_usage(usage);
-    if totals.cached > totals.input {
+    // Subtract only after checking reads, so even overflowing read + write
+    // detail is rejected without overflowing the validation itself.
+    if totals.cached > totals.input || totals.cache_write > totals.input - totals.cached {
         return Err(SessionParseError::invalid(
             "validate Codex token-count usage",
-            "cached input tokens exceed input tokens",
+            "cache read and cache write tokens exceed input tokens",
         ));
     }
     if totals.checked_total().is_none() {
@@ -666,6 +681,7 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                     if tokens.input == 0
                         && tokens.output == 0
                         && tokens.cache_read == 0
+                        && tokens.cache_write == 0
                         && tokens.reasoning == 0
                     {
                         continue;
@@ -932,13 +948,14 @@ fn codex_token_count_dedup_key(
     // history into many child files with child-local timestamps. Current-format
     // cumulative totals provide the stable upstream identity.
     crate::records::dedup_hash_str(&format!(
-        "codex:token_count-total:{}:{}:{}:{}:{}:{}:{}",
+        "codex:token_count-total:{}:{}:{}:{}:{}:{}:{}:{}",
         upstream_session_id,
         message.provider_id,
         model,
         total_usage.input,
         total_usage.output,
         total_usage.cached,
+        total_usage.cache_write,
         total_usage.reasoning
     ))
 }
@@ -1275,6 +1292,227 @@ mod tests {
     ) -> ParsedCodexFile {
         super::parse_codex_file_incremental(path, start_offset, state)
             .expect("test fixture must be valid incremental Codex JSONL")
+    }
+
+    fn cache_write_snapshot(total: Value, last: Value) -> String {
+        serde_json::json!({
+            "timestamp": "2026-09-06T03:19:35Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "model": "gpt-5.6-sol",
+                    "total_token_usage": total,
+                    "last_token_usage": last
+                }
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn cache_write_uses_last_usage_and_distinguishes_cumulative_snapshots() {
+        let last = serde_json::json!({
+            "input_tokens": 100, "cached_input_tokens": 40,
+            "cache_write_input_tokens": 20, "output_tokens": 10,
+            "reasoning_output_tokens": 5
+        });
+        let mut total = last.clone();
+        total["input_tokens"] = 1000.into();
+        let first = cache_write_snapshot(total.clone(), last.clone());
+        // A snapshot that differs only in cumulative cache writes is distinct.
+        total["cache_write_input_tokens"] = 40.into();
+        let second = cache_write_snapshot(total, last);
+        let file = create_test_file(&format!("{first}\n{first}\n{second}\n"));
+
+        let messages = parse_codex_file(file.path());
+
+        assert_eq!(messages.len(), 2);
+        for message in &messages {
+            assert_eq!(
+                message.tokens,
+                TokenBreakdown {
+                    input: 40,
+                    output: 10,
+                    cache_read: 40,
+                    cache_write: 20,
+                    reasoning: 5
+                }
+            );
+        }
+        assert_ne!(messages[0].dedup_key, messages[1].dedup_key);
+    }
+
+    #[test]
+    fn cache_write_missing_field_means_zero() {
+        let usage = serde_json::json!({
+            "input_tokens": 100, "cached_input_tokens": 40, "output_tokens": 10
+        });
+        let file = create_test_file(&cache_write_snapshot(usage.clone(), usage));
+        let messages = parse_codex_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 60);
+        assert_eq!(messages[0].tokens.cache_read, 40);
+        assert_eq!(messages[0].tokens.cache_write, 0);
+    }
+
+    #[test]
+    fn cache_write_only_usage_is_not_an_empty_snapshot() {
+        let usage = serde_json::json!({
+            "input_tokens": 100, "cache_write_input_tokens": 100
+        });
+        let file = create_test_file(&cache_write_snapshot(usage.clone(), usage));
+        let messages = parse_codex_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].tokens,
+            TokenBreakdown {
+                cache_write: 100,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn cache_write_invalid_buckets_are_rejected_beside_valid_usage() {
+        let good = serde_json::json!({
+            "input_tokens": 100, "cached_input_tokens": 40,
+            "cache_write_input_tokens": 20, "output_tokens": 10
+        });
+        let invalid = [
+            serde_json::json!({"input_tokens": 100, "cache_write_input_tokens": -1}),
+            serde_json::json!({"input_tokens": 100, "cache_write_input_tokens": 101}),
+            serde_json::json!({"input_tokens": 100, "cached_input_tokens": 80, "cache_write_input_tokens": 21}),
+            serde_json::json!({"input_tokens": 100, "cache_read_input_tokens": 80, "cache_write_input_tokens": 21}),
+            serde_json::json!({"input_tokens": i64::MAX, "cached_input_tokens": i64::MAX, "cache_write_input_tokens": 1}),
+            serde_json::json!({"input_tokens": i64::MAX, "cache_write_input_tokens": 1}),
+        ];
+        for invalid_usage in invalid {
+            for (total, last) in [
+                (invalid_usage.clone(), good.clone()),
+                (good.clone(), invalid_usage.clone()),
+            ] {
+                let bad_row = cache_write_snapshot(total, last);
+                let good_row = cache_write_snapshot(good.clone(), good.clone());
+                let file = create_test_file(&format!("{bad_row}\n{good_row}\n"));
+                let parsed =
+                    parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+
+                assert_eq!(parsed.rejections.total(), 1, "{bad_row}");
+                assert!(parsed.interrupted.is_none(), "{bad_row}");
+                assert_eq!(parsed.messages.len(), 1, "{bad_row}");
+                assert_eq!(parsed.messages[0].tokens.cache_write, 20);
+            }
+        }
+    }
+
+    #[test]
+    fn cache_write_regression_keeps_watermark_until_recovery_or_reset() {
+        let first = serde_json::json!({
+            "input_tokens": 1000, "cache_write_input_tokens": 400
+        });
+        let stale = serde_json::json!({
+            "input_tokens": 1010, "cache_write_input_tokens": 390
+        });
+        let recovered = serde_json::json!({
+            "input_tokens": 1020, "cache_write_input_tokens": 410
+        });
+        let increment = serde_json::json!({
+            "input_tokens": 20, "cache_write_input_tokens": 10
+        });
+        let reset = serde_json::json!({
+            "input_tokens": 100, "cache_write_input_tokens": 20
+        });
+        let rows = [
+            cache_write_snapshot(first.clone(), first),
+            cache_write_snapshot(stale, increment.clone()),
+            cache_write_snapshot(recovered, increment),
+            cache_write_snapshot(reset.clone(), reset),
+        ];
+        let file = create_test_file(&rows.join("\n"));
+        let messages = parse_codex_file(file.path());
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|row| row.tokens.cache_write)
+                .collect::<Vec<_>>(),
+            vec![400, 10, 20]
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .map(|row| row.tokens.input)
+                .collect::<Vec<_>>(),
+            vec![600, 10, 80]
+        );
+    }
+
+    #[test]
+    fn cache_write_growth_exceeds_fork_inherited_bucket_baseline() {
+        let inherited = serde_json::json!({
+            "input_tokens": 1000, "cache_write_input_tokens": 400
+        });
+        let mut own = inherited.clone();
+        own["cache_write_input_tokens"] = 420.into();
+        let own_last = serde_json::json!({
+            "input_tokens": 20, "cache_write_input_tokens": 20
+        });
+        // Without a reported total, inherited history is compared by buckets.
+        let file = create_test_file(&format!(
+            "{}\n{}\n{}\n{}\n{}\n",
+            r#"{"type":"session_meta","payload":{"id":"child","forked_from_id":"parent","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent"}}}}}"#,
+            cache_write_snapshot(inherited.clone(), inherited.clone()),
+            r#"{"type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+            cache_write_snapshot(inherited.clone(), inherited),
+            cache_write_snapshot(own, own_last),
+        ));
+        let messages = parse_codex_file(file.path());
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.cache_write, 20);
+        assert_eq!(messages[0].tokens.input, 0);
+        assert!(!messages[0].is_main_session);
+    }
+
+    #[test]
+    fn cache_write_survives_serialized_incremental_state() {
+        let first = serde_json::json!({
+            "input_tokens": 100, "cached_input_tokens": 40, "cache_write_input_tokens": 20
+        });
+        let first_row = cache_write_snapshot(first.clone(), first);
+        let file = create_test_file(&format!("{first_row}\n"));
+        let initial = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+        let state = bincode::deserialize(&bincode::serialize(&initial.state).unwrap()).unwrap();
+        let total = serde_json::json!({
+            "input_tokens": 150, "cached_input_tokens": 50, "cache_write_input_tokens": 50
+        });
+        let last = serde_json::json!({
+            "input_tokens": 50, "cached_input_tokens": 10, "cache_write_input_tokens": 30
+        });
+        let second_row = cache_write_snapshot(total, last);
+        let mut appended = file.reopen().unwrap();
+        appended.seek(SeekFrom::End(0)).unwrap();
+        writeln!(appended, "{first_row}\n{second_row}").unwrap();
+        appended.flush().unwrap();
+
+        let incremental = super::parse_codex_file_incremental_verified(
+            file.path(),
+            initial.consumed_offset,
+            state,
+            initial.content_hash.unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(incremental.messages.len(), 1);
+        assert_eq!(incremental.messages[0].tokens.cache_write, 30);
+        assert_eq!(incremental.messages[0].tokens.input, 10);
+        let mut combined = initial.messages;
+        combined.extend(incremental.messages);
+        assert_eq!(combined, parse_codex_file(file.path()));
     }
 
     struct FailAfterFirstLine {
@@ -1796,6 +2034,7 @@ mod tests {
             input: 7,
             output: 2,
             cached: 1,
+            cache_write: 0,
             reasoning: 0,
         };
         let mut state = CodexParseState {
@@ -1812,6 +2051,7 @@ mod tests {
                 output_tokens: Some(4),
                 cached_input_tokens: Some(2),
                 cache_read_input_tokens: None,
+                cache_write_input_tokens: None,
                 reasoning_output_tokens: Some(1),
                 total_tokens: Some(25),
             }),
@@ -1820,6 +2060,7 @@ mod tests {
                 output_tokens: Some(2),
                 cached_input_tokens: Some(2),
                 cache_read_input_tokens: Some(-1),
+                cache_write_input_tokens: None,
                 reasoning_output_tokens: Some(0),
                 total_tokens: Some(12),
             }),
@@ -2352,6 +2593,7 @@ mod tests {
             output_tokens: Some(30),
             cached_input_tokens: Some(10),
             cache_read_input_tokens: Some(20),
+            cache_write_input_tokens: None,
             reasoning_output_tokens: Some(5),
             total_tokens: None,
         };
