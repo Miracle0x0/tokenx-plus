@@ -35,6 +35,21 @@ bun run build:launcher
 bun run cli -- models --no-spinner
 ```
 
+Linux x86-64 GNU builds use the same entrypoint locally and in the native build
+and release workflows. Install the latest cargo-zigbuild, with Zig and Python 3
+available on PATH, then build:
+
+```bash
+cargo install --locked cargo-zigbuild
+bash scripts/build-linux-gnu.sh
+```
+
+The binary is written to `target/x86_64-unknown-linux-gnu/release/tokenx`.
+The final linker adapter removes only `-Wl,-O1`, which Zig ignores with a
+deprecation warning, including when Rust uses a linker response file. It delegates
+to cargo-zigbuild's resolved linker and preserves all other arguments, diagnostics
+and exit status. Rust optimization, LTO, target CPU and ABI selection are unchanged.
+
 ## Test
 
 ```bash

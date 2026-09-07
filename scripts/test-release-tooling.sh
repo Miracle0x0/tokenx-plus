@@ -8,6 +8,7 @@ cd "${ROOT_DIR}"
 bash scripts/check-npm-package-files.sh
 bash scripts/check-version-coherence.sh
 python3 scripts/check-release-workflow-safety.py
+python3 scripts/test-zig-linker.py
 bash scripts/test-check-version-coherence.sh
 bash scripts/test-bump-release-version.sh
 bash scripts/test-check-release-commit.sh
