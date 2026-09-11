@@ -29,6 +29,7 @@ paths:
 
 settings:
   error:
+    model_mappings: "failed to parse model mappings TOML `%{path}`: %{source}"
     read: "failed to read settings file `%{path}`: %{source}"
     parse: "failed to parse settings JSON `%{path}`: %{source}"
     invalid: "invalid settings in `%{path}`: %{source}"

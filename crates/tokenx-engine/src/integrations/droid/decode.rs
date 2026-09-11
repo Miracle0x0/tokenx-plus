@@ -154,7 +154,7 @@ fn normalize_model_name(model: &str) -> String {
         collapsed
     };
 
-    model_aliases::canonicalize_observed_model_id(&claude_prefixed).unwrap_or(claude_prefixed)
+    model_aliases::normalize_model_syntax(&claude_prefixed)
 }
 
 fn get_provider_from_model_and_lock(model: &str, provider_lock: Option<&str>) -> String {
@@ -474,8 +474,9 @@ pub fn parse_droid_file(path: &Path) -> SessionParseResult<ScannedInput> {
         return Ok(scanned);
     }
 
-    let message =
+    let mut message =
         UsageRecord::new_with_agent(model, provider, session_id, timestamp, tokens, 0.0, agent);
+    message.raw_model_id = crate::records::intern::intern(raw_model);
     scanned.messages.push(message);
     classify_droid_main_session(path, &mut scanned.messages);
     Ok(scanned)

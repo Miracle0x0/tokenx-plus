@@ -241,6 +241,7 @@ fn fold_claude_units(
         rejections.merge(&crate::price_source_eligible_messages(
             &mut messages,
             ctx.pricing,
+            &ctx.model_mappings,
         ));
         rejections.merge(&pipeline_cache::emit_messages(
             messages

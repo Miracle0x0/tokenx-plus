@@ -9,7 +9,7 @@ use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::open_readonly_sqlite;
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
-use crate::{model_aliases, provider_identity, token_imputation};
+use crate::{provider_identity, token_imputation};
 use chrono::TimeZone;
 use rusqlite::Connection;
 use serde_json::Value;
@@ -158,8 +158,7 @@ pub fn parse_warp_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
                     continue;
                 }
             };
-            let model_id = model_aliases::canonicalize_observed_model_id(raw_model_id)
-                .unwrap_or_else(|| raw_model_id.to_string());
+            let model_id = raw_model_id.to_string();
             let provider_id = provider_identity::observed_provider_id("", &model_id);
             let dedup_key = crate::records::dedup_hash_str(&format!(
                 "warp:{conversation_id}:{index}:{model_id}"

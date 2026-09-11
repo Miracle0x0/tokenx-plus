@@ -47,8 +47,12 @@ pub(crate) fn is_claude_opus_5_model(model: &str) -> bool {
             .is_some_and(|suffix| suffix.len() > 1 && suffix.starts_with('-'))
 }
 
-/// Canonical model-id authority for usage grouping, finalization, and pricing.
+/// Apply bundled model mappings for callers without explicit overrides.
 pub(crate) fn canonicalize_model_id(model_id: &str) -> String {
+    crate::ModelMappings::default().canonicalize(model_id)
+}
+
+pub(crate) fn normalize_model_syntax(model_id: &str) -> String {
     let normalized = normalized_terminal_model_id(model_id);
     let normalized_id = normalized.as_ref();
     if normalized_id.is_empty() || !normalized_id.is_ascii() {
@@ -56,14 +60,15 @@ pub(crate) fn canonicalize_model_id(model_id: &str) -> String {
     }
 
     let lexically_normalized = strip_global_suffixes_to_stable(normalized);
-    canonicalize_known_model_alias(&lexically_normalized)
+    normalize_model_family_syntax(&lexically_normalized)
         .unwrap_or_else(|| lexically_normalized.into_owned())
 }
 
-/// Parser convenience shim; not the authoritative model identity boundary.
+/// Test helper for observing changes at the default identity boundary.
 ///
 /// Returns `Some` only when canonicalization changes the normalized terminal id.
-pub(crate) fn canonicalize_observed_model_id(model: &str) -> Option<String> {
+#[cfg(test)]
+fn canonicalize_observed_model_id(model: &str) -> Option<String> {
     let normalized = normalized_terminal_model_id(model);
     let canonical = canonicalize_model_id(model);
     if canonical == normalized.as_ref() {
@@ -73,7 +78,7 @@ pub(crate) fn canonicalize_observed_model_id(model: &str) -> Option<String> {
     }
 }
 
-fn normalized_terminal_model_id(model_id: &str) -> Cow<'_, str> {
+pub(crate) fn normalized_terminal_model_id(model_id: &str) -> Cow<'_, str> {
     let trimmed = model_id.trim();
     let without_custom = strip_custom_model_prefix(trimmed);
     let segment = canonical_model_segment(without_custom);
@@ -90,13 +95,15 @@ fn strip_custom_model_prefix(model_id: &str) -> &str {
     model_id.strip_prefix("custom:").unwrap_or(model_id)
 }
 
-fn canonicalize_known_model_alias(model: &str) -> Option<String> {
+fn normalize_model_family_syntax(model: &str) -> Option<String> {
     if let Some(display_slug) = normalized_human_display_model_slug(model) {
         if display_slug != model {
-            if let Some(canonical) = canonicalize_known_model_alias(&display_slug) {
+            if let Some(canonical) = normalize_model_family_syntax(&display_slug) {
                 return Some(canonical);
             }
-            if is_openai_gpt_observed_base_model(&display_slug) {
+            if is_openai_gpt_observed_base_model(&display_slug)
+                || is_claude_opus_5_model(&display_slug)
+            {
                 return Some(display_slug);
             }
         }
@@ -110,45 +117,15 @@ fn canonicalize_known_model_alias(model: &str) -> Option<String> {
     if model.starts_with("gpt-") {
         return canonicalize_openai_observed_model(model);
     }
-    if model.starts_with("glm-") {
-        if let Some(canonical) = canonicalize_glm_observed_model(model) {
-            return Some(canonical.to_string());
-        }
-    }
-    if model.starts_with("qwen") {
-        if let Some(canonical) = canonicalize_qwen_observed_model(model) {
-            return Some(canonical);
-        }
-    }
-    if model.starts_with("kimi") || model.starts_with("k2") {
-        if let Some(canonical) = canonicalize_kimi_observed_model(model) {
-            return Some(canonical);
-        }
-    }
-    if model.starts_with("grok") {
-        if let Some(canonical) = canonicalize_grok_observed_model(model) {
-            return Some(canonical);
-        }
-    }
-    if model.starts_with("mimo-") {
-        if let Some(canonical) = canonicalize_mimo_observed_model(model) {
-            return Some(canonical);
-        }
-    }
     if model.starts_with("deepseek-") {
         if let Some(canonical) = canonicalize_deepseek_observed_model(model) {
             return Some(canonical);
         }
     }
-    if model.starts_with("longcat-") {
-        if let Some(canonical) = canonicalize_longcat_observed_model(model) {
-            return Some(canonical.to_string());
-        }
-    }
     None
 }
 
-fn normalized_human_display_model_slug(model: &str) -> Option<String> {
+pub(crate) fn normalized_human_display_model_slug(model: &str) -> Option<String> {
     if !model
         .chars()
         .any(|ch| ch.is_ascii_whitespace() || matches!(ch, '(' | ')'))
@@ -322,7 +299,8 @@ fn is_openai_reasoning_effort_for_model(model: &str, effort: &str) -> bool {
 
 fn canonical_gpt_5_6_base(model: &str) -> Option<&'static str> {
     match model {
-        "gpt-5.6" | "gpt-5.6-sol" => Some("gpt-5.6-sol"),
+        "gpt-5.6" => Some("gpt-5.6"),
+        "gpt-5.6-sol" => Some("gpt-5.6-sol"),
         "gpt-5.6-terra" => Some("gpt-5.6-terra"),
         "gpt-5.6-luna" => Some("gpt-5.6-luna"),
         _ => None,
@@ -372,86 +350,6 @@ fn is_openai_gpt_version(value: &str) -> bool {
     )
 }
 
-fn canonicalize_glm_observed_model(model: &str) -> Option<&'static str> {
-    let model = canonical_model_segment(model);
-    if matches!(model, "glm-4.7-free" | "glm-4.7:free" | "glm-4.7 (free)") {
-        return Some("glm-4.7");
-    }
-
-    let base = model
-        .strip_suffix("-high")
-        .or_else(|| model.strip_suffix("-medium"))
-        .or_else(|| model.strip_suffix("-fast"))
-        .or_else(|| model.strip_suffix("-sub2api-pro"))
-        .unwrap_or(model);
-
-    if base != model
-        && matches!(
-            base,
-            "glm-4.7" | "glm-4.7-free" | "glm-4.7:free" | "glm-4.7 (free)"
-        )
-    {
-        Some("glm-4.7")
-    } else {
-        None
-    }
-}
-
-fn canonicalize_qwen_observed_model(model: &str) -> Option<String> {
-    let model = canonical_model_segment(model);
-    if !model.starts_with("qwen") {
-        return None;
-    }
-
-    strip_release_suffix(model).map(str::to_string)
-}
-
-fn canonicalize_kimi_observed_model(model: &str) -> Option<String> {
-    let model = canonical_model_segment(model);
-    if let Some(base) = strip_release_suffix(model)
-        .filter(|base| *base == "kimi-k2" || base.starts_with("kimi-k2-"))
-    {
-        return Some(base.to_string());
-    }
-
-    match canonical_model_segment(model) {
-        "k2p5" | "k2-p5" | "kimi-for-coding/k2p5" | "kimi-for-coding/k2-p5" => {
-            Some("kimi-k2.5".to_string())
-        }
-        "k2p6" | "k2-p6" | "kimi-k2p6" | "kimi-for-coding/k2p6" | "kimi-for-coding/k2-p6" => {
-            Some("kimi-k2.6".to_string())
-        }
-        "kimi-k2.5-thinking" => Some("kimi-k2-thinking".to_string()),
-        "kimi-for-coding" => Some("kimi-k2.5".to_string()),
-        "kimi-k2.5-nvfp4" => Some("kimi-k2.5".to_string()),
-        _ => None,
-    }
-}
-
-fn canonicalize_grok_observed_model(model: &str) -> Option<String> {
-    let model = canonical_model_segment(model);
-    if let Some(base) = strip_release_suffix(model) {
-        if base == "grok-code-fast-1" {
-            return Some(base.to_string());
-        }
-    }
-
-    match model {
-        "grok-composer-2.5" => Some("composer-2.5".to_string()),
-        "grok-composer-2.5-fast" => Some("composer-2.5-fast".to_string()),
-        _ => None,
-    }
-}
-
-fn canonicalize_mimo_observed_model(model: &str) -> Option<String> {
-    let model = canonical_model_segment(model);
-    if !model.starts_with("mimo-") {
-        return None;
-    }
-
-    strip_release_suffix(model).map(str::to_string)
-}
-
 fn canonicalize_deepseek_observed_model(model: &str) -> Option<String> {
     let model = canonical_model_segment(model);
     if !model.starts_with("deepseek-") {
@@ -469,23 +367,11 @@ fn canonicalize_deepseek_observed_model(model: &str) -> Option<String> {
     strip_release_suffix(model).map(str::to_string)
 }
 
-pub(crate) fn canonicalize_longcat_observed_model(model: &str) -> Option<&'static str> {
-    let model = canonical_model_segment(model);
-    if model == "longcat-flash-3b" {
-        return Some("longcat-flash-3b");
-    }
-
-    model
-        .strip_prefix("longcat-flash-3b-all-quant-")
-        .filter(|suffix| !suffix.is_empty())
-        .map(|_| "longcat-flash-3b")
-}
-
 fn canonicalize_modern_claude_observed_model(model: &str) -> Option<String> {
     let model = canonical_model_segment(model);
     let model = model.strip_suffix("-thinking").unwrap_or(model);
     if is_claude_opus_5_model(model) {
-        return Some(CLAUDE_OPUS_5_MODEL_ID.to_string());
+        return None;
     }
 
     let parts: Vec<&str> = model

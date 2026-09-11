@@ -99,6 +99,7 @@ pub(crate) fn run_models(plan: ResolvedModelsPlan, no_spinner: bool) -> Result<(
         calendar,
         pricing,
         dsh_home,
+        settings.model_mappings.clone(),
     )?;
     let resolved_home_dir = acquisition.config().resolved_home_dir().to_path_buf();
     let prepared = acquisition.prepare()?;

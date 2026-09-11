@@ -11,7 +11,7 @@ use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::{
     normalize_agent_name, normalize_workspace_key, workspace_label_from_key, UsageRecord,
 };
-use crate::{model_aliases, provider_identity, TokenBreakdown};
+use crate::{provider_identity, TokenBreakdown};
 use rayon::prelude::*;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -888,8 +888,7 @@ fn parse_file(
                 .record(RecordRejectionReason::MissingModel);
             continue;
         };
-        let model = model_aliases::canonicalize_observed_model_id(&raw_model)
-            .unwrap_or_else(|| raw_model.trim().to_string());
+        let model = raw_model.trim().to_string();
 
         let provider = provider_identity::observed_provider_id(
             message.provider.as_deref().unwrap_or_default(),
@@ -1072,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_omp_jsonl_canonicalizes_openai_reasoning_tier_model() {
+    fn test_parse_omp_jsonl_preserves_openai_reasoning_tier_model() {
         let content = r#"{"type":"session","id":"omp_ses_tier","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp"}
 {"type":"message","id":"msg_001","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"assistant","model":"openai/gpt-5.5(xhigh)","provider":"openai","usage":{"input":20,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":30}}}
 {"type":"message","id":"msg_002","parentId":null,"timestamp":"2026-01-01T00:00:02.000Z","message":{"role":"assistant","model":"gpt-5.3-codex-xhigh","provider":"openai","usage":{"input":30,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":40}}}"#;
@@ -1081,8 +1080,8 @@ mod tests {
         let messages = parse_omp_file(file.path()).unwrap().messages;
 
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].model_id.as_ref(), "gpt-5.5");
-        assert_eq!(messages[1].model_id.as_ref(), "gpt-5.3-codex");
+        assert_eq!(messages[0].model_id.as_ref(), "openai/gpt-5.5(xhigh)");
+        assert_eq!(messages[1].model_id.as_ref(), "gpt-5.3-codex-xhigh");
     }
 
     #[test]

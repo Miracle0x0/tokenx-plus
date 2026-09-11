@@ -112,6 +112,12 @@ fn localized_settings_error(error: &SettingsLoadError) -> String {
             source = source.to_string()
         )
         .into_owned(),
+        SettingsLoadError::ModelMappings { path, source } => rust_i18n::t!(
+            "settings.error.model_mappings",
+            path = path.display().to_string(),
+            source = source.to_string()
+        )
+        .into_owned(),
         SettingsLoadError::Invalid { path, source } => rust_i18n::t!(
             "settings.error.invalid",
             path = path.display().to_string(),

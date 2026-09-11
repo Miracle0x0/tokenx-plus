@@ -19,7 +19,12 @@ use crate::tui::Tab;
 
 #[derive(Parser, Debug)]
 #[command(name = "tokenx")]
-#[command(author, version, about = rust_i18n::t!("cli.about.root"))]
+#[command(
+    author,
+    version,
+    about = rust_i18n::t!("cli.about.root"),
+    after_help = rust_i18n::t!("cli.help.model_mappings")
+)]
 pub(crate) struct Cli {
     #[arg(
         long,
@@ -231,6 +236,14 @@ fn localize_clap_output(mut output: String) -> String {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
+    #[command(
+        about = rust_i18n::t!("cli.about.config"),
+        after_help = rust_i18n::t!("cli.help.model_mappings")
+    )]
+    Config {
+        #[command(subcommand)]
+        subcommand: ConfigSubcommand,
+    },
     #[command(about = rust_i18n::t!("cli.about.tui"))]
     Tui(TuiArgs),
     #[command(about = rust_i18n::t!("cli.about.models"))]
@@ -244,6 +257,18 @@ pub(crate) enum Commands {
     Cache {
         #[command(subcommand)]
         subcommand: CacheSubcommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum ConfigSubcommand {
+    #[command(
+        about = rust_i18n::t!("cli.about.init_model_mappings"),
+        after_long_help = rust_i18n::t!("cli.help.init_model_mappings")
+    )]
+    InitModelMappings {
+        #[arg(long, help = rust_i18n::t!("cli.help.no_spinner"))]
+        no_spinner: bool,
     },
 }
 
@@ -531,6 +556,10 @@ pub(crate) enum ExecutionPlan<PricingState> {
         paths: ProductPaths,
         subcommand: PricingSubcommand,
     },
+    InitModelMappings {
+        paths: ProductPaths,
+        no_spinner: bool,
+    },
     CachePrune(ProductPaths),
     CacheWarm(StartupSnapshot<PricingState>),
 }
@@ -538,6 +567,12 @@ pub(crate) enum ExecutionPlan<PricingState> {
 impl ExecutionPlan<PendingPricing> {
     pub(crate) fn resolve(cli: Cli, terminal: TerminalState) -> Result<Self, CliFailure> {
         match cli.command.unwrap_or(Commands::Tui(TuiArgs::default())) {
+            Commands::Config {
+                subcommand: ConfigSubcommand::InitModelMappings { no_spinner },
+            } => Ok(Self::InitModelMappings {
+                paths: ProductPaths::resolve()?,
+                no_spinner,
+            }),
             Commands::Tui(args) => resolve_tui(args, terminal).map(Self::Tui),
             Commands::Models(args) => resolve_models(args).map(Self::Models),
             Commands::Pricing { subcommand } => Ok(Self::Pricing {
@@ -556,6 +591,9 @@ impl ExecutionPlan<PendingPricing> {
             Self::Tui(plan) => ExecutionPlan::Tui(plan.bind_local_pricing()),
             Self::Models(plan) => ExecutionPlan::Models(plan.bind_refreshed_pricing().await),
             Self::Pricing { paths, subcommand } => ExecutionPlan::Pricing { paths, subcommand },
+            Self::InitModelMappings { paths, no_spinner } => {
+                ExecutionPlan::InitModelMappings { paths, no_spinner }
+            }
             Self::CachePrune(paths) => ExecutionPlan::CachePrune(paths),
             Self::CacheWarm(startup) => {
                 ExecutionPlan::CacheWarm(startup.bind_refreshed_pricing().await)

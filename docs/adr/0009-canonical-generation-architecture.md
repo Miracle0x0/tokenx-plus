@@ -70,7 +70,8 @@ from that value. The cache stores exactly one serialized `Generation`; it does
 not store Common/Grouped bundles, renderer DTOs, alternative report envelopes,
 or compatibility schemas. `AcquisitionConfig` is one flat, validated identity
 containing the resolved home directory, resolved client root overrides, date
-range, client universe, and typed scanner settings. `AcquisitionEngine` binds
+range, client universe, typed scanner settings, and complete ordered model
+mapping rules. `AcquisitionEngine` binds
 that value at construction; discovery accepts no second configuration argument.
 Cache identity compares the same value as a whole. A schema mismatch is a cache
 miss.

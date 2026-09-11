@@ -1,0 +1,75 @@
+[[rules]]
+pattern = "gpt-5.6"
+model = "gpt-5.6-sol"
+
+[[rules]]
+pattern = "k2p5"
+model = "kimi-k2.5"
+
+[[rules]]
+pattern = "k2-p5"
+model = "kimi-k2.5"
+
+[[rules]]
+pattern = "k2p6"
+model = "kimi-k2.6"
+
+[[rules]]
+pattern = "k2-p6"
+model = "kimi-k2.6"
+
+[[rules]]
+pattern = "kimi-k2p6"
+model = "kimi-k2.6"
+
+[[rules]]
+pattern = "kimi-for-coding"
+model = "kimi-k2.5"
+
+[[rules]]
+pattern = "kimi-k2.5-thinking"
+model = "kimi-k2-thinking"
+
+[[rules]]
+pattern = "kimi-k2.5-nvfp4"
+model = "kimi-k2.5"
+
+[[rules]]
+pattern = "grok-composer-2.5"
+model = "composer-2.5"
+
+[[rules]]
+pattern = "grok-composer-2.5-fast"
+model = "composer-2.5-fast"
+
+[[rules]]
+pattern = "longcat-flash-3b-all-quant-*"
+model = "longcat-flash-3b"
+
+[[rules]]
+pattern = "claude-opus-5-*"
+model = "claude-opus-5"
+
+[[rules]]
+pattern = "deepseek-v4.1-*"
+model = "deepseek-v4.1-flash"
+
+[[rules]]
+pattern = "deepseek-flash"
+model = "deepseek-v4.1-flash"
+
+[[rules]]
+pattern = "glm-4.7-high"
+model = "glm-4.7"
+
+[[rules]]
+pattern = "glm-4.7-medium"
+model = "glm-4.7"
+
+[[rules]]
+pattern = "glm-4.7-fast"
+model = "glm-4.7"
+
+[[rules]]
+pattern = "glm-4.7-sub2api-pro"
+model = "glm-4.7"

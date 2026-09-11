@@ -1,11 +1,11 @@
 //! OpenCode current-format SQLite decoder.
 
 use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
+use crate::provider_identity;
 use crate::records::{
     normalize_opencode_agent_name, normalize_workspace_key, workspace_label_from_key, UsageRecord,
 };
 use crate::TokenBreakdown;
-use crate::{model_aliases, provider_identity};
 use rusqlite::{Connection, OpenFlags};
 use serde::de::{self, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
@@ -307,10 +307,6 @@ fn validate_created_timestamp(created: f64) -> Result<i64, OpenCodeMessageSemant
     }
 }
 
-fn canonicalize_opencode_model_id(model_id: String) -> String {
-    model_aliases::canonicalize_observed_model_id(&model_id).unwrap_or(model_id)
-}
-
 fn decode_opencode_assistant(
     data_json: &str,
 ) -> Result<Option<OpenCodeAssistant>, serde_json::Error> {
@@ -560,7 +556,6 @@ pub fn parse_opencode_sqlite(db_path: &Path) -> Result<ScannedInput, OpenCodeSql
                 continue;
             }
         };
-        let model_id = canonicalize_opencode_model_id(model_id);
         let provider_id = provider_identity::observed_provider_id(
             provider_id.as_deref().unwrap_or_default(),
             &model_id,
@@ -913,7 +908,7 @@ mod tests {
 
         let messages = parse_opencode_sqlite(&path).unwrap().messages;
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "gpt-5.5");
+        assert_eq!(messages[0].model_id.as_ref(), "gpt-5.5-fast");
         assert_eq!(messages[0].tokens.input, 10);
         assert_eq!(
             messages[0].workspace_key.as_deref(),

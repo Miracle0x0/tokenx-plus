@@ -107,8 +107,16 @@ impl PricingLookup {
         provider_id: Option<&str>,
     ) -> Option<LookupResult> {
         let canonical_model_id = model_aliases::canonicalize_model_id(model_id);
-        let provider_scope = resolved_provider_scope(provider_id, &canonical_model_id);
-        let cache_key = build_lookup_cache_key(&canonical_model_id, provider_scope);
+        self.lookup_canonical_with_provider(&canonical_model_id, provider_id)
+    }
+
+    pub(super) fn lookup_canonical_with_provider(
+        &self,
+        canonical_model_id: &str,
+        provider_id: Option<&str>,
+    ) -> Option<LookupResult> {
+        let provider_scope = resolved_provider_scope(provider_id, canonical_model_id);
+        let cache_key = build_lookup_cache_key(canonical_model_id, provider_scope);
 
         if let Some(cached) = self
             .lookup_cache
@@ -123,7 +131,7 @@ impl PricingLookup {
             });
         }
 
-        let result = self.lookup_canonical(&canonical_model_id, None, provider_scope);
+        let result = self.lookup_canonical(canonical_model_id, None, provider_scope);
 
         if let Ok(mut cache) = self.lookup_cache.write() {
             if cache.len() >= MAX_LOOKUP_CACHE_ENTRIES {
@@ -161,8 +169,21 @@ impl PricingLookup {
         provider_id: Option<&str>,
     ) -> Option<LookupResult> {
         let canonical_model_id = model_aliases::canonicalize_model_id(model_id);
-        let provider_scope = resolved_provider_scope(provider_id, &canonical_model_id);
-        self.lookup_canonical(&canonical_model_id, forced_pricing_source, provider_scope)
+        self.lookup_canonical_with_pricing_source_and_provider(
+            &canonical_model_id,
+            forced_pricing_source,
+            provider_id,
+        )
+    }
+
+    pub(super) fn lookup_canonical_with_pricing_source_and_provider(
+        &self,
+        model_id: &str,
+        forced_pricing_source: Option<&str>,
+        provider_id: Option<&str>,
+    ) -> Option<LookupResult> {
+        let provider_scope = resolved_provider_scope(provider_id, model_id);
+        self.lookup_canonical(model_id, forced_pricing_source, provider_scope)
     }
 
     fn lookup_canonical(
@@ -280,7 +301,23 @@ impl PricingLookup {
         usage: &TokenBreakdown,
         timestamp_ms: Option<i64>,
     ) -> Result<f64, PricingComputationError> {
-        let Some(result) = self.lookup_with_provider(model_id, provider_id) else {
+        let model_id = model_aliases::canonicalize_model_id(model_id);
+        self.calculate_canonical_cost_with_provider_and_time(
+            &model_id,
+            provider_id,
+            usage,
+            timestamp_ms,
+        )
+    }
+
+    pub(super) fn calculate_canonical_cost_with_provider_and_time(
+        &self,
+        model_id: &str,
+        provider_id: Option<&str>,
+        usage: &TokenBreakdown,
+        timestamp_ms: Option<i64>,
+    ) -> Result<f64, PricingComputationError> {
+        let Some(result) = self.lookup_canonical_with_provider(model_id, provider_id) else {
             return Ok(0.0);
         };
 

@@ -87,14 +87,15 @@ pub(super) struct CachedShardEnvelope {
 /// Cost-free wire representation of one decoder/cache usage record.
 ///
 /// Identity, workspace, turn, and dedup fields are retained because they are
-/// part of the decoder cache contract. Some integrations write already
-/// canonicalized identity fields while Codex writes its raw incremental
-/// records; either form must survive the shard round trip. `cost` is excluded
-/// because it is derived from the pricing service active for the current run.
+/// part of the decoder cache contract. Both raw model observations and any
+/// client-specific decoded spelling survive the shard round trip. Final model
+/// mappings and `cost` are derived from the configuration active for the run.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct CachedUsageRecord {
     #[serde(deserialize_with = "intern::de_intern")]
     pub(super) model_id: Arc<str>,
+    #[serde(deserialize_with = "intern::de_intern")]
+    pub(super) raw_model_id: Arc<str>,
     #[serde(deserialize_with = "intern::de_intern")]
     pub(super) provider_id: Arc<str>,
     #[serde(deserialize_with = "intern::de_intern")]
@@ -119,6 +120,7 @@ impl From<CachedUsageRecord> for UsageRecord {
     fn from(cached: CachedUsageRecord) -> Self {
         Self {
             model_id: cached.model_id,
+            raw_model_id: cached.raw_model_id,
             provider_id: cached.provider_id,
             session_id: cached.session_id,
             is_main_session: cached.is_main_session,
@@ -139,6 +141,7 @@ impl From<CachedUsageRecord> for UsageRecord {
 #[derive(Serialize)]
 pub(super) struct BorrowedCachedUsageRecord<'a> {
     pub(super) model_id: &'a str,
+    pub(super) raw_model_id: &'a str,
     pub(super) provider_id: &'a str,
     pub(super) session_id: &'a str,
     pub(super) is_main_session: bool,
@@ -157,6 +160,7 @@ impl<'a> From<&'a UsageRecord> for BorrowedCachedUsageRecord<'a> {
     fn from(record: &'a UsageRecord) -> Self {
         Self {
             model_id: &record.model_id,
+            raw_model_id: &record.raw_model_id,
             provider_id: &record.provider_id,
             session_id: &record.session_id,
             is_main_session: record.is_main_session,

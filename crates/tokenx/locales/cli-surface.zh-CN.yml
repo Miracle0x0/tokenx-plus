@@ -1,5 +1,7 @@
 cli:
   about:
+    config: "管理配置文件"
+    init_model_mappings: "生成含默认规则注释的 model-mappings.toml 模板"
     root: "AI 令牌用量分析"
     tui: "启动交互式终端界面"
     models: "查看模型用量"
@@ -10,6 +12,8 @@ cli:
     cache_warm: "为指定客户端范围构建 TUI 聚合缓存"
     cache_prune: "移除孤立和已被取代的输入记录缓存分片"
   help:
+    model_mappings: "模型映射：\n  通过 model-mappings.toml 自定义聚合、显示和计价使用的模型名称。\n  生成模板：tokenx config init-model-mappings --no-spinner\n  查看配置帮助：tokenx config init-model-mappings --help"
+    init_model_mappings: "配置文件：\n  ~/.tokenx/model-mappings.toml\n  设置 TOKENX_CONFIG_DIR 后：${TOKENX_CONFIG_DIR}/model-mappings.toml\n\n生成可编辑的 TOML 模板，内置默认规则以注释列出。\n不覆盖已有文件；配置文件不存在时使用内置默认规则。\n\n用户 [[rules]] 按文件顺序优先于默认规则执行，第一条匹配即生效。\npattern 匹配完整名称，忽略 ASCII 大小写，* 可匹配任意字符序列。\nmodel 是最终名称，不再重复映射，同时用于聚合、显示和计价。\n设置 include_defaults = false 可替换默认别名表，未匹配的名称仍进行语法规范化。\n配置修改在下次运行时生效。\n\n示例（也包含在内置默认规则中）：\n  include_defaults = true\n\n  [[rules]]\n  pattern = \"deepseek-v4.1-*\"\n  model = \"deepseek-v4.1-flash\"\n\n  [[rules]]\n  pattern = \"deepseek-flash\"\n  model = \"deepseek-v4.1-flash\""
     language: "界面语言：en 或 zh-CN"
     tab: "打开指定标签页"
     theme: "使用完整的 TUI 语义配色主题"

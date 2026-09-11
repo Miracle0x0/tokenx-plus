@@ -10,7 +10,7 @@ use crate::input_health::{InputFailure, RecordRejectionReason, RejectionSummary,
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::{extract_string, parse_timestamp_value};
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
-use crate::{model_aliases, token_imputation};
+use crate::token_imputation;
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -476,7 +476,7 @@ fn read_summary_metadata(
     if metadata.model_id.is_none() {
         metadata.model_id = extract_string(value.get("current_model_id"))
             .or_else(|| extract_string(value.get("model_id")))
-            .map(|model| canonicalize_grok_model(&model));
+            .map(|model| observed_grok_model(&model));
     }
 }
 
@@ -521,7 +521,7 @@ fn read_events_metadata(
 
         if metadata.model_id.is_none() {
             metadata.model_id =
-                extract_string(value.get("model_id")).map(|model| canonicalize_grok_model(&model));
+                extract_string(value.get("model_id")).map(|model| observed_grok_model(&model));
         }
         if metadata.session_id.is_none() {
             if let Some(session_id) = extract_string(value.get("session_id")) {
@@ -548,7 +548,7 @@ fn extract_model_id(value: &Value) -> Option<String> {
         if let Some(model_id) = get_path(value, path).and_then(|value| extract_string(Some(value)))
         {
             if !model_id.trim().is_empty() {
-                return Some(canonicalize_grok_model(&model_id));
+                return Some(observed_grok_model(&model_id));
             }
         }
     }
@@ -573,8 +573,8 @@ fn extract_session_id(value: &Value) -> Option<String> {
     None
 }
 
-fn canonicalize_grok_model(model: &str) -> String {
-    model_aliases::canonicalize_observed_model_id(model).unwrap_or_else(|| model.trim().to_string())
+fn observed_grok_model(model: &str) -> String {
+    model.trim().to_string()
 }
 
 fn extract_total_tokens(value: &Value) -> SessionParseResult<Option<i64>> {
@@ -726,7 +726,10 @@ not-json
         let scanned = super::parse_grok_updates_file(&path).unwrap();
 
         assert_eq!(scanned.messages.len(), 1);
-        assert_eq!(scanned.messages[0].model_id.as_ref(), "composer-2.5-fast");
+        assert_eq!(
+            scanned.messages[0].model_id.as_ref(),
+            "grok-composer-2.5-fast"
+        );
         assert_eq!(
             scanned.messages[0].session_id.as_ref(),
             "session-from-events"
@@ -774,7 +777,7 @@ not-json
         let expected_tokens =
             crate::token_imputation::impute_total_only_token_breakdowns(&[200, 150]);
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].model_id.as_ref(), "composer-2.5-fast");
+        assert_eq!(messages[0].model_id.as_ref(), "grok-composer-2.5-fast");
         assert_eq!(messages[0].provider_id.as_ref(), "xai");
         assert_eq!(messages[0].session_id.as_ref(), "session-1");
         assert_eq!(messages[0].tokens, expected_tokens[0]);
@@ -906,7 +909,7 @@ not-json
 
         let messages = parse_grok_updates_file(&path);
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "composer-2.5-fast");
+        assert_eq!(messages[0].model_id.as_ref(), "grok-composer-2.5-fast");
         assert_eq!(
             messages[0].tokens,
             crate::token_imputation::impute_total_only_token_breakdown(220)

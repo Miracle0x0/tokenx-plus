@@ -6,7 +6,7 @@
 use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::UsageRecord;
-use crate::{model_aliases, provider_identity, TokenBreakdown};
+use crate::{provider_identity, TokenBreakdown};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -193,7 +193,7 @@ fn parse_openclaw_session(
                         .model
                         .clone()
                         .filter(|m| !m.is_empty())
-                        .map(|model| canonicalize_openclaw_model(&model));
+                        .map(|model| observed_openclaw_model(&model));
                     let explicit_provider = msg
                         .provider
                         .clone()
@@ -276,8 +276,8 @@ fn openclaw_token_breakdown(usage: &OpenClawUsage) -> Result<Option<TokenBreakdo
     Ok((total > 0).then_some(tokens))
 }
 
-fn canonicalize_openclaw_model(model: &str) -> String {
-    model_aliases::canonicalize_observed_model_id(model).unwrap_or_else(|| model.trim().to_string())
+fn observed_openclaw_model(model: &str) -> String {
+    model.trim().to_string()
 }
 
 fn explicit_openclaw_identity(
@@ -286,7 +286,7 @@ fn explicit_openclaw_identity(
 ) -> Result<(String, String), RecordRejectionReason> {
     let model = model
         .filter(|model| !model.trim().is_empty())
-        .map(|model| canonicalize_openclaw_model(&model))
+        .map(|model| observed_openclaw_model(&model))
         .ok_or(RecordRejectionReason::MissingModel)?;
     let provider =
         provider_identity::observed_provider_id(provider.as_deref().unwrap_or_default(), &model);

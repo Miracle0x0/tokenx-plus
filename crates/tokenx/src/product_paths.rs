@@ -79,6 +79,10 @@ impl ProductPaths {
         self.root.join("settings.json")
     }
 
+    pub(crate) fn model_mappings_file(&self) -> PathBuf {
+        self.root.join("model-mappings.toml")
+    }
+
     pub(crate) fn custom_pricing_file(&self) -> PathBuf {
         self.root.join("custom-pricing.json")
     }

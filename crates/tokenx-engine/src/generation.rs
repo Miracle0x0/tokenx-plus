@@ -258,6 +258,7 @@ pub struct AcquisitionConfig {
     scanner: ScannerSettings,
     calendar: CalendarContext,
     pricing: PricingContext,
+    model_mappings: crate::ModelMappings,
 }
 
 impl AcquisitionConfig {
@@ -318,7 +319,17 @@ impl AcquisitionConfig {
             scanner,
             calendar,
             pricing,
+            model_mappings: crate::ModelMappings::default().resolved(),
         })
+    }
+
+    pub fn with_model_mappings(mut self, mappings: crate::ModelMappings) -> Self {
+        self.model_mappings = mappings.resolved();
+        self
+    }
+
+    pub fn model_mappings(&self) -> &crate::ModelMappings {
+        &self.model_mappings
     }
 
     pub fn resolved_home_dir(&self) -> &std::path::Path {

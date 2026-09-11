@@ -209,6 +209,7 @@ impl AcquisitionEngine {
             executor.as_ref(),
             &self.pricing,
             *config.calendar(),
+            config.model_mappings(),
             cancellation,
         )
         .map_err(GenerationBuildError::from)?;
@@ -277,12 +278,20 @@ fn build_generation_data(
     executor: &AcquisitionExecutor,
     pricing: &crate::pricing::ResolvedPricingSnapshot,
     calendar: crate::CalendarContext,
+    model_mappings: &crate::ModelMappings,
     cancellation: &AcquisitionCancellation,
 ) -> Result<GenerationData, AcquisitionError> {
     let (service, diagnostics) = pricing.cloned_runtime_parts();
     let cancellation = cancellation.clone();
     executor.install(move || {
-        fold_generation_data(prepared, service, diagnostics, calendar, &cancellation)
+        fold_generation_data(
+            prepared,
+            service,
+            diagnostics,
+            calendar,
+            model_mappings,
+            &cancellation,
+        )
     })
 }
 
@@ -291,6 +300,7 @@ fn fold_generation_data(
     pricing: Option<Arc<crate::pricing::PricingService>>,
     pricing_diagnostics: crate::pricing::PricingDiagnostics,
     calendar: crate::CalendarContext,
+    model_mappings: &crate::ModelMappings,
     cancellation: &AcquisitionCancellation,
 ) -> Result<GenerationData, AcquisitionError> {
     cancellation
@@ -307,6 +317,7 @@ fn fold_generation_data(
         pricing.as_deref(),
         &mut accumulator,
         calendar,
+        model_mappings,
         cancellation,
     ) {
         Ok(outcome) => outcome,
@@ -402,6 +413,69 @@ mod tests {
             None,
             Vec::new(),
         ))
+    }
+
+    #[test]
+    fn model_mappings_reuse_raw_shards_without_pricing_and_update_sessions() {
+        let home = tempfile::TempDir::new().unwrap();
+        let project = home.path().join(".claude/transcripts");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("session.jsonl"), format!("{}\n", serde_json::json!({
+            "type": "assistant",
+            "cwd": home.path(),
+            "timestamp": "2026-07-14T00:00:00Z",
+            "message": {"model": "gpt-5.6-high", "usage": {"input_tokens": 100, "output_tokens": 10}}
+        }))).unwrap();
+        let pricing = test_pricing();
+        let config = AcquisitionConfig::new(
+            home.path().to_path_buf(),
+            DateRange::none(),
+            ClientUniverse::new([ClientId::Claude]).unwrap(),
+            ScannerSettings::default(),
+            test_calendar(),
+            pricing.context().clone(),
+        )
+        .unwrap();
+        let cache = home.path().join("input-cache");
+        let first = AcquisitionEngine::new(config.clone(), Arc::clone(&pricing), cache.clone())
+            .unwrap()
+            .acquire()
+            .unwrap();
+        assert_eq!(first.sessions().len(), 1);
+        assert!(first.sessions()[0].models.contains("gpt-5.6-sol"));
+        let shard_times = || {
+            walkdir::WalkDir::new(cache.join("shards"))
+                .into_iter()
+                .map(Result::unwrap)
+                .filter(|entry| entry.file_type().is_file())
+                .map(|entry| {
+                    (
+                        entry.path().to_path_buf(),
+                        entry.metadata().unwrap().modified().unwrap(),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let before = shard_times();
+        assert!(!before.is_empty());
+        let mappings = crate::ModelMappings::from_toml(
+            r#"
+            [[rules]]
+            pattern = "gpt-5.6-high"
+            model = "private-model"
+        "#,
+        )
+        .unwrap();
+        let config = config.with_model_mappings(mappings);
+        let second = AcquisitionEngine::new(config, pricing, cache.clone())
+            .unwrap()
+            .acquire()
+            .unwrap();
+        assert!(second.sessions()[0].models.contains("private-model"));
+        assert!(!second.sessions()[0].models.contains("gpt-5.6-sol"));
+        assert_eq!(first.sessions()[0].tokens, second.sessions()[0].tokens);
+        assert_eq!(second.sessions()[0].cost, 0.0);
+        assert_eq!(before, shard_times());
     }
 
     #[test]

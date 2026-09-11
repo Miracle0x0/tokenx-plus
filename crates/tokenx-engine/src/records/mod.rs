@@ -20,6 +20,9 @@ use crate::{clients::ClientId, TokenBreakdown};
 pub struct UsageRecord {
     #[serde(deserialize_with = "intern::de_intern")]
     pub model_id: std::sync::Arc<str>,
+    /// Source model observation retained through cache and finalization.
+    #[serde(deserialize_with = "intern::de_intern")]
+    pub raw_model_id: std::sync::Arc<str>,
     #[serde(deserialize_with = "intern::de_intern")]
     pub provider_id: std::sync::Arc<str>,
     #[serde(deserialize_with = "intern::de_intern")]
@@ -332,6 +335,7 @@ impl UsageRecord {
     ) -> Self {
         Self {
             model_id: intern::intern(model_id.as_ref()),
+            raw_model_id: intern::intern(model_id.as_ref()),
             provider_id: intern::intern(provider_id.as_ref()),
             session_id: intern::intern(session_id.as_ref()),
             is_main_session: true,

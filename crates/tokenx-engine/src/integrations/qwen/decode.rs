@@ -4,7 +4,6 @@
 //! Token data comes from assistant messages with usageMetadata field.
 
 use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
-use crate::model_aliases;
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::parse_timestamp_str;
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
@@ -148,8 +147,7 @@ pub fn parse_qwen_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 .record(RecordRejectionReason::MissingModel);
             continue;
         };
-        let model = model_aliases::canonicalize_observed_model_id(raw_model)
-            .unwrap_or_else(|| raw_model.to_string());
+        let model = raw_model.to_string();
 
         let Some(line_session_id) = qwen_line
             .session_id
@@ -448,7 +446,7 @@ not valid json at all
         let messages = parse_qwen_file(file.path());
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "qwen3-max");
+        assert_eq!(messages[0].model_id.as_ref(), "qwen3-max-2026-01-23");
         assert_eq!(messages[0].tokens.input, 1508);
         assert_eq!(messages[0].tokens.output, 205);
         assert_eq!(messages[0].tokens.reasoning, 50);
@@ -457,14 +455,14 @@ not valid json at all
     }
 
     #[test]
-    fn test_parse_qwen_canonicalizes_compact_date_snapshot_model() {
+    fn test_parse_qwen_preserves_compact_date_snapshot_model() {
         let content = r#"{"type": "assistant", "model": "qwen/qwen3.7-max-20260520", "timestamp": "2026-02-23T14:24:56.857Z", "sessionId": "session1", "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 200, "thoughtsTokenCount": 10, "cachedContentTokenCount": 5}}"#;
         let file = create_test_file(content);
 
         let messages = parse_qwen_file(file.path());
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "qwen3.7-max");
+        assert_eq!(messages[0].model_id.as_ref(), "qwen/qwen3.7-max-20260520");
     }
 
     #[test]

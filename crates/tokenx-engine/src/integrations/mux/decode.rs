@@ -5,7 +5,7 @@
 use crate::input_health::{RecordRejectionReason, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::UsageRecord;
-use crate::{model_aliases, provider_identity, TokenBreakdown};
+use crate::{provider_identity, TokenBreakdown};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -157,8 +157,7 @@ pub fn parse_mux_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 .record(RecordRejectionReason::MissingModel);
             continue;
         }
-        let model_id = model_aliases::canonicalize_observed_model_id(raw_model_id)
-            .unwrap_or_else(|| raw_model_id.to_string());
+        let model_id = raw_model_id.to_string();
         let provider = provider_identity::observed_provider_id(raw_provider, &model_id);
 
         scanned.messages.push(UsageRecord::new_with_dedup(

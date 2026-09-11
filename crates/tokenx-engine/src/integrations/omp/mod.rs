@@ -484,6 +484,7 @@ fn fold_omp_cache_hits(
                 rejections.merge(&crate::price_source_eligible_messages(
                     &mut messages,
                     ctx.pricing,
+                    &ctx.model_mappings,
                 ));
                 message_count += messages.len();
                 if let Some(sink) = sink.as_deref_mut() {

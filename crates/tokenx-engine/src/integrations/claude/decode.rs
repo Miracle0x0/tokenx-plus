@@ -6,7 +6,7 @@ use crate::input_health::{InputFailure, RecordRejectionReason, RejectionSummary,
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::{extract_i64, extract_string, parse_timestamp_value};
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
-use crate::{model_aliases, provider_identity, TokenBreakdown};
+use crate::{provider_identity, TokenBreakdown};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -1162,7 +1162,7 @@ fn parse_claude_file_with_project_resolver(
                             let duplicate_model = message
                                 .model
                                 .as_deref()
-                                .map(canonicalize_claude_model)
+                                .map(observed_claude_model)
                                 .unwrap_or_else(|| messages[existing_idx].model_id.to_string());
                             let duplicate_provider_choice = claude_provider_choice_from_parts(
                                 Some(&duplicate_model),
@@ -1252,7 +1252,7 @@ fn parse_claude_file_with_project_resolver(
                         continue;
                     }
                 };
-                let model = canonicalize_claude_model(&raw_model);
+                let model = observed_claude_model(&raw_model);
                 let provider_choice =
                     claude_provider_choice_for_models(&raw_model, &model, provider_hint.as_deref());
                 let provider_confidence = provider_choice.confidence;
@@ -1739,7 +1739,7 @@ fn extract_claude_tool_result_message(
         .or_else(|| context.last_provider_hint.map(str::to_string))
         .or_else(|| context.default_provider_hint.map(str::to_string));
 
-    let model = canonicalize_claude_model(&raw_model);
+    let model = observed_claude_model(&raw_model);
     let provider_choice =
         claude_provider_choice_for_models(&raw_model, &model, provider_hint.as_deref());
     let timestamp = parse_claude_entry_timestamp_checked(
@@ -1993,8 +1993,8 @@ fn is_claude_synthetic_placeholder_model(model: &str) -> bool {
     model.trim().eq_ignore_ascii_case("<synthetic>")
 }
 
-fn canonicalize_claude_model(model: &str) -> String {
-    model_aliases::canonicalize_observed_model_id(model).unwrap_or_else(|| model.trim().to_string())
+fn observed_claude_model(model: &str) -> String {
+    model.trim().to_string()
 }
 
 /// Internal Claude Code system/tool tags that should NOT be counted as human turns.
@@ -2934,7 +2934,7 @@ mod tests {
         let messages = parse_claude_file(file.path()).unwrap();
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "claude-opus-4.7");
+        assert_eq!(messages[0].model_id.as_ref(), "claude-opus-4-7");
         assert_eq!(messages[0].provider_id.as_ref(), "anthropic");
         assert_eq!(messages[0].tokens.input, 321);
         assert_eq!(messages[0].tokens.output, 654);
@@ -2950,7 +2950,7 @@ mod tests {
         let messages = parse_claude_file(file.path()).unwrap();
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "claude-sonnet-4.6");
+        assert_eq!(messages[0].model_id.as_ref(), "anthropic/claude-4-6-sonnet");
         assert_eq!(messages[0].provider_id.as_ref(), "anthropic");
         assert_eq!(messages[0].tokens.input, 4);
         assert_eq!(messages[0].tokens.output, 0);
@@ -2973,7 +2973,7 @@ mod tests {
         let messages = parse_claude_file(file.path()).unwrap();
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "claude-sonnet-4.6");
+        assert_eq!(messages[0].model_id.as_ref(), "anthropic/claude-4-6-sonnet");
         assert_eq!(messages[0].tokens.input, 8);
         assert_eq!(messages[0].timestamp, 1_779_876_000_100);
     }
@@ -3030,14 +3030,14 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_prefixed_claude_model_is_canonicalized() {
+    fn test_anthropic_prefixed_claude_model_is_preserved() {
         let content = r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"anthropic/claude-4-6-sonnet","usage":{"input_tokens":100,"output_tokens":50}}}"#;
 
         let file = create_test_file(content);
         let messages = parse_claude_file(file.path()).unwrap();
 
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "claude-sonnet-4.6");
+        assert_eq!(messages[0].model_id.as_ref(), "anthropic/claude-4-6-sonnet");
         assert_eq!(messages[0].provider_id.as_ref(), "anthropic");
     }
 

@@ -17,6 +17,7 @@ with an installed repository package. Pass `--no-spinner` in automation.
 | `tokenx models` | Print the TUI Models projection as a table or JSON. |
 | `tokenx pricing ...` | Query pricing catalogs or custom overrides. |
 | `tokenx cache ...` | Explicitly maintain Tokenx's local caches. |
+| `tokenx config init-model-mappings` | Create an optional TOML model-mapping template with the default rules in comments. |
 
 The table is the complete accepted root grammar. Every other command name is
 invalid CLI usage.

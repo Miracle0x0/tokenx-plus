@@ -5,7 +5,7 @@
 use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::{dedup_hash_str, normalize_agent_name, UsageRecord};
-use crate::{model_aliases, provider_identity, CalendarContext, TokenBreakdown};
+use crate::{provider_identity, CalendarContext, TokenBreakdown};
 use chrono::{LocalResult, NaiveDateTime, TimeZone};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -127,8 +127,7 @@ pub fn parse_junie_file(
                     .record(RecordRejectionReason::MissingModel);
                 continue;
             };
-            let model_id = model_aliases::canonicalize_observed_model_id(model_raw)
-                .unwrap_or_else(|| model_raw.trim().to_string());
+            let model_id = model_raw.trim().to_string();
             let provider_id = provider_from_usage(usage, &model_id);
 
             let dedup_key = format!(
@@ -434,7 +433,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
         let message = &messages[0];
         assert_eq!(message.session_id.as_ref(), "session-250622-101010");
-        assert_eq!(message.model_id.as_ref(), "gpt-4.1");
+        assert_eq!(message.model_id.as_ref(), "gpt-4.1-2025-04-14");
         assert_eq!(message.provider_id.as_ref(), "openai");
         assert_eq!(message.tokens.input, 100);
         assert_eq!(message.tokens.cache_read, 20);

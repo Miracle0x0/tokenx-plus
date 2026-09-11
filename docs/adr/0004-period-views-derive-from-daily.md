@@ -162,13 +162,14 @@ secondary projection and never controls eligibility.
   catalog order breaks ties inside each class. With unknown scope, only an exact
   unscoped row is eligible.
 - Prefix matching, substring matching, fuzzy/edit-distance matching, arbitrary
-  separator rewriting, route-prefix guessing, private aliases, and global
-  model-to-model aliases are prohibited.
+  separator rewriting, and route-prefix guessing are prohibited inside pricing
+  lookup. Explicit model-to-model mappings are owned by ADR 0013 and resolve
+  before exact pricing lookup; the price resolver never remaps their targets.
 - Parser-side syntactic decoding and canonicalization are not pricing aliases.
   Canonicalization may deliberately remove a documented release, free-channel,
   reasoning, service-tier, or client-route decoration before exact lookup.
-- Standalone `pricing lookup <model>` accepts the canonical model component and
-  follows the same exact catalog and source-order rules.
+- Standalone `pricing lookup <model>` resolves the same configured model
+  mappings and follows the same exact catalog and source-order rules.
 - `commandcode-model-unknown` is an explicitly unpriced identity for estimated
   Command Code usage without session model metadata. It retains tokens but cost
   remains `0.0` even if a catalog or custom override contains that key.

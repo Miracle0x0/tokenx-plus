@@ -42,6 +42,9 @@ tokenx models --since 2026-01-01 --until 2026-01-31 --no-spinner
 # 定价目录
 tokenx pricing lookup claude-sonnet-4-5 --no-spinner
 tokenx pricing overrides --json
+
+# 生成用于聚合和计价的模型映射配置
+tokenx config init-model-mappings --no-spinner
 ```
 
 从源码运行时，把 `tokenx` 替换为 `bun run cli --`。
@@ -60,7 +63,7 @@ Tokenx 支持 OpenCode、Claude Code、Codex、Gemini CLI、Amp 等多种编码�
 
 ## 定价
 
-Tokenx 在分组和定价前会规范化模型 ID。它先检查精确自定义覆盖，再检查已配置公共目录中的精确匹配；不会按前缀、子串或模糊匹配猜测价格。无法定价的模型会保留 token 用量，并把派生成本报告为 `$0.00`。
+Tokenx 在分组和定价前会规范化模型 ID，并支持通过可选的 [`model-mappings.toml`](docs/configuration.md#model-mappings) 自定义覆写。它先检查映射后名称对应的精确自定义价格，再检查已配置公共目录中的精确匹配；不会按前缀、子串或模糊匹配猜测价格。无法定价的模型会保留 token 用量，并把派生成本报告为 `$0.00`。
 
 目录优先级、只有总量的 token 分配方式和成本边界见[定价语义](docs/pricing.md)。
 
