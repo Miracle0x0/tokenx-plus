@@ -24,6 +24,7 @@ tui
 models
 pricing
 cache
+config
 ```
 
 The TUI is the complete interactive local-usage product. `--tab` sets its initial focus to
@@ -41,8 +42,10 @@ client,provider,model
 workspace,model
 ```
 
-`pricing` queries catalogs or overrides, and `cache` performs explicit cache
-maintenance.
+`pricing` queries catalogs or overrides, `cache` performs explicit cache
+maintenance, and `config init-model-mappings` generates the optional TOML
+mapping file defined by ADR 0013. Generation never acquires local usage or
+pricing catalogs and does not overwrite an existing file.
 
 Subscription Usage belongs exclusively to the TUI Subscription tab under ADR 0005.
 

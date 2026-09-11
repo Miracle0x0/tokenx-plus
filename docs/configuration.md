@@ -3,7 +3,8 @@
 Tokenx keeps all product-owned settings and regenerable state under one
 cross-platform product root:
 
-- Default: `~/.tokenx/settings.json`
+- General settings: `~/.tokenx/settings.json`
+- Optional model mappings: `~/.tokenx/model-mappings.toml`
 - Override root: `TOKENX_CONFIG_DIR`
 
 ## Example
@@ -81,6 +82,68 @@ OpenCode is intentionally not an `extraScanPaths` client. Put each additional
 current-format database file in `scanner.opencodeDbPaths`; OpenCode entries in
 `scanner.extraScanPaths` are rejected. Automatic discovery treats only
 `NotFound` as absent; other discovery I/O failures are reported explicitly.
+
+## Model mappings
+
+Model mappings live in the optional `model-mappings.toml` file under the same
+product root as `settings.json`. Generate an editable template with:
+
+```bash
+tokenx config init-model-mappings --no-spinner
+```
+
+The command creates `~/.tokenx/model-mappings.toml`, or
+`${TOKENX_CONFIG_DIR}/model-mappings.toml` when the root is overridden. It lists
+the bundled defaults as `#` comments and leaves the override list empty. An
+existing file is not overwritten. If the file is absent, the bundled defaults
+apply without creating a file.
+
+```toml
+include_defaults = true
+
+[[rules]]
+pattern = "deepseek-v4.1-*"
+model = "deepseek-v4.1-flash"
+
+[[rules]]
+pattern = "deepseek-flash"
+model = "deepseek-v4.1-flash"
+```
+
+These two DeepSeek rules are also bundled defaults. The complete default alias
+list is maintained in
+[`model-mappings.toml`](../crates/tokenx-engine/model-mappings.toml), including
+GPT-5.6/Sol, Kimi, Grok Composer, GLM, LongCat, and Claude Opus 5 aliases.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `include_defaults` | `true` | Append the bundled alias rules after user rules. Set to `false` to replace that list entirely. |
+| `rules` | empty | Ordered `[[rules]]` entries with required `pattern` and `model` strings. |
+| `rules.pattern` | required | Full-name match, ignoring ASCII case. `*` matches any sequence, including an empty one; all other characters are literal. |
+| `rules.model` | required | Final model name used for grouping, display, and exact pricing lookup. |
+
+User rules run in file order before defaults; the first matching rule wins. Put
+specific exceptions before broader wildcards. Each rule is compared against the
+raw observation, its terminal model component without a route or `custom:`
+prefix, the spelling produced by existing syntax cleanup, and the hyphenated form of a
+human-readable label. Syntax cleanup
+includes release dates, free-channel tags, recognized reasoning tiers, and
+Claude version spelling. It still applies to unmatched names when
+`include_defaults = false`; an explicit self-map can preserve a particular
+spelling, for example `pattern = "gpt-5.6"` and `model = "gpt-5.6"`.
+
+A matched target is used verbatim, without recursively applying another rule
+or normalizing it again. The mapped identity is shared by Models, TUI views,
+Sessions, and `pricing lookup`; model mapping also changes which price is used.
+Put custom prices under the final name in `custom-pricing.json`. Unmatched
+prices keep their existing explicit unpriced behavior. Grouping dimensions such
+as Client, Provider, and Workspace continue to split rows when selected.
+
+The file is read once at command startup. A rule edit takes effect on the next
+invocation and invalidates the aggregate Generation cache. Valid input-record
+shards preserve raw names and can be reused for remapping and repricing without
+reparsing unchanged transcripts. Invalid TOML, unknown fields, missing rule
+fields, and blank patterns or targets are explicit configuration errors.
 
 ## Environment variables
 

@@ -534,6 +534,135 @@ fn model_token_sum(document: &serde_json::Value, field: &str) -> u64 {
         .sum()
 }
 
+#[test]
+fn model_mapping_template_is_optional_and_generated_in_the_product_root() {
+    let home = TempDir::new().unwrap();
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("model-mappings.toml");
+    cmd_with_home(home.path())
+        .env("TOKENX_CONFIG_DIR", root.path())
+        .args(["config", "init-model-mappings", "--no-spinner"])
+        .assert()
+        .success();
+    let content = fs::read_to_string(&path).unwrap();
+    assert!(content.contains("# pattern = \"deepseek-v4.1-*\""));
+    assert_eq!(
+        tokenx_engine::ModelMappings::from_toml(&content).unwrap(),
+        tokenx_engine::ModelMappings::default()
+    );
+    assert!(!home.path().join(".tokenx/model-mappings.toml").exists());
+    cmd_with_home(home.path())
+        .env("TOKENX_CONFIG_DIR", root.path())
+        .args(["config", "init-model-mappings", "--no-spinner"])
+        .assert()
+        .failure();
+    assert_eq!(fs::read_to_string(path).unwrap(), content);
+}
+
+#[test]
+fn model_mapping_overrides_reprice_cached_raw_models_and_standalone_lookup() {
+    let tmp = create_empty_fixture_dir();
+    let conn = Connection::open(tmp.path().join(".local/share/opencode/opencode.db")).unwrap();
+    for (index, model) in ["deepseek-v4.1-pro", "deepseek-v4.1-flash", "deepseek-flash"]
+        .into_iter()
+        .enumerate()
+    {
+        let id = format!("mapping-{index}");
+        let message = serde_json::json!({
+            "id": id, "sessionID": "mapping-session", "role": "assistant",
+            "modelID": model, "providerID": "deepseek",
+            "tokens": {"input": 100, "output": 10, "cache": {"read": 0, "write": 0}},
+            "time": {"created": 1718452800000_i64 + index as i64 * 1000}
+        });
+        insert_opencode_message(&conn, &id, "mapping-session", "", &message.to_string());
+    }
+    drop(conn);
+    fs::write(tmp.path().join(".tokenx/custom-pricing.json"), r#"{"models":{
+        "deepseek-v4.1-flash":{"input_cost_per_million_tokens":1,"output_cost_per_million_tokens":2},
+        "private-pro":{"input_cost_per_million_tokens":3,"output_cost_per_million_tokens":4},
+        "gpt-5.6":{"input_cost_per_million_tokens":10,"output_cost_per_million_tokens":20},
+        "gpt-5.6-sol":{"input_cost_per_million_tokens":100,"output_cost_per_million_tokens":200}
+    }}"#).unwrap();
+    let read_models = || {
+        let output = offline_cmd_with_home(tmp.path())
+            .args(["models", "--client", "opencode", "--json", "--no-spinner"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let default = read_models();
+    assert!(!tmp.path().join(".tokenx/model-mappings.toml").exists());
+    assert_eq!(model_rows(&default).len(), 1);
+    assert_eq!(model_rows(&default)[0]["modelId"], "deepseek-v4.1-flash");
+    assert!((default["data"]["totals"]["cost"].as_f64().unwrap() - 0.00036).abs() < 1e-12);
+
+    fs::write(
+        tmp.path().join(".tokenx/model-mappings.toml"),
+        r#"
+        # An exact exception precedes the wildcard.
+        [[rules]]
+        pattern = "deepseek-v4.1-pro"
+        model = "private-pro"
+        [[rules]]
+        pattern = "deepseek-*"
+        model = "gpt-5.6"
+    "#,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let mapped = read_models();
+        assert_eq!(model_rows(&mapped).len(), 2);
+        assert_eq!(mapped["data"]["totals"]["tokens"], 330);
+        let row = model_rows(&mapped)
+            .iter()
+            .find(|row| row["modelId"] == "gpt-5.6")
+            .unwrap();
+        assert_eq!(row["displayName"], "gpt-5.6");
+        assert_eq!(row["tokens"]["input"], 200);
+        assert!((row["cost"].as_f64().unwrap() - 0.0024).abs() < 1e-12);
+        assert!((mapped["data"]["totals"]["cost"].as_f64().unwrap() - 0.00274).abs() < 1e-12);
+    }
+    offline_cmd_with_home(tmp.path())
+        .args([
+            "pricing",
+            "lookup",
+            "deepseek-flash",
+            "--pricing-source",
+            "custom",
+            "--json",
+            "--no-spinner",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("gpt-5.6"))
+        .stdout(predicate::str::contains("gpt-5.6-sol").not());
+}
+
+#[test]
+fn invalid_model_mapping_file_fails_before_acquisition() {
+    let tmp = create_empty_fixture_dir();
+    let path = tmp.path().join(".tokenx/model-mappings.toml");
+    for invalid in [
+        "[[rules]",
+        "include_default = false",
+        "[[rules]]\npattern = '*'\nmodel = ''",
+        "[[rules]]\npattern = '*'\nmodel = 'x'\npriority = 1",
+    ] {
+        fs::write(&path, invalid).unwrap();
+        offline_cmd_with_home(tmp.path())
+            .args(["models", "--client", "opencode", "--json", "--no-spinner"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("model-mappings.toml"));
+    }
+    assert!(!tmp.path().join(".tokenx/cache/shards").exists());
+}
+
 fn write_pricing_cache(base: &Path, timestamp: u64) {
     let litellm = format!(
         r#"{{"timestamp":{},"data":{{"gpt-4o":{{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001}},"claude-sonnet-4":{{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}}}}"#,

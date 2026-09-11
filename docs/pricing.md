@@ -79,17 +79,20 @@ the model's base price. Time-period selection is currently limited to the
 `deepseek-v4` family; token accounting and all non-DeepSeek V4 pricing behavior
 remain unchanged.
 
-Global private aliases are not a substitute for input parsing. Client-specific
-model decoding may happen in the parser, but local usage finalization,
-grouping, and pricing all use the core `canonicalize_model_id` path before
-pricing lookup.
-
 ### Model identity before pricing
 
-Tokenx canonicalizes parsed model ids before pricing lookup. Parsers may
-clean obvious observed model labels early, but the usage finalization path still
-normalizes every `AttributedUsageRecord.model_id` through the core model canonicalizer
-before aggregation and `PricingService::calculate_cost_with_provider_and_time`.
+Tokenx resolves model identity before aggregation and pricing. The optional
+[`model-mappings.toml`](configuration.md#model-mappings) supplies ordered exact
+or `*` wildcard rules ahead of the bundled aliases. Both local usage and
+standalone `pricing lookup` use the final mapped name. A mapping therefore
+changes the price key as well as the aggregation and display name; it does not
+retain separate prices for the merged input names.
+
+Parsers and cost-free input shards retain raw model observations. Finalization
+applies the captured mapping rules once, then prices the final model identity.
+Matched targets are never recursively mapped or normalized again by the price
+resolver. A missing mapping file enables the bundled defaults, while an invalid
+file is a configuration error.
 
 The pricing resolver is therefore not a route cleanup layer. It receives the
 final canonical usage model id and matches that id against custom overrides

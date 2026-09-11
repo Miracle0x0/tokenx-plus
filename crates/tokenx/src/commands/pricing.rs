@@ -75,9 +75,10 @@ pub(crate) async fn run_pricing_lookup(
             settings.pricing_source_order,
         )
         .await?;
-        Ok::<_, String>(
-            svc.lookup_with_pricing_source(model_id, pricing_source_normalized.as_deref()),
-        )
+        Ok::<_, String>(svc.lookup_canonical_with_pricing_source(
+            &settings.model_mappings.canonicalize(model_id),
+            pricing_source_normalized.as_deref(),
+        ))
     }
     .await
     {

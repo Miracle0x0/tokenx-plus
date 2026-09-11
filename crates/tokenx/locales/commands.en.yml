@@ -1,4 +1,8 @@
 commands:
+  config:
+    creating: "Creating model mappings..."
+    created: "Created model mappings: %{path}"
+    create_error: "failed to create model mappings `%{path}`"
   cache:
     prune_summary: "Input-record cache prune: scanned %{scanned}, removed %{removed}, retained %{retained}."
     warmed: "Generation cache warmed."

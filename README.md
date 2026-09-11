@@ -42,6 +42,9 @@ tokenx models --since 2026-01-01 --until 2026-01-31 --no-spinner
 # Pricing catalog
 tokenx pricing lookup claude-sonnet-4-5 --no-spinner
 tokenx pricing overrides --json
+
+# Editable model aliases for grouping and pricing
+tokenx config init-model-mappings --no-spinner
 ```
 
 When running from source, replace `tokenx` with `bun run cli --`.
@@ -60,7 +63,7 @@ Tokenx supports local data from OpenCode, Claude Code, Codex, Gemini CLI, Amp, a
 
 ## Pricing
 
-Tokenx canonicalizes model IDs before grouping and pricing. Exact custom overrides are checked first, followed by exact matches from the configured public catalogs. Prefix, substring, and fuzzy price guesses are not used. An unpriced model keeps its token usage and reports derived cost as `$0.00`.
+Tokenx canonicalizes model IDs before grouping and pricing, with optional user overrides in [`model-mappings.toml`](docs/configuration.md#model-mappings). Exact custom prices are checked first, followed by exact matches from the configured public catalogs. Prefix, substring, and fuzzy price guesses are not used. An unpriced model keeps its token usage and reports derived cost as `$0.00`.
 
 See [pricing semantics](docs/pricing.md) for catalog precedence, total-only token allocation, and cost boundaries.
 

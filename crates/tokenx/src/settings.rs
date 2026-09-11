@@ -36,6 +36,10 @@ pub(crate) enum SettingsLoadError {
         path: PathBuf,
         source: serde_json::Error,
     },
+    ModelMappings {
+        path: PathBuf,
+        source: tokenx_engine::ModelMappingsParseError,
+    },
     Invalid {
         path: PathBuf,
         source: SettingsValidationError,
@@ -59,6 +63,13 @@ impl std::fmt::Display for SettingsLoadError {
                     path.display()
                 )
             }
+            Self::ModelMappings { path, source } => {
+                write!(
+                    formatter,
+                    "failed to parse model mappings TOML `{}`: {source}",
+                    path.display()
+                )
+            }
             Self::Invalid { path, source } => {
                 write!(
                     formatter,
@@ -76,6 +87,7 @@ impl std::error::Error for SettingsLoadError {
             Self::Read { source, .. } => Some(source),
             Self::Parse { source, .. } => Some(source),
             Self::Invalid { source, .. } => Some(source),
+            Self::ModelMappings { source, .. } => Some(source),
         }
     }
 }
@@ -169,6 +181,9 @@ pub struct Settings {
     /// authorities are resolved before this order.
     #[serde(default)]
     pub pricing_source_order: tokenx_engine::pricing::SourceOrder,
+    /// Ordered model identity overrides shared by aggregation and pricing.
+    #[serde(skip)]
+    pub model_mappings: tokenx_engine::ModelMappings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -208,6 +223,7 @@ impl Default for Settings {
             subscription: SubscriptionSettings::default(),
             language: None,
             pricing_source_order: tokenx_engine::pricing::SourceOrder::default(),
+            model_mappings: tokenx_engine::ModelMappings::default(),
         }
     }
 }
@@ -297,7 +313,17 @@ impl Settings {
 
     pub fn load(paths: &ProductPaths) -> std::result::Result<Self, SettingsLoadError> {
         let path = paths.settings_file();
-        Self::load_from_path(&path)
+        let mut settings = Self::load_from_path(&path)?;
+        let path = paths.model_mappings_file();
+        match fs::read_to_string(&path) {
+            Ok(content) => {
+                settings.model_mappings = tokenx_engine::ModelMappings::from_toml(&content)
+                    .map_err(|source| SettingsLoadError::ModelMappings { path, source })?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(SettingsLoadError::Read { path, source }),
+        }
+        Ok(settings)
     }
 
     /// Read only the optional language override without validating unrelated

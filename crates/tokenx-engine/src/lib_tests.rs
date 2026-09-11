@@ -1,11 +1,11 @@
 use super::{
-    apply_token_pricing, finalize_token_priced_messages, input_record_cache, load_test_usage,
-    load_test_usage_with_health, normalize_model_for_grouping, parse_all_messages_with_health,
-    parse_all_messages_with_health_with_settings, parse_all_messages_with_pricing,
-    parse_all_messages_with_pricing_with_settings, positive_token_total, pricing, scanner,
-    AcquisitionConfig, AcquisitionEngine, AttributedUsageRecord, ClientId, ClientUniverse,
-    DateRange, GroupBy, PreparedAcquisition, TestAcquisitionRequest, TokenBreakdown,
-    UNKNOWN_WORKSPACE_LABEL,
+    apply_canonical_token_pricing, finalize_token_priced_messages, input_record_cache,
+    load_test_usage, load_test_usage_with_health, normalize_model_for_grouping,
+    parse_all_messages_with_health, parse_all_messages_with_health_with_settings,
+    parse_all_messages_with_pricing, parse_all_messages_with_pricing_with_settings,
+    positive_token_total, pricing, scanner, AcquisitionConfig, AcquisitionEngine,
+    AttributedUsageRecord, ClientId, ClientUniverse, DateRange, GroupBy, PreparedAcquisition,
+    TestAcquisitionRequest, TokenBreakdown, UNKNOWN_WORKSPACE_LABEL,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
@@ -3664,7 +3664,7 @@ fn test_input_cache_does_not_reuse_priced_cost_without_pricing_service() {
 }
 
 #[test]
-fn test_apply_token_pricing_clears_existing_cost_without_pricing() {
+fn test_apply_canonical_token_pricing_clears_existing_cost_without_pricing() {
     let mut msg = AttributedUsageRecord::new_with_agent(
         ClientId::RooCode,
         "gpt-4o",
@@ -3682,7 +3682,7 @@ fn test_apply_token_pricing_clears_existing_cost_without_pricing() {
         Some("planner".to_string()),
     );
 
-    apply_token_pricing(&mut msg, None).unwrap();
+    apply_canonical_token_pricing(&mut msg, None).unwrap();
     assert_eq!(msg.cost, 0.0);
 }
 
@@ -4236,7 +4236,7 @@ fn test_tui_model_aggregation_uses_unsigned_token_capacity() {
 }
 
 #[test]
-fn test_apply_token_pricing_overrides_cost_when_pricing_exists() {
+fn test_apply_canonical_token_pricing_overrides_cost_when_pricing_exists() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "gpt-4o".into(),
@@ -4264,12 +4264,12 @@ fn test_apply_token_pricing_overrides_cost_when_pricing_exists() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.02);
 }
 
 #[test]
-fn test_apply_token_pricing_uses_deepseek_v4_message_timestamp() {
+fn test_apply_canonical_token_pricing_uses_deepseek_v4_message_timestamp() {
     use chrono::TimeZone as _;
 
     let openrouter = HashMap::from([(
@@ -4305,13 +4305,13 @@ fn test_apply_token_pricing_uses_deepseek_v4_message_timestamp() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
 
     assert_eq!(msg.cost, 0.01);
 }
 
 #[test]
-fn test_apply_token_pricing_returns_non_finite_cost_as_typed_error() {
+fn test_apply_canonical_token_pricing_returns_non_finite_cost_as_typed_error() {
     let pricing = pricing::PricingService::new(
         HashMap::from([(
             "overflow-model".into(),
@@ -4335,7 +4335,7 @@ fn test_apply_token_pricing_returns_non_finite_cost_as_typed_error() {
         0.0,
     );
 
-    let error = apply_token_pricing(&mut msg, Some(&pricing)).unwrap_err();
+    let error = apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap_err();
     assert_eq!(
         error,
         pricing::PricingComputationError::NonFiniteCost { component: "input" }
@@ -4344,7 +4344,7 @@ fn test_apply_token_pricing_returns_non_finite_cost_as_typed_error() {
 }
 
 #[test]
-fn test_apply_token_pricing_resolves_canonical_longcat_model() {
+fn test_apply_canonical_token_pricing_resolves_canonical_longcat_model() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "longcat-flash-3b".into(),
@@ -4372,12 +4372,12 @@ fn test_apply_token_pricing_resolves_canonical_longcat_model() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.02);
 }
 
 #[test]
-fn test_apply_token_pricing_uses_same_price_for_zed_and_other_clients() {
+fn test_apply_canonical_token_pricing_uses_same_price_for_zed_and_other_clients() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "claude-sonnet-4.5".into(),
@@ -4398,7 +4398,7 @@ fn test_apply_token_pricing_uses_same_price_for_zed_and_other_clients() {
     };
     let mut zed_msg = AttributedUsageRecord::new(
         ClientId::Zed,
-        "claude-sonnet-4-5",
+        "claude-sonnet-4.5",
         crate::integrations::zed::decode::ZED_HOSTED_PROVIDER,
         "session-1",
         1_733_011_200_000,
@@ -4407,7 +4407,7 @@ fn test_apply_token_pricing_uses_same_price_for_zed_and_other_clients() {
     );
     let mut claude_msg = AttributedUsageRecord::new(
         ClientId::Claude,
-        "claude-sonnet-4-5",
+        "claude-sonnet-4.5",
         crate::integrations::zed::decode::ZED_HOSTED_PROVIDER,
         "session-1",
         1_733_011_200_000,
@@ -4415,14 +4415,14 @@ fn test_apply_token_pricing_uses_same_price_for_zed_and_other_clients() {
         0.0,
     );
 
-    apply_token_pricing(&mut zed_msg, Some(&pricing)).unwrap();
-    apply_token_pricing(&mut claude_msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut zed_msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut claude_msg, Some(&pricing)).unwrap();
     assert_eq!(zed_msg.cost, claude_msg.cost);
     assert!((zed_msg.cost - 0.020).abs() < 1e-12);
 }
 
 #[test]
-fn test_apply_token_pricing_custom_zed_price_is_final_price() {
+fn test_apply_canonical_token_pricing_custom_zed_price_is_final_price() {
     let mut custom = HashMap::new();
     custom.insert(
         "claude-sonnet-4.5".into(),
@@ -4440,7 +4440,7 @@ fn test_apply_token_pricing_custom_zed_price_is_final_price() {
 
     let mut msg = AttributedUsageRecord::new(
         ClientId::Zed,
-        "claude-sonnet-4-5",
+        "claude-sonnet-4.5",
         crate::integrations::zed::decode::ZED_HOSTED_PROVIDER,
         "session-1",
         1_733_011_200_000,
@@ -4454,12 +4454,12 @@ fn test_apply_token_pricing_custom_zed_price_is_final_price() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert!((msg.cost - 0.050).abs() < 1e-12);
 }
 
 #[test]
-fn test_apply_token_pricing_uses_upstream_provider_for_zed_byok() {
+fn test_apply_canonical_token_pricing_uses_upstream_provider_for_zed_byok() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "claude-sonnet-4.5".into(),
@@ -4473,7 +4473,7 @@ fn test_apply_token_pricing_uses_upstream_provider_for_zed_byok() {
 
     let mut msg = AttributedUsageRecord::new(
         ClientId::Zed,
-        "claude-sonnet-4-5",
+        "claude-sonnet-4.5",
         "anthropic",
         "session-1",
         1_733_011_200_000,
@@ -4487,12 +4487,12 @@ fn test_apply_token_pricing_uses_upstream_provider_for_zed_byok() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert!((msg.cost - 0.020).abs() < 1e-12);
 }
 
 #[test]
-fn test_apply_token_pricing_uses_reasoning_for_gemini() {
+fn test_apply_canonical_token_pricing_uses_reasoning_for_gemini() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "gemini-2.5-pro".into(),
@@ -4520,12 +4520,12 @@ fn test_apply_token_pricing_uses_reasoning_for_gemini() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.034);
 }
 
 #[test]
-fn test_apply_token_pricing_uses_cache_read_pricing_for_gemini() {
+fn test_apply_canonical_token_pricing_uses_cache_read_pricing_for_gemini() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "gemini-2.5-pro".into(),
@@ -4554,7 +4554,7 @@ fn test_apply_token_pricing_uses_cache_read_pricing_for_gemini() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.0267);
 }
 
@@ -4685,7 +4685,7 @@ fn test_finalize_token_pricing_cleans_repeated_date_variant_before_lookup() {
 }
 
 #[test]
-fn test_apply_token_pricing_prefers_provider_aware_match() {
+fn test_apply_canonical_token_pricing_prefers_provider_aware_match() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "xai/grok-code".into(),
@@ -4721,12 +4721,12 @@ fn test_apply_token_pricing_prefers_provider_aware_match() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.2);
 }
 
 #[test]
-fn test_apply_token_pricing_uses_nested_reseller_exact_match() {
+fn test_apply_canonical_token_pricing_uses_nested_reseller_exact_match() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "gpt-4".into(),
@@ -4762,12 +4762,12 @@ fn test_apply_token_pricing_uses_nested_reseller_exact_match() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.2);
 }
 
 #[test]
-fn test_apply_token_pricing_clears_cost_without_exact_pricing() {
+fn test_apply_canonical_token_pricing_clears_cost_without_exact_pricing() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "fireworks_ai/accounts/fireworks/models/deepseek-r1-0528-distill-qwen3-8b".into(),
@@ -4805,12 +4805,12 @@ fn test_apply_token_pricing_clears_cost_without_exact_pricing() {
         0.123,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.0);
 }
 
 #[test]
-fn test_apply_token_pricing_prefers_provider_specific_exact_match_over_plain_exact() {
+fn test_apply_canonical_token_pricing_prefers_provider_specific_exact_match_over_plain_exact() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "gemini-2.5-pro".into(),
@@ -4851,12 +4851,12 @@ fn test_apply_token_pricing_prefers_provider_specific_exact_match_over_plain_exa
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.05);
 }
 
 #[test]
-fn test_apply_token_pricing_normalizes_openai_codex_provider() {
+fn test_apply_canonical_token_pricing_normalizes_openai_codex_provider() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "openai/gpt-5.2".into(),
@@ -4892,12 +4892,12 @@ fn test_apply_token_pricing_normalizes_openai_codex_provider() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.2);
 }
 
 #[test]
-fn test_apply_token_pricing_normalizes_openai_pro_provider() {
+fn test_apply_canonical_token_pricing_normalizes_openai_pro_provider() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "openai/gpt-5.2".into(),
@@ -4925,12 +4925,12 @@ fn test_apply_token_pricing_normalizes_openai_pro_provider() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.2);
 }
 
 #[test]
-fn test_apply_token_pricing_honors_observed_owl_scope_for_gpt() {
+fn test_apply_canonical_token_pricing_honors_observed_owl_scope_for_gpt() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "owl/gpt-5.2".into(),
@@ -4958,12 +4958,12 @@ fn test_apply_token_pricing_honors_observed_owl_scope_for_gpt() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.2);
 }
 
 #[test]
-fn test_apply_token_pricing_honors_observed_owl_scope_for_claude() {
+fn test_apply_canonical_token_pricing_honors_observed_owl_scope_for_claude() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "owl/claude-sonnet-4.5".into(),
@@ -4977,7 +4977,7 @@ fn test_apply_token_pricing_honors_observed_owl_scope_for_claude() {
 
     let mut msg = AttributedUsageRecord::new(
         ClientId::OpenCode,
-        "claude-sonnet-4-5",
+        "claude-sonnet-4.5",
         "owl",
         "session-1",
         1_733_011_200_000,
@@ -4991,12 +4991,12 @@ fn test_apply_token_pricing_honors_observed_owl_scope_for_claude() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.2);
 }
 
 #[test]
-fn test_apply_token_pricing_honors_observed_owl_scope_for_minimax() {
+fn test_apply_canonical_token_pricing_honors_observed_owl_scope_for_minimax() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "owl/minimax-m2.1".into(),
@@ -5024,12 +5024,12 @@ fn test_apply_token_pricing_honors_observed_owl_scope_for_minimax() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.2);
 }
 
 #[test]
-fn test_apply_token_pricing_prices_claude_code_gpt_5_3_codex() {
+fn test_apply_canonical_token_pricing_prices_claude_code_gpt_5_3_codex() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "gpt-5.3-codex".into(),
@@ -5058,13 +5058,13 @@ fn test_apply_token_pricing_prices_claude_code_gpt_5_3_codex() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     let expected = 1.75 + 1.4 + 0.00875;
     assert!((msg.cost - expected).abs() < 1e-12);
 }
 
 #[test]
-fn test_apply_token_pricing_prices_claude_code_minimax_model() {
+fn test_apply_canonical_token_pricing_prices_claude_code_minimax_model() {
     let mut litellm = HashMap::new();
     litellm.insert(
         "minimax/minimax-m2.1".into(),
@@ -5092,12 +5092,12 @@ fn test_apply_token_pricing_prices_claude_code_minimax_model() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     assert_eq!(msg.cost, 0.2);
 }
 
 #[test]
-fn test_apply_token_pricing_prices_canonical_kimi_k2_6() {
+fn test_apply_canonical_token_pricing_prices_canonical_kimi_k2_6() {
     let mut openrouter = HashMap::new();
     openrouter.insert(
         "moonshotai/kimi-k2.6".into(),
@@ -5125,7 +5125,7 @@ fn test_apply_token_pricing_prices_canonical_kimi_k2_6() {
         0.0,
     );
 
-    apply_token_pricing(&mut msg, Some(&pricing)).unwrap();
+    apply_canonical_token_pricing(&mut msg, Some(&pricing)).unwrap();
     let expected = 1_000_000.0 * 9.5e-7 + 250_000.0 * 0.000004;
     assert!((msg.cost - expected).abs() < 1e-12);
     assert!(msg.cost > 0.0);

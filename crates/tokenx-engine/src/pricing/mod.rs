@@ -385,21 +385,21 @@ impl PricingService {
         model_id: &str,
         forced_pricing_source: Option<&str>,
     ) -> Option<LookupResult> {
-        let canonical_model_id = model_aliases::canonicalize_model_id(model_id);
-        match forced_pricing_source {
-            Some(pricing_source) if pricing_source.eq_ignore_ascii_case("custom") => {
-                return self.lookup_custom(&canonical_model_id);
-            }
-            None => {
-                if let Some(result) = self.lookup_custom(&canonical_model_id) {
-                    return Some(result);
-                }
-            }
-            Some(_) => {}
-        }
+        let model_id = model_aliases::canonicalize_model_id(model_id);
+        self.lookup_canonical_with_pricing_source(&model_id, forced_pricing_source)
+    }
 
-        self.lookup
-            .lookup_with_pricing_source(&canonical_model_id, forced_pricing_source)
+    /// Look up a final mapped identity without applying default mappings again.
+    pub fn lookup_canonical_with_pricing_source(
+        &self,
+        model_id: &str,
+        forced_pricing_source: Option<&str>,
+    ) -> Option<LookupResult> {
+        self.lookup_canonical_with_pricing_source_and_provider(
+            model_id,
+            forced_pricing_source,
+            None,
+        )
     }
 
     pub fn lookup_with_pricing_source_and_provider(
@@ -409,23 +409,37 @@ impl PricingService {
         provider_id: Option<&str>,
     ) -> Option<LookupResult> {
         let canonical_model_id = model_aliases::canonicalize_model_id(model_id);
+        self.lookup_canonical_with_pricing_source_and_provider(
+            &canonical_model_id,
+            forced_pricing_source,
+            provider_id,
+        )
+    }
+
+    fn lookup_canonical_with_pricing_source_and_provider(
+        &self,
+        canonical_model_id: &str,
+        forced_pricing_source: Option<&str>,
+        provider_id: Option<&str>,
+    ) -> Option<LookupResult> {
         match forced_pricing_source {
             Some(pricing_source) if pricing_source.eq_ignore_ascii_case("custom") => {
-                return self.lookup_custom(&canonical_model_id);
+                return self.lookup_custom(canonical_model_id);
             }
             None => {
-                if let Some(result) = self.lookup_custom(&canonical_model_id) {
+                if let Some(result) = self.lookup_custom(canonical_model_id) {
                     return Some(result);
                 }
             }
             Some(_) => {}
         }
 
-        self.lookup.lookup_with_pricing_source_and_provider(
-            &canonical_model_id,
-            forced_pricing_source,
-            provider_id,
-        )
+        self.lookup
+            .lookup_canonical_with_pricing_source_and_provider(
+                canonical_model_id,
+                forced_pricing_source,
+                provider_id,
+            )
     }
 
     pub fn calculate_cost(
@@ -464,7 +478,22 @@ impl PricingService {
         timestamp_ms: Option<i64>,
     ) -> Result<f64, PricingComputationError> {
         let canonical_model_id = model_aliases::canonicalize_model_id(model_id);
-        if let Some(result) = self.custom.lookup_with_key(&canonical_model_id) {
+        self.calculate_canonical_cost_with_provider_and_time(
+            &canonical_model_id,
+            provider_id,
+            usage,
+            timestamp_ms,
+        )
+    }
+
+    pub(crate) fn calculate_canonical_cost_with_provider_and_time(
+        &self,
+        canonical_model_id: &str,
+        provider_id: Option<&str>,
+        usage: &TokenBreakdown,
+        timestamp_ms: Option<i64>,
+    ) -> Result<f64, PricingComputationError> {
+        if let Some(result) = self.custom.lookup_with_key(canonical_model_id) {
             return compute_cost(
                 result.pricing,
                 usage.input,
@@ -475,8 +504,8 @@ impl PricingService {
             );
         }
 
-        self.lookup.calculate_cost_with_provider_and_time(
-            &canonical_model_id,
+        self.lookup.calculate_canonical_cost_with_provider_and_time(
+            canonical_model_id,
             provider_id,
             usage,
             timestamp_ms,

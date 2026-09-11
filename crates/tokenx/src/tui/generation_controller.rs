@@ -332,6 +332,7 @@ impl GenerationController {
             *current.calendar(),
             pricing,
             current.dsh_home().map(std::path::Path::to_path_buf),
+            current.model_mappings().clone(),
         )?;
         if replacement.config() == current {
             return Ok(false);
@@ -394,6 +395,7 @@ impl GenerationController {
             *current.calendar(),
             pricing,
             current.dsh_home().map(std::path::Path::to_path_buf),
+            current.model_mappings().clone(),
         )?;
         let context_changed = context_changed || replacement.config() != current;
         self.acquisition = replacement;

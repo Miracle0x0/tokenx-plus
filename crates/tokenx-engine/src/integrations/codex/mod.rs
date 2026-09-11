@@ -210,7 +210,11 @@ fn fold_codex_units(
             ctx,
         );
         if finalization {
-            rejections.merge(&finalize_codex_messages(&mut messages, ctx.pricing));
+            rejections.merge(&finalize_codex_messages(
+                &mut messages,
+                ctx.pricing,
+                &ctx.model_mappings,
+            ));
         }
         rejections.merge(&pipeline_cache::emit_messages(
             messages
@@ -345,8 +349,9 @@ fn parse_full_log_input(
 fn finalize_codex_messages(
     messages: &mut Vec<UsageRecord>,
     pricing: Option<&pricing::PricingService>,
+    model_mappings: &crate::ModelMappings,
 ) -> crate::input_health::RejectionSummary {
-    crate::price_source_eligible_messages(messages, pricing)
+    crate::price_source_eligible_messages(messages, pricing, model_mappings)
 }
 
 struct CodexCacheMaterial {

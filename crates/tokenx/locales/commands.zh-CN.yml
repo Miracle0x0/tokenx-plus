@@ -1,4 +1,8 @@
 commands:
+  config:
+    creating: "正在生成模型映射配置……"
+    created: "已生成模型映射配置：%{path}"
+    create_error: "无法创建模型映射配置 `%{path}`"
   cache:
     prune_summary: "输入记录缓存清理：已扫描 %{scanned}，已移除 %{removed}，已保留 %{retained}。"
     warmed: "Generation 缓存已预热。"

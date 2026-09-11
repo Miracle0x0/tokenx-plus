@@ -12,7 +12,7 @@ use serde::Deserialize;
 use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
-use crate::{model_aliases, provider_identity, TokenBreakdown};
+use crate::{provider_identity, TokenBreakdown};
 
 const USAGE_OPERATION: &str = "validate Pi assistant message";
 
@@ -146,8 +146,7 @@ pub(crate) fn parse_pi_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 .record(RecordRejectionReason::MissingModel);
             continue;
         };
-        let model = model_aliases::canonicalize_observed_model_id(&raw_model)
-            .unwrap_or_else(|| raw_model.trim().to_owned());
+        let model = raw_model.trim().to_owned();
         let provider = provider_identity::observed_provider_id(
             message.provider.as_deref().unwrap_or_default(),
             &model,

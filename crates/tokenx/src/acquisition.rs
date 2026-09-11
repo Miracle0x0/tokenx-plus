@@ -27,6 +27,7 @@ pub(crate) fn acquisition_engine(
         calendar,
         pricing,
         None,
+        tokenx_engine::ModelMappings::default(),
     )
 }
 
@@ -40,6 +41,7 @@ pub(crate) fn acquisition_engine_with_dsh_home(
     calendar: tokenx_engine::CalendarContext,
     pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
     dsh_home: Option<PathBuf>,
+    model_mappings: tokenx_engine::ModelMappings,
 ) -> Result<AcquisitionEngine> {
     let config = AcquisitionConfig::new_with_dsh_home(
         resolved_home_dir,
@@ -49,7 +51,8 @@ pub(crate) fn acquisition_engine_with_dsh_home(
         calendar,
         pricing.context().clone(),
         dsh_home,
-    )?;
+    )?
+    .with_model_mappings(model_mappings);
     Ok(AcquisitionEngine::new(config, pricing, input_cache_dir)?)
 }
 

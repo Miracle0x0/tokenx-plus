@@ -16,6 +16,7 @@ pub(crate) struct FoldContext<'a> {
     binding: IntegrationBinding,
     pub input_cache: &'a mut input_record_cache::InputRecordShardStore,
     pub pricing: Option<&'a pricing::PricingService>,
+    pub model_mappings: crate::ModelMappings,
     calendar: crate::CalendarContext,
     cancellation: crate::engine::AcquisitionCancellation,
     health: DataHealth,
@@ -34,6 +35,7 @@ impl<'a> FoldContext<'a> {
             pricing,
             crate::CalendarContext::explicit("UTC").expect("UTC is a valid IANA timezone"),
             crate::engine::AcquisitionCancellation::default(),
+            crate::ModelMappings::default(),
         )
     }
 
@@ -43,11 +45,13 @@ impl<'a> FoldContext<'a> {
         pricing: Option<&'a pricing::PricingService>,
         calendar: crate::CalendarContext,
         cancellation: crate::engine::AcquisitionCancellation,
+        model_mappings: crate::ModelMappings,
     ) -> Self {
         Self {
             binding,
             input_cache,
             pricing,
+            model_mappings,
             calendar,
             cancellation,
             health: DataHealth::default(),

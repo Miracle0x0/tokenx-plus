@@ -312,6 +312,7 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -
         calendar,
         pricing,
         dsh_home,
+        settings.model_mappings.clone(),
     )?;
     let pricing_diagnostics = acquisition.pricing_snapshot().diagnostics().to_vec();
     let (cached_snapshot, mut needs_background_load, retry_backoff, cache_startup_warning) =

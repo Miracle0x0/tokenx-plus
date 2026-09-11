@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokenx_engine::{AcquisitionConfig, ClientId, Generation};
 
 const CACHE_MAGIC: [u8; 8] = *b"TOKENXG\0";
-const CACHE_SCHEMA_VERSION: u32 = 3;
+const CACHE_SCHEMA_VERSION: u32 = 4;
 const MAX_GENERATION_BODY_BYTES: u64 = 256 * 1024 * 1024;
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
 const RETRY_BASE_DELAY_MS: u64 = 5 * 60 * 1000;
@@ -842,6 +842,34 @@ mod tests {
 
     fn generation(home: &std::path::Path) -> Generation {
         generation_with_health(home, tokenx_engine::input_health::HealthSummary::default())
+    }
+
+    #[test]
+    fn model_mapping_changes_invalidate_the_generation_cache() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let generation = generation(temp.path());
+        let path = temp.path().join("generation.bin");
+        super::save_generation_cache(&path, &generation).unwrap();
+        assert!(matches!(
+            super::load_generation_cache(&path, generation.acquisition_config()),
+            CacheResult::Fresh(_)
+        ));
+        let mappings = tokenx_engine::ModelMappings::from_toml(
+            r#"
+            [[rules]]
+            pattern = "amp-model"
+            model = "renamed-model"
+        "#,
+        )
+        .unwrap();
+        let changed = generation
+            .acquisition_config()
+            .clone()
+            .with_model_mappings(mappings);
+        assert!(matches!(
+            super::load_generation_cache(&path, &changed),
+            CacheResult::Missing
+        ));
     }
 
     fn generation_with_health(

@@ -11,6 +11,8 @@ pub mod input_health;
 mod input_record_cache;
 mod integrations;
 mod model_aliases;
+mod model_mappings;
+pub use model_mappings::{ModelMappingRule, ModelMappings, ModelMappingsParseError};
 pub mod pricing;
 mod provider_identity;
 mod records;
@@ -310,6 +312,7 @@ fn fold_prepared_local_inputs_with_pricing(
         pricing,
         CalendarContext::explicit("UTC").expect("UTC is a valid IANA timezone"),
         sink,
+        &ModelMappings::default(),
         &AcquisitionCancellation::default(),
     )
 }
@@ -319,6 +322,7 @@ fn fold_prepared_local_inputs_with_pricing_with_cancellation(
     pricing: Option<&pricing::PricingService>,
     calendar: CalendarContext,
     sink: &mut dyn integrations::AttributedUsageSink,
+    model_mappings: &ModelMappings,
     cancellation: &AcquisitionCancellation,
 ) -> Result<FoldOutcome, AcquisitionError> {
     cancellation
@@ -346,9 +350,10 @@ fn fold_prepared_local_inputs_with_pricing_with_cancellation(
         pricing,
         calendar,
         sink,
-        &mut health,
+        model_mappings,
         cancellation,
-    );
+    )
+    .map(|parsed_health| health.merge(parsed_health));
 
     cancellation
         .check(AcquisitionPhase::CacheFinalization)
@@ -413,6 +418,7 @@ fn stream_local_inputs_into_accumulator(
         pricing,
         accumulator,
         CalendarContext::explicit("UTC").expect("UTC is a valid IANA timezone"),
+        &ModelMappings::default(),
         &AcquisitionCancellation::default(),
     )
 }
@@ -422,6 +428,7 @@ fn stream_local_inputs_into_accumulator_with_cancellation(
     pricing: Option<&pricing::PricingService>,
     accumulator: &mut crate::aggregate::GenerationAccumulator,
     calendar: CalendarContext,
+    model_mappings: &ModelMappings,
     cancellation: &AcquisitionCancellation,
 ) -> Result<FoldOutcome, AcquisitionError> {
     let mut sink = AccumulationSink(accumulator);
@@ -430,6 +437,7 @@ fn stream_local_inputs_into_accumulator_with_cancellation(
         pricing,
         calendar,
         &mut sink,
+        model_mappings,
         cancellation,
     )
 }
@@ -662,7 +670,7 @@ pub(crate) fn has_positive_tokens(tokens: &TokenBreakdown) -> bool {
         || tokens.reasoning > 0
 }
 
-fn apply_token_pricing(
+fn apply_canonical_token_pricing(
     message: &mut records::UsageRecord,
     pricing: Option<&pricing::PricingService>,
 ) -> Result<(), pricing::PricingComputationError> {
@@ -675,7 +683,7 @@ fn apply_token_pricing(
         return Ok(());
     }
 
-    let calculated_cost = pricing.calculate_cost_with_provider_and_time(
+    let calculated_cost = pricing.calculate_canonical_cost_with_provider_and_time(
         &message.model_id,
         Some(message.provider_id.as_ref()),
         &message.tokens,
@@ -705,22 +713,27 @@ fn canonicalize_message_provider(message: &mut records::UsageRecord) {
 
 fn canonicalize_message_model(
     message: &mut records::UsageRecord,
-    model_cache: &mut HashMap<Arc<str>, Arc<str>>,
+    model_cache: &mut HashMap<(Arc<str>, Arc<str>), Arc<str>>,
+    mappings: &ModelMappings,
 ) {
-    if let Some(canonical) = model_cache.get(&message.model_id) {
+    let key = (
+        Arc::clone(&message.raw_model_id),
+        Arc::clone(&message.model_id),
+    );
+    if let Some(canonical) = model_cache.get(&key) {
         message.model_id = Arc::clone(canonical);
         return;
     }
 
     let raw = Arc::clone(&message.model_id);
-    let canonical = model_aliases::canonicalize_model_id(raw.as_ref());
+    let canonical = mappings.canonicalize_observation(&message.raw_model_id, &raw);
     let canonical = if canonical == raw.as_ref() {
         Arc::clone(&raw)
     } else {
         records::intern::intern(&canonical)
     };
 
-    model_cache.insert(raw, Arc::clone(&canonical));
+    model_cache.insert(key, Arc::clone(&canonical));
     message.model_id = canonical;
 }
 
@@ -769,7 +782,7 @@ fn record_finalization(record: &records::UsageRecord) -> RecordFinalization {
 #[cfg(test)]
 fn finalize_message_identities<M: AsMut<records::UsageRecord>>(messages: &mut Vec<M>) {
     let _ = retain_source_eligible_messages(messages);
-    let _ = price_source_eligible_messages(messages, None);
+    let _ = price_source_eligible_messages(messages, None, &ModelMappings::default());
 }
 
 fn retain_source_eligible_messages<M: AsMut<records::UsageRecord>>(
@@ -793,23 +806,28 @@ fn finalize_token_priced_messages<M: AsMut<records::UsageRecord>>(
     pricing: Option<&pricing::PricingService>,
 ) -> input_health::RejectionSummary {
     let mut rejections = retain_source_eligible_messages(messages);
-    rejections.merge(&price_source_eligible_messages(messages, pricing));
+    rejections.merge(&price_source_eligible_messages(
+        messages,
+        pricing,
+        &ModelMappings::default(),
+    ));
     rejections
 }
 
 fn price_source_eligible_messages<M: AsMut<records::UsageRecord>>(
     messages: &mut Vec<M>,
     pricing: Option<&pricing::PricingService>,
+    model_mappings: &ModelMappings,
 ) -> input_health::RejectionSummary {
     let mut model_cache = HashMap::new();
     let mut rejections = input_health::RejectionSummary::default();
 
     messages.retain_mut(|message| {
         let message = message.as_mut();
-        canonicalize_message_model(message, &mut model_cache);
+        canonicalize_message_model(message, &mut model_cache, model_mappings);
         refresh_derived_message_fields(message);
         canonicalize_message_provider(message);
-        if apply_token_pricing(message, pricing).is_err() {
+        if apply_canonical_token_pricing(message, pricing).is_err() {
             rejections.record(input_health::RecordRejectionReason::PricingComputationFailed);
             return false;
         }

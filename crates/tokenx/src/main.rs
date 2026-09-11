@@ -156,6 +156,9 @@ fn execute(
             )),
             PricingSubcommand::Overrides { json } => run_pricing_list_overrides(&paths, json),
         },
+        ExecutionPlan::InitModelMappings { paths, no_spinner } => {
+            commands::config::init_model_mappings(&paths, no_spinner)
+        }
         ExecutionPlan::CachePrune(paths) => run_input_record_cache_prune(&paths),
         ExecutionPlan::CacheWarm(startup) => run_warm_generation_cache(startup),
     }?;

@@ -44,6 +44,7 @@ pub(crate) fn run_warm_generation_cache(
         calendar,
         pricing,
         dsh_home,
+        settings.model_mappings.clone(),
     )?;
     let prepared = acquisition.prepare()?;
     let generation = build_generation(&acquisition, prepared)?;

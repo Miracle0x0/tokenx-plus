@@ -1,5 +1,7 @@
 cli:
   about:
+    config: "Manage configuration files"
+    init_model_mappings: "Create a model-mappings.toml template with commented default rules"
     root: "AI token usage analytics"
     tui: "Launch the interactive terminal interface"
     models: "Show model usage"
@@ -10,6 +12,8 @@ cli:
     cache_warm: "Build the TUI aggregate cache for a client scope"
     cache_prune: "Remove orphaned and superseded input-record cache shards"
   help:
+    model_mappings: "Model mappings:\n  Customize grouping, display, and pricing with model-mappings.toml.\n  Generate a template: tokenx config init-model-mappings --no-spinner\n  Show configuration help: tokenx config init-model-mappings --help"
+    init_model_mappings: "Configuration file:\n  ~/.tokenx/model-mappings.toml\n  With TOKENX_CONFIG_DIR set: ${TOKENX_CONFIG_DIR}/model-mappings.toml\n\nCreates an editable TOML template with the bundled default rules in comments.\nExisting files are not overwritten. If the file is absent, bundled defaults apply.\n\nUser [[rules]] entries run in file order before defaults; the first match wins.\nPatterns match full names, ignore ASCII case, and support * for any sequence.\nMatched targets are final and are used for grouping, display, and pricing.\nSet include_defaults = false to replace the default alias list; syntax cleanup\nstill applies to unmatched names. Edits take effect on the next invocation.\n\nExample (also included in the bundled defaults):\n  include_defaults = true\n\n  [[rules]]\n  pattern = \"deepseek-v4.1-*\"\n  model = \"deepseek-v4.1-flash\"\n\n  [[rules]]\n  pattern = \"deepseek-flash\"\n  model = \"deepseek-v4.1-flash\""
     language: "Interface language: en or zh-CN"
     tab: "Open a specific tab"
     theme: "Use a complete TUI semantic color theme"

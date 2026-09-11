@@ -957,9 +957,10 @@ pub(crate) fn run_prepared_integrations(
     pricing: Option<&pricing::PricingService>,
     calendar: crate::CalendarContext,
     sink: &mut dyn AttributedUsageSink,
-    health: &mut DataHealth,
+    model_mappings: &crate::ModelMappings,
     cancellation: &crate::engine::AcquisitionCancellation,
-) -> Result<(), InputPipelineError> {
+) -> Result<DataHealth, InputPipelineError> {
+    let mut health = DataHealth::default();
     cancellation.check(crate::engine::AcquisitionPhase::Planning)?;
     for PreparedIntegrationInputs { binding, units } in prepared {
         cancellation.check(crate::engine::AcquisitionPhase::Planning)?;
@@ -970,6 +971,7 @@ pub(crate) fn run_prepared_integrations(
             pricing,
             calendar,
             cancellation.clone(),
+            model_mappings.clone(),
         );
         let mut bound_sink = BoundUsageSink::new(binding, sink);
         cancellation.check(crate::engine::AcquisitionPhase::Folding)?;
@@ -980,7 +982,7 @@ pub(crate) fn run_prepared_integrations(
         health.merge(fold_ctx.take_health());
     }
     cancellation.check(crate::engine::AcquisitionPhase::Folding)?;
-    Ok(())
+    Ok(health)
 }
 
 #[cfg(test)]

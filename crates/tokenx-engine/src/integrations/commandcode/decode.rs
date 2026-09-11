@@ -909,7 +909,7 @@ mod tests {
         );
         let pricing = PricingService::new(litellm, HashMap::new());
 
-        crate::apply_token_pricing(&mut messages[0], Some(&pricing)).unwrap();
+        crate::apply_canonical_token_pricing(&mut messages[0], Some(&pricing)).unwrap();
 
         assert_eq!(messages[0].cost, 0.0);
     }
