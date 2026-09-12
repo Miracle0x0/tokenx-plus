@@ -21,7 +21,7 @@ use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
 use tokenx_engine::ClientId;
 
-const HOUR_WIDTH: u16 = 7;
+const HOUR_MIN_WIDTH: u16 = 7;
 const CLIENT_MIN_WIDTH: u16 = 8;
 const CLIENT_MAX_WIDTH: u16 = 40;
 const TURN_WIDTH: u16 = 6;
@@ -96,6 +96,7 @@ fn hourly_column_order(column: HourlyColumn) -> u16 {
 
 fn hourly_table_layout(
     table_width: u16,
+    hour_content_width: u16,
     has_turn_data: bool,
     client_content_width: u16,
 ) -> HourlyTableLayout {
@@ -103,7 +104,7 @@ fn hourly_table_layout(
         ResponsiveColumn::fixed_required(
             HourlyColumn::Hour,
             hourly_column_order(HourlyColumn::Hour),
-            HOUR_WIDTH,
+            hour_content_width.max(HOUR_MIN_WIDTH),
         ),
         ResponsiveColumn::fixed_required(
             HourlyColumn::Total,
@@ -268,6 +269,15 @@ fn render_table(
         .map(|hour| display_width(&hourly_client_text(hour.clients.iter())))
         .max()
         .unwrap_or(0);
+    let hour_content_width = ordered_hourly()
+        .flat_map(|hour| {
+            [
+                display_width(&format_hour_label(hour.datetime)),
+                display_width(&format_date_separator(hour.datetime.date())),
+            ]
+        })
+        .max()
+        .unwrap_or(HOUR_MIN_WIDTH);
     let sort_field = app.sort_field;
     let sort_direction = app.sort_direction;
     let scroll_offset = interaction.scroll;
@@ -281,7 +291,12 @@ fn render_table(
     let current_row_style = app.theme.current_row_style();
     let striped_row_style = app.theme.striped_row_style();
     let current_hour = app.current_calendar_hour();
-    let table_layout = hourly_table_layout(table_area.width, has_turn_data, client_content_width);
+    let table_layout = hourly_table_layout(
+        table_area.width,
+        hour_content_width,
+        has_turn_data,
+        client_content_width,
+    );
     let columns = table_layout.columns.clone();
 
     let sort_indicator = |field: SortField| -> &'static str {
@@ -554,18 +569,18 @@ mod tests {
 
     #[test]
     fn tight_hourly_layout_keeps_hour_and_total() {
-        let layout = hourly_table_layout(21, false, 40);
+        let layout = hourly_table_layout(21, HOUR_MIN_WIDTH, false, 40);
 
         assert_eq!(
             layout.columns,
             vec![HourlyColumn::Hour, HourlyColumn::Total]
         );
-        assert_eq!(length_at(&layout.widths, 0), HOUR_WIDTH);
+        assert_eq!(length_at(&layout.widths, 0), HOUR_MIN_WIDTH);
     }
 
     #[test]
     fn hourly_layout_adds_cost_before_secondary_columns() {
-        let layout = hourly_table_layout(32, false, 40);
+        let layout = hourly_table_layout(32, HOUR_MIN_WIDTH, false, 40);
 
         assert_eq!(
             layout.columns,
@@ -575,7 +590,7 @@ mod tests {
 
     #[test]
     fn hourly_layout_stops_at_wide_client_after_cost() {
-        let layout = hourly_table_layout(44, false, 40);
+        let layout = hourly_table_layout(44, HOUR_MIN_WIDTH, false, 40);
 
         assert!(layout.columns.contains(&HourlyColumn::Cost));
         assert!(!layout.columns.contains(&HourlyColumn::Client));
@@ -584,7 +599,7 @@ mod tests {
 
     #[test]
     fn hourly_layout_does_not_skip_client_to_show_turn_or_messages() {
-        let layout = hourly_table_layout(45, true, 40);
+        let layout = hourly_table_layout(45, HOUR_MIN_WIDTH, true, 40);
 
         assert_eq!(
             layout.columns,
@@ -597,7 +612,7 @@ mod tests {
 
     #[test]
     fn hourly_layout_adds_secondary_columns_before_total_and_cost() {
-        let layout = hourly_table_layout(72, true, 20);
+        let layout = hourly_table_layout(72, HOUR_MIN_WIDTH, true, 20);
 
         assert_eq!(layout.columns[0], HourlyColumn::Hour);
         assert!(layout.columns.contains(&HourlyColumn::Client));
@@ -611,7 +626,7 @@ mod tests {
 
     #[test]
     fn hourly_layout_uses_measured_client_width_when_selected() {
-        let layout = hourly_table_layout(100, true, 16);
+        let layout = hourly_table_layout(100, HOUR_MIN_WIDTH, true, 16);
         let client_index = layout
             .columns
             .iter()
@@ -655,6 +670,46 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2026, 3, 2).unwrap();
 
         assert_eq!(format_date_separator(date), "03/02");
+    }
+
+    #[test]
+    fn localized_date_separators_render_both_month_and_day_in_the_hour_column() {
+        for locale in ["en", "zh-CN"] {
+            let label = rust_i18n::t!(
+                "tui.date.month_day_numeric",
+                locale = locale,
+                month = "07",
+                day = "27"
+            )
+            .into_owned();
+
+            for width in [21, 120] {
+                let layout =
+                    hourly_table_layout(width, display_width(&label), false, CLIENT_MIN_WIDTH);
+                assert_eq!(
+                    layout.width_for(HourlyColumn::Hour),
+                    if locale == "zh-CN" { 8 } else { 7 }
+                );
+                let mut cells = vec![Cell::from(label.clone())];
+                cells.extend((1..layout.columns.len()).map(|_| Cell::from("")));
+                let table = Table::new([Row::new(cells)], layout.widths)
+                    .column_spacing(TABLE_COLUMN_SPACING)
+                    .flex(DISTRIBUTED_TABLE_FLEX);
+                let area = Rect::new(0, 0, width, 1);
+                let mut buffer = Buffer::empty(area);
+                Widget::render(table, area, &mut buffer);
+
+                let mut x = 0;
+                for ch in label.chars() {
+                    assert_eq!(
+                        buffer[(x, 0)].symbol(),
+                        ch.to_string(),
+                        "{locale} date {label:?} must fit at table width {width}, column {x}"
+                    );
+                    x += crate::terminal_text::char_width(ch) as u16;
+                }
+            }
+        }
     }
 
     #[test]
