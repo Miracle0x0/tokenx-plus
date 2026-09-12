@@ -1,10 +1,12 @@
 //! Chromeless stacked bar chart for the Overview "Token per Day" panel.
 //!
 //! Rendering contract (implemented in this module):
-//! - `area` is the whole chart content area inside a bordered box drawn by the
-//!   caller: there is no y-axis gutter and no title row, so bars span the full
-//!   width edge to edge.
-//! - Rows relative to `area`: bars occupy rows `0..h-2`, row `h-2` is a
+//! - Bars share a whole-cell width, with unused columns split between the
+//!   left and right margins (the right gets any odd column). Below one column
+//!   per bar, bars remain one column wide and clip at the right edge.
+//! - The gridline, baseline, peak marker, and labels use the same centered
+//!   chart area, without a y-axis gutter or title row.
+//! - Rows relative to the chart area: bars occupy rows `0..h-2`, row `h-2` is a
 //!   baseline of '─', row `h-1` holds the date labels.
 //! - A single dotted gridline ('┄') crosses the vertical middle of the bar
 //!   field; it is drawn before the bars so it only shows through empty cells.
@@ -49,7 +51,14 @@ pub fn render_stacked_bar_chart(
         return;
     }
 
-    let chart_width = area.width as usize;
+    let bar_count = data.len();
+    let bar_width = (area.width as usize / bar_count).max(1);
+    let chart_width = (bar_width * bar_count).min(area.width as usize) as u16;
+    let area = Rect {
+        x: area.x + (area.width - chart_width) / 2,
+        width: chart_width,
+        ..area
+    };
     let chart_height = area.height.saturating_sub(2) as usize;
 
     let max_value = data
@@ -59,16 +68,6 @@ pub fn render_stacked_bar_chart(
         .max(1.0);
 
     let buf = frame.buffer_mut();
-    let bar_count = data.len();
-
-    let get_bar_width = |index: usize| -> usize {
-        if bar_count == 0 {
-            return 1;
-        }
-        let start = (index * chart_width) / bar_count;
-        let end = ((index + 1) * chart_width) / bar_count;
-        (end - start).max(1)
-    };
 
     // Dotted mid gridline, drawn before the bars so they overwrite it and it
     // only shows through the empty cells above shorter bars.
@@ -88,9 +87,7 @@ pub fn render_stacked_bar_chart(
 
         // Render each bar
         let mut x_pos = area.x;
-        for (bar_index, bar_data) in data.iter().enumerate() {
-            let bar_width = get_bar_width(bar_index);
-
+        for bar_data in data {
             let row_threshold = ((row_from_bottom + 1) as f64 / chart_height as f64) * max_value;
             let prev_threshold = (row_from_bottom as f64 / chart_height as f64) * max_value;
             let threshold_diff = row_threshold - prev_threshold;
@@ -372,30 +369,48 @@ mod tests {
     }
 
     #[test]
-    fn bars_touch_both_edges_of_the_area() {
+    fn bars_have_equal_widths_with_centered_margins() {
         let app = make_app(120);
-        let data: Vec<StackedBarData> = (0..7).map(|i| bar("1/5", 100 + i)).collect();
-        let area = Rect::new(2, 1, 40, 10);
-        let buf = render_chart(&app, area, &data, 44, 12);
+        let data: Vec<StackedBarData> = (0..7)
+            .map(|i| {
+                let mut bar = bar(&format!("1/{}", i + 1), 100);
+                bar.models[0].color = if i % 2 == 0 {
+                    Color::Green
+                } else {
+                    Color::Blue
+                };
+                bar
+            })
+            .collect();
 
-        // The tallest bar reaches the top row; every row of the bar field
-        // starts at area.x and ends at the right edge.
-        let bar_rows = area.y..area.y + area.height - 2;
-        for y in bar_rows.clone() {
-            assert_ne!(
-                buf[(area.x, y)].symbol(),
-                " ",
-                "left edge of row {y} should be covered by a bar"
-            );
-            assert_ne!(
-                buf[(area.x + area.width - 1, y)].symbol(),
-                " ",
-                "right edge of row {y} should be covered by a bar"
-            );
-        }
-        // No y-axis gutter: the cell just left of the area stays untouched.
-        for y in bar_rows {
-            assert_eq!(buf[(area.x - 1, y)].symbol(), " ");
+        // Divisible widths, even/odd remainders, and one-column bars.
+        for (width, bar_width, left_margin, right_margin) in [
+            (35, 5, 0, 0),
+            (39, 5, 2, 2),
+            (40, 5, 2, 3),
+            (7, 1, 0, 0),
+            (6, 1, 0, 0),
+        ] {
+            let area = Rect::new(2, 1, width, 10);
+            let buf = render_chart(&app, area, &data, area.right() + 2, 12);
+            let chart_start = area.x + left_margin;
+            let chart_end = area.right() - right_margin;
+            let bar_y = area.bottom() - 3;
+
+            for x in chart_start..chart_end {
+                let bar_index = ((x - chart_start) / bar_width) as usize;
+                assert_eq!(buf[(x, bar_y)].symbol(), "█", "width {width}, x {x}");
+                assert_eq!(
+                    buf[(x, bar_y)].fg,
+                    data[bar_index].models[0].color,
+                    "width {width}, x {x} belongs to bar {bar_index}"
+                );
+            }
+            for y in area.y..area.bottom() {
+                for x in (0..chart_start).chain(chart_end..buf.area.width) {
+                    assert_eq!(buf[(x, y)].symbol(), " ", "width {width}, ({x}, {y})");
+                }
+            }
         }
     }
 
@@ -457,10 +472,11 @@ mod tests {
     }
 
     #[test]
-    fn date_labels_anchor_to_the_edges() {
+    fn date_labels_anchor_to_the_centered_chart_edges() {
         let app = make_app(120);
         let data = vec![bar("1/5", 10), bar("6/15", 20), bar("12/25", 30)];
-        let area = Rect::new(3, 2, 40, 8);
+        // Three 13-column bars, with one unused column on either side.
+        let area = Rect::new(3, 2, 41, 8);
         let buf = render_chart(&app, area, &data, 46, 12);
 
         let label_y = area.y + area.height - 1;
@@ -471,12 +487,12 @@ mod tests {
             .take(area.width as usize)
             .collect();
         assert!(
-            inner.starts_with("Jan 5"),
-            "first date at area.x: {inner:?}"
+            inner.starts_with(" Jan 5"),
+            "first date after the left margin: {inner:?}"
         );
         assert!(
-            inner.ends_with("Dec 25"),
-            "last date at right edge: {inner:?}"
+            inner.ends_with("Dec 25 "),
+            "last date before the right margin: {inner:?}"
         );
         assert!(inner.contains("Jun 15"), "middle date centered: {inner:?}");
         let middle_start = inner.find("Jun 15").unwrap();
