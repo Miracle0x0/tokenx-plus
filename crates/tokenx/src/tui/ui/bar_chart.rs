@@ -1,11 +1,11 @@
 //! Chromeless stacked bar chart for the Overview "Token per Day" panel.
 //!
 //! Rendering contract (implemented in this module):
-//! - Recorded bars share a whole-cell width. Remaining columns are distributed
-//!   evenly across missing dates in chronological order, each taking zero to
-//!   one bar's width. Any remainder is split between the left and right margins
-//!   (the right gets any odd column). Below one column per recorded bar, bars
-//!   remain one column wide and clip at the right edge.
+//! - Recorded bars and missing dates share the whole-cell width chosen by the
+//!   caller. If the calendar interval cannot fit even at one column per day,
+//!   missing dates share the remaining columns and may collapse to zero width.
+//!   Any remainder is split between the left and right margins (the right gets
+//!   any odd column). Recorded bars clip at the right edge if they cannot fit.
 //! - The gridline, baseline, peak marker, and labels use the same centered
 //!   chart area, without a y-axis gutter or title row.
 //! - Rows relative to the chart area: bars occupy rows `0..h-2`, row `h-2` is a
@@ -51,10 +51,10 @@ struct BarChartLayout {
 }
 
 impl BarChartLayout {
-    /// Lay out a nonempty series without changing the recorded bars' widths.
-    fn new(data: &[StackedBarData], available_width: u16) -> Self {
+    /// Place the selected series at its fixed width, compressing gaps only
+    /// when the caller's one-column calendar interval exceeds the viewport.
+    fn new(data: &[StackedBarData], available_width: u16, bar_width: usize) -> Self {
         let available_width = available_width as usize;
-        let bar_width = (available_width / data.len()).max(1);
         let recorded_width = bar_width * data.len();
         let remaining_width = available_width - recorded_width.min(available_width);
         let empty_days: usize = data.iter().map(|bar| bar.empty_days_before).sum();
@@ -87,12 +87,13 @@ pub fn render_stacked_bar_chart(
     app: &TuiModel,
     area: Rect,
     data: &[StackedBarData],
+    bar_width: usize,
 ) {
     if data.is_empty() || area.height < 2 || area.width == 0 {
         return;
     }
 
-    let layout = BarChartLayout::new(data, area.width);
+    let layout = BarChartLayout::new(data, area.width, bar_width);
     let area = Rect {
         x: area.x + (area.width - layout.width) / 2,
         width: layout.width,
@@ -403,8 +404,10 @@ mod tests {
         height: u16,
     ) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let day_count = data.len() + data.iter().map(|bar| bar.empty_days_before).sum::<usize>();
+        let bar_width = (area.width as usize / day_count.max(1)).max(1);
         terminal
-            .draw(|frame| render_stacked_bar_chart(frame, app, area, data))
+            .draw(|frame| render_stacked_bar_chart(frame, app, area, data, bar_width))
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -462,18 +465,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_dates_share_remaining_columns_without_widening_recorded_bars() {
+    fn missing_dates_match_bar_width_except_when_the_calendar_cannot_fit() {
         let app = make_app(120);
         for (width, gaps, expected) in [
-            (11, vec![0, 1, 1], "███ ███ ███"),
-            // Four missing dates share two columns; the first gets zero columns.
-            (11, vec![0, 1, 3], "██████  ███"),
-            // One missing date takes at most one bar's width, leaving margins.
+            // Five dates at two columns each, with one unused column on the right.
+            (11, vec![0, 1, 1], "██  ██  ██ "),
+            (12, vec![0, 1, 3], "  █ █   █   "),
             (13, vec![0, 0, 0, 1, 0, 0, 0], "  ███ ████   "),
-            // With no remaining columns, every missing date has zero width.
-            (12, vec![0, 2, 3], "████████████"),
-            // A long interval uses the same bounded screen space.
-            (11, vec![0, 0, 1_000_000], "██████  ███"),
+            // Five missing dates share two columns, keeping all recorded bars.
+            (5, vec![0, 2, 3], "██  █"),
+            (3, vec![0, 2, 3], "███"),
+            // A long interval keeps one-column recorded bars and compresses its gap.
+            (11, vec![0, 0, 1_000_000], "██        █"),
         ] {
             let data: Vec<_> = gaps
                 .into_iter()
@@ -495,11 +498,11 @@ mod tests {
         let mut data = vec![bar("1/5", 100), bar("1/7", 100), bar("1/9", 100)];
         data[1].empty_days_before = 1;
         data[2].empty_days_before = 1;
-        let area = Rect::new(0, 0, 11, 8);
-        let buf = render_chart(&app, area, &data, 11, 8);
+        let area = Rect::new(0, 0, 10, 8);
+        let buf = render_chart(&app, area, &data, 10, 8);
 
-        assert_eq!(row_string(&buf, 3), "███┄███┄███");
-        assert_eq!(row_string(&buf, 6), "───────────");
+        assert_eq!(row_string(&buf, 3), "██┄┄██┄┄██");
+        assert_eq!(row_string(&buf, 6), "──────────");
     }
 
     #[test]
@@ -602,8 +605,9 @@ mod tests {
         let area = Rect::new(0, 0, 41, 8);
         let buf = render_chart(&app, area, &data, 41, 8);
 
-        // Five-column bars and six gap columns put the fourth bar at x=21.
-        assert_eq!(row_string(&buf, 7).find("Jan 9"), Some(21));
+        // Twelve dates at three columns each, with a two-column left margin.
+        // Jan 9 starts at x=26; its five-column label centers at x=27.
+        assert_eq!(row_string(&buf, 7).find("Jan 9"), Some(25));
     }
 
     #[test]

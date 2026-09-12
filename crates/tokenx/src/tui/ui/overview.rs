@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use chrono::Days;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
@@ -22,6 +23,11 @@ struct ModelAggregate {
 #[derive(Debug, Clone, Default)]
 struct OverviewData {
     models: BTreeMap<String, ModelAggregate>,
+}
+
+struct OverviewChart {
+    bars: Vec<StackedBarData>,
+    bar_width: usize,
 }
 
 pub(crate) fn render(
@@ -131,88 +137,124 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
         return;
     }
 
-    let mut previous_date = None;
-    let data: Vec<StackedBarData> = match granularity {
-        ChartGranularity::Daily => app
-            .usage()
-            .daily
-            .iter()
-            .take(60)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .map(|day| {
-                let empty_days_before = previous_date.map_or(0, |previous: chrono::NaiveDate| {
-                    usize::try_from((day.date - previous).num_days() - 1)
-                        .expect("overview daily dates must be strictly increasing")
-                });
-                previous_date = Some(day.date);
-                let mut models = BTreeMap::<String, ModelAggregate>::new();
-                for client in day.client_breakdown.values() {
-                    for model in &client.models {
+    let chart = match granularity {
+        ChartGranularity::Daily => daily_chart_data(app, area.width),
+        ChartGranularity::Hourly => {
+            let bars: Vec<_> = app
+                .usage()
+                .hourly
+                .iter()
+                .take(60)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .map(|hour| {
+                    let mut models = BTreeMap::<String, ModelAggregate>::new();
+                    for model in &hour.models {
                         let entry = models.entry(model.model_id.to_string()).or_default();
                         entry.tokens = entry
                             .tokens
                             .checked_add(model.tokens.total())
-                            .expect("overview chart token total exceeds u64::MAX");
+                            .expect("overview hourly chart token total exceeds u64::MAX");
                     }
-                }
 
-                StackedBarData {
-                    date: format_numeric_month_day(day.date),
-                    empty_days_before,
-                    models: models
-                        .into_iter()
-                        .map(|(model, aggregate)| ModelSegment {
-                            color: app.model_color(&model),
-                            model_id: model,
-                            tokens: aggregate.tokens,
-                        })
-                        .collect(),
-                    total: day.tokens.total(),
-                }
-            })
-            .collect(),
-        ChartGranularity::Hourly => app
-            .usage()
-            .hourly
-            .iter()
-            .take(60)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .map(|hour| {
-                let mut models = BTreeMap::<String, ModelAggregate>::new();
-                for model in &hour.models {
-                    let entry = models.entry(model.model_id.to_string()).or_default();
-                    entry.tokens = entry
-                        .tokens
-                        .checked_add(model.tokens.total())
-                        .expect("overview hourly chart token total exceeds u64::MAX");
-                }
-
-                StackedBarData {
-                    date: format!(
-                        "{} {}",
-                        format_numeric_month_day(hour.datetime.date()),
-                        hour.datetime.format("%H:%M")
-                    ),
-                    empty_days_before: 0,
-                    models: models
-                        .into_iter()
-                        .map(|(model, aggregate)| ModelSegment {
-                            color: app.model_color(&model),
-                            model_id: model,
-                            tokens: aggregate.tokens,
-                        })
-                        .collect(),
-                    total: hour.tokens.total(),
-                }
-            })
-            .collect(),
+                    StackedBarData {
+                        date: format!(
+                            "{} {}",
+                            format_numeric_month_day(hour.datetime.date()),
+                            hour.datetime.format("%H:%M")
+                        ),
+                        empty_days_before: 0,
+                        models: models
+                            .into_iter()
+                            .map(|(model, aggregate)| ModelSegment {
+                                color: app.model_color(&model),
+                                model_id: model,
+                                tokens: aggregate.tokens,
+                            })
+                            .collect(),
+                        total: hour.tokens.total(),
+                    }
+                })
+                .collect();
+            let bar_width = (area.width as usize / bars.len().max(1)).max(1);
+            OverviewChart { bars, bar_width }
+        }
     };
 
-    render_stacked_bar_chart(frame, app, area, &data);
+    render_stacked_bar_chart(frame, app, area, &chart.bars, chart.bar_width);
+}
+
+/// Size bars from the latest 60 recorded dates and their intervening calendar
+/// days, then spend whole remaining bar slots on earlier history. At one column
+/// per day, retain those recorded dates even when their gaps need compression.
+fn daily_chart_data(app: &TuiModel, available_width: u16) -> OverviewChart {
+    let daily = &app.usage().daily;
+    let Some(latest) = daily.first() else {
+        return OverviewChart {
+            bars: Vec::new(),
+            bar_width: 1,
+        };
+    };
+    let initial_oldest = &daily[daily.len().min(60) - 1];
+    let initial_days = usize::try_from((latest.date - initial_oldest.date).num_days() + 1)
+        .expect("overview daily dates must be ordered newest first");
+    let bar_width = (available_width as usize / initial_days).max(1);
+    let history_days = usize::try_from((latest.date - daily[daily.len() - 1].date).num_days() + 1)
+        .expect("overview daily dates must be ordered newest first");
+    let visible_days = (available_width as usize / bar_width)
+        .max(initial_days)
+        .min(history_days);
+    let first_date = latest.date - Days::new((visible_days - 1) as u64);
+    let selected_count = daily.partition_point(|day| day.date >= first_date);
+    let selected = &daily[..selected_count];
+    let mut bars = Vec::new();
+    let mut previous_date = None;
+
+    // Expansion may end inside a gap before the next older recorded date fits.
+    if selected[selected.len() - 1].date > first_date {
+        bars.push(StackedBarData {
+            date: format_numeric_month_day(first_date),
+            empty_days_before: 0,
+            models: Vec::new(),
+            total: 0,
+        });
+        previous_date = Some(first_date);
+    }
+
+    for day in selected.iter().rev() {
+        let empty_days_before = previous_date.map_or(0, |previous| {
+            usize::try_from((day.date - previous).num_days() - 1)
+                .expect("overview daily dates must be strictly increasing")
+        });
+        previous_date = Some(day.date);
+        let mut models = BTreeMap::<String, ModelAggregate>::new();
+        for client in day.client_breakdown.values() {
+            for model in &client.models {
+                let entry = models.entry(model.model_id.to_string()).or_default();
+                entry.tokens = entry
+                    .tokens
+                    .checked_add(model.tokens.total())
+                    .expect("overview chart token total exceeds u64::MAX");
+            }
+        }
+
+        bars.push(StackedBarData {
+            date: format_numeric_month_day(day.date),
+            empty_days_before,
+            models: models
+                .into_iter()
+                .map(|(model, aggregate)| ModelSegment {
+                    color: app.model_color(&model),
+                    model_id: model,
+                    tokens: aggregate.tokens,
+                })
+                .collect(),
+            total: day.tokens.total(),
+        });
+    }
+
+    OverviewChart { bars, bar_width }
 }
 
 fn render_legend(frame: &mut Frame, app: &TuiModel, area: Rect) {
@@ -412,15 +454,15 @@ mod tests {
     #[test]
     fn daily_chart_fills_calendar_gaps_including_year_boundaries_and_leap_days() {
         for (first, last, expected) in [
-            ("2026-09-01", "2026-09-02", "████ "),
-            ("2026-09-01", "2026-09-03", "██ ██"),
-            ("2026-12-31", "2027-01-02", "██ ██"),
-            ("2024-02-28", "2024-03-01", "██ ██"),
-            ("2026-02-28", "2026-03-01", "████ "),
+            ("2026-09-01", "2026-09-02", "██████"),
+            ("2026-09-01", "2026-09-03", "██  ██"),
+            ("2026-12-31", "2027-01-02", "██  ██"),
+            ("2024-02-28", "2024-03-01", "██  ██"),
+            ("2026-02-28", "2026-03-01", "██████"),
         ] {
             let dates = [first, last].map(|date| date.parse::<NaiveDate>().unwrap());
             let app = app_with_days(&dates);
-            let mut terminal = Terminal::new(TestBackend::new(5, 6)).unwrap();
+            let mut terminal = Terminal::new(TestBackend::new(6, 6)).unwrap();
             terminal
                 .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
                 .unwrap();
@@ -446,6 +488,137 @@ mod tests {
         assert!(lines[5].starts_with("Jan 3"), "{}", lines[5]);
         assert!(lines[5].ends_with("May 1"), "{}", lines[5]);
         assert_eq!(app.usage().daily.len(), 61);
+    }
+
+    #[test]
+    fn daily_chart_adds_older_dates_at_the_initial_bar_width() {
+        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let dates: Vec<_> = (0..100).map(|index| first + Days::new(index)).collect();
+        let app = app_with_days(&dates);
+
+        for (width, expected_bar_width, expected_days, left_margin, right_margin) in [
+            (120, 2, 60, 0, 0),
+            (121, 2, 60, 0, 1),
+            (122, 2, 61, 0, 0),
+            (179, 2, 89, 0, 1),
+            (180, 3, 60, 0, 0),
+            (185, 3, 61, 1, 1),
+        ] {
+            let chart = daily_chart_data(&app, width);
+            assert_eq!(chart.bar_width, expected_bar_width, "width {width}");
+            assert_eq!(chart.bars.len(), expected_days, "width {width}");
+            assert_eq!(
+                chart.bars[0].date,
+                format_numeric_month_day(dates[100 - expected_days]),
+                "width {width}"
+            );
+
+            let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
+            terminal
+                .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
+                .unwrap();
+            assert_eq!(
+                buffer_lines(&terminal)[3],
+                format!(
+                    "{}{}{}",
+                    " ".repeat(left_margin),
+                    "█".repeat(expected_bar_width * expected_days),
+                    " ".repeat(right_margin)
+                ),
+                "width {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn daily_chart_uses_calendar_days_to_size_and_extend_the_initial_window() {
+        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let dates: Vec<_> = (0..70).map(|index| first + Days::new(index * 2)).collect();
+        let app = app_with_days(&dates);
+        let chart = daily_chart_data(&app, 250);
+        assert_eq!(chart.bar_width, 2);
+        assert_eq!(chart.bars.len(), 63);
+        assert_eq!(chart.bars[0].date, "01/15");
+
+        let mut terminal = Terminal::new(TestBackend::new(250, 6)).unwrap();
+        terminal
+            .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
+            .unwrap();
+        assert_eq!(
+            buffer_lines(&terminal)[3],
+            format!("{}██", "██  ".repeat(62))
+        );
+    }
+
+    #[test]
+    fn daily_chart_can_extend_into_a_gap_but_not_before_available_history() {
+        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let dates: Vec<_> = std::iter::once(first)
+            .chain((9..69).map(|index| first + Days::new(index)))
+            .collect();
+        let app = app_with_days(&dates);
+
+        let chart = daily_chart_data(&app, 127);
+        assert_eq!(chart.bar_width, 2);
+        assert_eq!(chart.bars[0].date, "01/07");
+        assert_eq!(chart.bars[0].total, 0);
+        assert_eq!(chart.bars[1].date, "01/10");
+        assert_eq!(chart.bars[1].empty_days_before, 2);
+
+        for (width, expected, first_label) in [
+            (
+                127,
+                format!("{}{} ", " ".repeat(6), "█".repeat(120)),
+                "Jan 7",
+            ),
+            (
+                179,
+                format!(
+                    "{}██{}{}{}",
+                    " ".repeat(20),
+                    " ".repeat(16),
+                    "█".repeat(120),
+                    " ".repeat(21)
+                ),
+                "Jan 1",
+            ),
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
+            terminal
+                .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
+                .unwrap();
+            let lines = buffer_lines(&terminal);
+            assert_eq!(lines[3], expected, "width {width}");
+            assert!(
+                lines[5].trim_start().starts_with(first_label),
+                "{}",
+                lines[5]
+            );
+        }
+    }
+
+    #[test]
+    fn narrow_daily_chart_compresses_gaps_without_removing_recorded_dates() {
+        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let dates: Vec<_> = (0..61).map(|index| first + Days::new(index * 2)).collect();
+        let app = app_with_days(&dates);
+        for width in [60, 100] {
+            let chart = daily_chart_data(&app, width);
+            assert_eq!(chart.bar_width, 1);
+            assert_eq!(chart.bars.len(), 60);
+            assert_eq!(chart.bars[0].date, "01/03");
+            assert_eq!(chart.bars[59].date, "05/01");
+
+            let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
+            terminal
+                .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
+                .unwrap();
+            let lines = buffer_lines(&terminal);
+            assert_eq!(lines[3].matches('█').count(), 60);
+            assert_eq!(lines[3].matches(' ').count(), width as usize - 60);
+            assert!(lines[5].starts_with("Jan 3"), "{}", lines[5]);
+            assert!(lines[5].ends_with("May 1"), "{}", lines[5]);
+        }
     }
 
     #[test]
