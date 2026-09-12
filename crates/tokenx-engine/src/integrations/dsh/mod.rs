@@ -16,7 +16,14 @@ use crate::integrations::{
 fn dsh_session_file(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
-        Some("session.jsonl" | "session.jsonl.zstd")
+        Some("session.jsonl" | "session.jsonl.zstd" | "session.v3.jsonl" | "session.v3.jsonl.zstd")
+    )
+}
+
+fn is_v3_session_file(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("session.v3.jsonl" | "session.v3.jsonl.zstd")
     )
 }
 
@@ -42,12 +49,27 @@ impl IntegrationDriver for Driver {
             source_discovery::extra_roots_for_client(ctx.client, ctx)?,
             SOURCE.matcher(),
         )?);
-        source_discovery::input_units_from_paths(
+        let mut units = source_discovery::input_units_from_paths(
             ctx.client,
             paths,
             FingerprintPolicy::PlainFile,
             DecoderKind::plain(DecoderId::Dsh),
-        )
+        )?;
+        // Migration leaves the previous transcript beside the current generation.
+        // Select the v3 artifact before parsing, even when that artifact is damaged.
+        let v3_directories: HashSet<_> = units
+            .iter()
+            .filter(|unit| is_v3_session_file(&unit.path))
+            .filter_map(|unit| unit.path.parent().map(Path::to_path_buf))
+            .collect();
+        units.retain(|unit| {
+            is_v3_session_file(&unit.path)
+                || !unit
+                    .path
+                    .parent()
+                    .is_some_and(|parent| v3_directories.contains(parent))
+        });
+        Ok(units)
     }
 
     fn parse_inputs(
@@ -147,9 +169,42 @@ mod tests {
     fn matcher_accepts_only_dsh_session_file_names() {
         assert!(dsh_session_file(Path::new("session.jsonl")));
         assert!(dsh_session_file(Path::new("session.jsonl.zstd")));
+        assert!(dsh_session_file(Path::new("session.v3.jsonl")));
+        assert!(dsh_session_file(Path::new("session.v3.jsonl.zstd")));
         assert!(!dsh_session_file(Path::new("other.jsonl")));
         assert!(!dsh_session_file(Path::new("session.jsonl.zst")));
         assert!(!dsh_session_file(Path::new("old-session.jsonl.zstd")));
+        assert!(!dsh_session_file(Path::new("session.v3.jsonl.zstd.tmp")));
+    }
+
+    #[test]
+    fn discovery_selects_v3_over_migration_sources_in_default_and_extra_roots() {
+        let home = tempfile::TempDir::new().unwrap();
+        let extra = home.path().join("import");
+        let default = home.path().join(".dsh/sessions");
+        let mut expected = Vec::new();
+        for root in [&default, &extra] {
+            for name in ["session.v3.jsonl", "session.v3.jsonl.zstd"] {
+                let directory = root.join(name);
+                let current = directory.join(name);
+                write_file(&current, "");
+                write_file(&directory.join("session.jsonl"), "");
+                write_file(&directory.join("session.jsonl.zstd"), "");
+                expected.push(current);
+            }
+        }
+        let settings = crate::scanner::ScannerSettings {
+            extra_scan_paths: [(ClientId::Dsh, vec![extra])].into_iter().collect(),
+            ..Default::default()
+        };
+        let units = DRIVER
+            .discover_inputs(&scan_context(home.path(), &settings))
+            .unwrap();
+        expected.sort_unstable();
+        assert_eq!(
+            units.into_iter().map(|unit| unit.path).collect::<Vec<_>>(),
+            expected
+        );
     }
 
     #[test]
