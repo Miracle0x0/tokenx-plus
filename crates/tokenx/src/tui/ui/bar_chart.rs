@@ -1,9 +1,11 @@
 //! Chromeless stacked bar chart for the Overview "Token per Day" panel.
 //!
 //! Rendering contract (implemented in this module):
-//! - Bars share a whole-cell width, with unused columns split between the
-//!   left and right margins (the right gets any odd column). Below one column
-//!   per bar, bars remain one column wide and clip at the right edge.
+//! - Recorded bars share a whole-cell width. Remaining columns are distributed
+//!   evenly across missing dates in chronological order, each taking zero to
+//!   one bar's width. Any remainder is split between the left and right margins
+//!   (the right gets any odd column). Below one column per recorded bar, bars
+//!   remain one column wide and clip at the right edge.
 //! - The gridline, baseline, peak marker, and labels use the same centered
 //!   chart area, without a y-axis gutter or title row.
 //! - Rows relative to the chart area: bars occupy rows `0..h-2`, row `h-2` is a
@@ -12,7 +14,7 @@
 //!   field; it is drawn before the bars so it only shows through empty cells.
 //! - A compact `peak {max}` marker overlays the top-right of bar row 0.
 //! - Date labels are anchored to the edges: first date left-aligned, last date
-//!   right-aligned, middle date centered when there is room.
+//!   right-aligned, middle recorded date centered under its bar when it fits.
 
 use ratatui::prelude::*;
 
@@ -36,8 +38,47 @@ pub struct ModelSegment {
 #[derive(Debug, Clone)]
 pub struct StackedBarData {
     pub date: String,
+    /// Missing dates since the preceding recorded bar; zero for the first bar.
+    pub empty_days_before: usize,
     pub models: Vec<ModelSegment>,
     pub total: u64,
+}
+
+struct BarChartLayout {
+    bar_width: usize,
+    offsets: Vec<usize>,
+    width: u16,
+}
+
+impl BarChartLayout {
+    /// Lay out a nonempty series without changing the recorded bars' widths.
+    fn new(data: &[StackedBarData], available_width: u16) -> Self {
+        let available_width = available_width as usize;
+        let bar_width = (available_width / data.len()).max(1);
+        let recorded_width = bar_width * data.len();
+        let remaining_width = available_width - recorded_width.min(available_width);
+        let empty_days: usize = data.iter().map(|bar| bar.empty_days_before).sum();
+        let gap_width = remaining_width.min(empty_days * bar_width);
+        let mut preceding_empty_days = 0;
+        let mut preceding_gap_width = 0;
+        let offsets = data
+            .iter()
+            .enumerate()
+            .map(|(index, bar)| {
+                if bar.empty_days_before > 0 {
+                    preceding_empty_days += bar.empty_days_before;
+                    preceding_gap_width = preceding_empty_days * gap_width / empty_days;
+                }
+                index * bar_width + preceding_gap_width
+            })
+            .collect();
+
+        Self {
+            bar_width,
+            offsets,
+            width: (recorded_width + gap_width).min(available_width) as u16,
+        }
+    }
 }
 
 /// Render a stacked bar chart where each bar shows model breakdown
@@ -51,12 +92,10 @@ pub fn render_stacked_bar_chart(
         return;
     }
 
-    let bar_count = data.len();
-    let bar_width = (area.width as usize / bar_count).max(1);
-    let chart_width = (bar_width * bar_count).min(area.width as usize) as u16;
+    let layout = BarChartLayout::new(data, area.width);
     let area = Rect {
-        x: area.x + (area.width - chart_width) / 2,
-        width: chart_width,
+        x: area.x + (area.width - layout.width) / 2,
+        width: layout.width,
         ..area
     };
     let chart_height = area.height.saturating_sub(2) as usize;
@@ -86,8 +125,7 @@ pub fn render_stacked_bar_chart(
         let y = area.y + row_index as u16;
 
         // Render each bar
-        let mut x_pos = area.x;
-        for bar_data in data {
+        for (bar_data, &offset) in data.iter().zip(&layout.offsets) {
             let row_threshold = ((row_from_bottom + 1) as f64 / chart_height as f64) * max_value;
             let prev_threshold = (row_from_bottom as f64 / chart_height as f64) * max_value;
             let threshold_diff = row_threshold - prev_threshold;
@@ -105,13 +143,10 @@ pub fn render_stacked_bar_chart(
                 app.theme.visualization.chart_highlight,
             );
 
-            for _ in 0..bar_width {
-                if x_pos < area.x + area.width {
-                    // Leave empty cells untouched so the gridline shows through.
-                    if ch != ' ' {
-                        buf[(x_pos, y)].set_char(ch).set_fg(fg_color);
-                    }
-                    x_pos += 1;
+            for x in offset..(offset + layout.bar_width).min(area.width as usize) {
+                // Leave empty cells untouched so the gridline shows through.
+                if ch != ' ' {
+                    buf[(area.x + x as u16, y)].set_char(ch).set_fg(fg_color);
                 }
             }
         }
@@ -147,15 +182,21 @@ pub fn render_stacked_bar_chart(
         }
     }
 
-    render_date_labels(buf, app, area, data);
+    render_date_labels(buf, app, area, data, &layout);
 }
 
 /// Date labels anchored to the edges of the chart: first date left-aligned at
 /// `area.x`, last date right-aligned to end at the right edge, and — unless the
-/// app is very narrow — the middle date centered. When the labels would
-/// overlap, the middle one is dropped first; if the remaining two still
-/// collide, the right one is truncated from the left, keeping its tail.
-fn render_date_labels(buf: &mut Buffer, app: &TuiModel, area: Rect, data: &[StackedBarData]) {
+/// app is very narrow — the middle recorded date centered under its bar. When
+/// labels would overlap, the middle one is dropped first; if the remaining two
+/// still collide, the right one is truncated from the left, keeping its tail.
+fn render_date_labels(
+    buf: &mut Buffer,
+    app: &TuiModel,
+    area: Rect,
+    data: &[StackedBarData],
+    layout: &BarChartLayout,
+) {
     let label_y = area.y + area.height - 1;
     let is_very_narrow = app.is_very_narrow();
     let bar_count = data.len();
@@ -172,10 +213,15 @@ fn render_date_labels(buf: &mut Buffer, app: &TuiModel, area: Rect, data: &[Stac
         if !is_very_narrow && bar_count > 2 {
             let middle_label = format_date_label(&data[bar_count / 2].date, is_very_narrow);
             let middle_width = width_u16(middle_label.as_str());
-            // Keep the middle label only when all three fit with a gap each.
-            if first_width + middle_width + last_width + 2 <= area.width {
-                let middle_x = area.x + (area.width - middle_width) / 2;
-                labels.push((middle_label, middle_x));
+            let middle_center = layout.offsets[bar_count / 2] + layout.bar_width / 2;
+            if let Some(middle_x) = middle_center.checked_sub(middle_width as usize / 2) {
+                // Keep labels separated while following the bar's actual position.
+                if middle_x > first_width as usize
+                    && middle_x + middle_width as usize + (last_width as usize)
+                        < area.width as usize
+                {
+                    labels.push((middle_label, area.x + middle_x as u16));
+                }
             }
         }
 
@@ -339,6 +385,7 @@ mod tests {
     fn bar(date: &str, total: u64) -> StackedBarData {
         StackedBarData {
             date: date.to_string(),
+            empty_days_before: 0,
             models: vec![ModelSegment {
                 model_id: "test-model".to_string(),
                 tokens: total,
@@ -412,6 +459,47 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn missing_dates_share_remaining_columns_without_widening_recorded_bars() {
+        let app = make_app(120);
+        for (width, gaps, expected) in [
+            (11, vec![0, 1, 1], "███ ███ ███"),
+            // Four missing dates share two columns; the first gets zero columns.
+            (11, vec![0, 1, 3], "██████  ███"),
+            // One missing date takes at most one bar's width, leaving margins.
+            (13, vec![0, 0, 0, 1, 0, 0, 0], "  ███ ████   "),
+            // With no remaining columns, every missing date has zero width.
+            (12, vec![0, 2, 3], "████████████"),
+            // A long interval uses the same bounded screen space.
+            (11, vec![0, 0, 1_000_000], "██████  ███"),
+        ] {
+            let data: Vec<_> = gaps
+                .into_iter()
+                .map(|empty_days_before| {
+                    let mut bar = bar("1/5", 100);
+                    bar.empty_days_before = empty_days_before;
+                    bar
+                })
+                .collect();
+            let area = Rect::new(0, 0, width, 8);
+            let buf = render_chart(&app, area, &data, width, 8);
+            assert_eq!(row_string(&buf, 5), expected, "width {width}");
+        }
+    }
+
+    #[test]
+    fn missing_dates_leave_the_gridline_visible() {
+        let app = make_app(120);
+        let mut data = vec![bar("1/5", 100), bar("1/7", 100), bar("1/9", 100)];
+        data[1].empty_days_before = 1;
+        data[2].empty_days_before = 1;
+        let area = Rect::new(0, 0, 11, 8);
+        let buf = render_chart(&app, area, &data, 11, 8);
+
+        assert_eq!(row_string(&buf, 3), "███┄███┄███");
+        assert_eq!(row_string(&buf, 6), "───────────");
     }
 
     #[test]
@@ -501,6 +589,21 @@ mod tests {
             middle_start.abs_diff(expected) <= 1,
             "middle label roughly centered at {middle_start}, expected ~{expected}"
         );
+    }
+
+    #[test]
+    fn middle_date_label_follows_its_bar_after_a_gap() {
+        let app = make_app(120);
+        let mut data: Vec<_> = [1, 2, 3, 9, 10, 11, 12]
+            .into_iter()
+            .map(|day| bar(&format!("1/{day}"), 100))
+            .collect();
+        data[3].empty_days_before = 5;
+        let area = Rect::new(0, 0, 41, 8);
+        let buf = render_chart(&app, area, &data, 41, 8);
+
+        // Five-column bars and six gap columns put the fourth bar at x=21.
+        assert_eq!(row_string(&buf, 7).find("Jan 9"), Some(21));
     }
 
     #[test]

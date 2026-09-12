@@ -131,6 +131,7 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
         return;
     }
 
+    let mut previous_date = None;
     let data: Vec<StackedBarData> = match granularity {
         ChartGranularity::Daily => app
             .usage()
@@ -141,6 +142,11 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
             .into_iter()
             .rev()
             .map(|day| {
+                let empty_days_before = previous_date.map_or(0, |previous: chrono::NaiveDate| {
+                    usize::try_from((day.date - previous).num_days() - 1)
+                        .expect("overview daily dates must be strictly increasing")
+                });
+                previous_date = Some(day.date);
                 let mut models = BTreeMap::<String, ModelAggregate>::new();
                 for client in day.client_breakdown.values() {
                     for model in &client.models {
@@ -154,6 +160,7 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
 
                 StackedBarData {
                     date: format_numeric_month_day(day.date),
+                    empty_days_before,
                     models: models
                         .into_iter()
                         .map(|(model, aggregate)| ModelSegment {
@@ -190,6 +197,7 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
                         format_numeric_month_day(hour.datetime.date()),
                         hour.datetime.format("%H:%M")
                     ),
+                    empty_days_before: 0,
                     models: models
                         .into_iter()
                         .map(|(model, aggregate)| ModelSegment {
@@ -382,6 +390,62 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    fn app_with_days(dates: &[NaiveDate]) -> TuiModel {
+        let mut app = app_with_models(120, &["test-model"]);
+        let mut day = app.usage().daily[0].clone();
+        let client = day.client_breakdown.values_mut().next().unwrap();
+        client.tokens = client.models[0].tokens.clone();
+        day.tokens = client.tokens.clone();
+        app.usage_mut_for_test().daily = dates
+            .iter()
+            .rev()
+            .map(|date| DailyUsage {
+                date: *date,
+                ..day.clone()
+            })
+            .collect();
+        app
+    }
+
+    #[test]
+    fn daily_chart_fills_calendar_gaps_including_year_boundaries_and_leap_days() {
+        for (first, last, expected) in [
+            ("2026-09-01", "2026-09-02", "████ "),
+            ("2026-09-01", "2026-09-03", "██ ██"),
+            ("2026-12-31", "2027-01-02", "██ ██"),
+            ("2024-02-28", "2024-03-01", "██ ██"),
+            ("2026-02-28", "2026-03-01", "████ "),
+        ] {
+            let dates = [first, last].map(|date| date.parse::<NaiveDate>().unwrap());
+            let app = app_with_days(&dates);
+            let mut terminal = Terminal::new(TestBackend::new(5, 6)).unwrap();
+            terminal
+                .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
+                .unwrap();
+
+            assert_eq!(buffer_lines(&terminal)[3], expected, "{first} to {last}");
+        }
+    }
+
+    #[test]
+    fn daily_chart_keeps_sixty_recorded_dates_when_adding_gaps() {
+        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let dates: Vec<_> = (0..61)
+            .map(|index| first + chrono::Days::new(index * 2))
+            .collect();
+        let app = app_with_days(&dates);
+        let mut terminal = Terminal::new(TestBackend::new(119, 6)).unwrap();
+        terminal
+            .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
+            .unwrap();
+
+        let lines = buffer_lines(&terminal);
+        assert_eq!(lines[3], format!("{}█", "█ ".repeat(59)));
+        assert!(lines[5].starts_with("Jan 3"), "{}", lines[5]);
+        assert!(lines[5].ends_with("May 1"), "{}", lines[5]);
+        assert_eq!(app.usage().daily.len(), 61);
     }
 
     #[test]
