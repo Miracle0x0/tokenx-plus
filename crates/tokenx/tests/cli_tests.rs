@@ -1482,6 +1482,89 @@ fn test_models_dsh_usage_is_stable_across_cold_and_warm_cache() {
 }
 
 #[test]
+fn test_models_dsh_v3_today_usage_replaces_migration_source_with_cold_warm_parity() {
+    let tmp = create_empty_fixture_dir();
+    let directory = tmp.path().join(".dsh/sessions/workspace/current-session");
+    fs::create_dir_all(&directory).unwrap();
+    let today = chrono::Local::now().timestamp_millis();
+    let earlier = today - chrono::Duration::days(2).num_milliseconds();
+    let usage = |id: &str, time: i64, turn: i64, input: i64| {
+        serde_json::json!({
+            "type": "assistant/message", "time": time, "seq": turn,
+            "data": {
+                "turn": turn, "step": 0,
+                "message": {"id": id, "source": {"provider": "deepseek", "model": "deepseek-reasoner"}},
+                "usage": {"inputTokens": input, "outputTokens": 60, "reasoningTokens": 50, "cacheReadTokens": 30}
+            }
+        }).to_string()
+    };
+    fs::write(
+        directory.join("session.jsonl"),
+        format!("{}\n", usage("old-migration-identity", today, 1, 9000)),
+    )
+    .unwrap();
+    let lines = [
+        r#"{"type":"session","version":3,"id":"current-session","isSeeded":false}"#.to_owned(),
+        usage("earlier", earlier, 1, 1000),
+        usage("today", today, 2, 10),
+    ]
+    .join("\n")
+        + "\n";
+    let current = directory.join("session.v3.jsonl");
+    fs::write(&current, lines).unwrap();
+
+    for pass in ["cold", "warm"] {
+        let output = cmd_with_home(tmp.path())
+            .args([
+                "models",
+                "--json",
+                "--client",
+                "dsh",
+                "--today",
+                "--no-spinner",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{pass}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let rows = model_rows(&document);
+        assert_eq!(rows.len(), 1, "{pass}");
+        assert_eq!(rows[0]["tokens"]["input"], 10, "{pass}");
+        assert_eq!(rows[0]["tokens"]["output"], 10, "{pass}");
+        assert_eq!(rows[0]["tokens"]["reasoning"], 50, "{pass}");
+        assert_eq!(rows[0]["tokens"]["cacheRead"], 30, "{pass}");
+        assert_eq!(rows[0]["tokens"]["total"], 100, "{pass}");
+        assert_eq!(rows[0]["sessionCount"], 1, "{pass}");
+        assert_eq!(document["health"]["cleanInputs"], 1, "{pass}");
+        assert_eq!(document["health"]["complete"], true, "{pass}");
+    }
+
+    // A damaged current generation must stay visible as a failure, without
+    // reviving the migration source or the previously cached current usage.
+    fs::write(current, [0x28, 0xb5, 0x2f, 0xfd, 0x00]).unwrap();
+    let output = cmd_with_home(tmp.path())
+        .args([
+            "models",
+            "--json",
+            "--client",
+            "dsh",
+            "--today",
+            "--no-spinner",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(model_rows(&document).is_empty());
+    assert_eq!(document["health"]["failedInputs"], 1);
+    assert_eq!(document["health"]["complete"], false);
+}
+
+#[test]
 fn test_models_dsh_corrupt_zstd_is_reported_as_unavailable() {
     let tmp = create_empty_fixture_dir();
     let path = tmp

@@ -57,11 +57,13 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
     let mut session_id = None;
     let mut workspace_key = None;
     let mut seed_length = 0_i64;
+    let mut is_v3 = false;
     let mut request_provider = None;
     let mut request_model = None;
     let mut seen = HashSet::new();
     let mut started_turns = HashSet::new();
     let mut pending_user_turn = false;
+    let mut last_settlement: Option<(i64, i64, usize)> = None;
 
     let parse_len = complete_prefix_len(&decoded.bytes, scanned.interrupted.is_some());
     for (line_index, raw_line) in decoded.bytes[..parse_len]
@@ -99,11 +101,17 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
             "session" => {
                 session_id = non_empty_str(value.get("id")).map(str::to_string);
                 workspace_key = non_empty_str(value.get("cwd")).and_then(normalize_workspace_key);
-                seed_length = value
-                    .get("seedLength")
-                    .and_then(Value::as_i64)
-                    .filter(|length| *length > 0)
-                    .unwrap_or(0);
+                is_v3 = value.get("version").and_then(Value::as_u64) == Some(3);
+                seed_length =
+                    if is_v3 && value.get("isSeeded").and_then(Value::as_bool) == Some(true) {
+                        inherited_seed_length(&decoded.bytes[..parse_len])?
+                    } else {
+                        value
+                            .get("seedLength")
+                            .and_then(Value::as_i64)
+                            .filter(|length| *length > 0)
+                            .unwrap_or(0)
+                    };
             }
             "request/header" => {
                 let config = value.pointer("/data/header/config");
@@ -115,7 +123,14 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     .map(str::to_string);
             }
             "user/message" => pending_user_turn = true,
-            "assistant/message" | "compaction/summary" => {
+            "llm/retry-started" => {
+                if last_settlement
+                    .is_some_and(|(turn, step, _)| settlement_step(&value) == Some((turn, step)))
+                {
+                    last_settlement = None;
+                }
+            }
+            "assistant/message" | "assistant/attempt" | "compaction/summary" => {
                 let is_summary = event_type == "compaction/summary";
                 if seed_length > 0
                     && value
@@ -126,7 +141,10 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     continue;
                 }
 
-                let Some(usage) = value.pointer("/data/usage") else {
+                let Some(usage) = value
+                    .pointer("/data/usage")
+                    .or_else(|| stream_usage(&value))
+                else {
                     continue;
                 };
                 let tokens = match tokens_from_usage(usage) {
@@ -228,6 +246,21 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     let label = workspace_label_from_key(&key);
                     message.set_workspace(Some(key), label);
                 }
+                // Within one v3 step, settlement usage replaces the preceding
+                // sample. A retry-started event opens a separately billed attempt.
+                if let Some((turn, step)) = (is_v3 && !is_summary)
+                    .then(|| settlement_step(&value))
+                    .flatten()
+                {
+                    if let Some((previous_turn, previous_step, index)) = last_settlement {
+                        if (turn, step) == (previous_turn, previous_step) {
+                            message.is_turn_start = scanned.messages[index].is_turn_start;
+                            scanned.messages[index] = message;
+                            continue;
+                        }
+                    }
+                    last_settlement = Some((turn, step, scanned.messages.len()));
+                }
                 scanned.messages.push(message);
             }
             _ => {}
@@ -235,6 +268,54 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
     }
 
     Ok(scanned)
+}
+
+fn inherited_seed_length(bytes: &[u8]) -> SessionParseResult<i64> {
+    // Nested forks carry their ancestors' markers too. Only the last inherited
+    // marker owns this session's prefix; ordinary resume markers do not.
+    for line in bytes.split(|byte| *byte == b'\n').rev() {
+        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) == Some("session/end-seed")
+            && value.pointer("/data/inherited").and_then(Value::as_bool) == Some(true)
+        {
+            return value
+                .get("seq")
+                .and_then(Value::as_i64)
+                .filter(|seq| *seq >= 0)
+                .ok_or_else(|| {
+                    SessionParseError::invalid(
+                        "read DSH seed boundary",
+                        "invalid inherited marker seq",
+                    )
+                });
+        }
+    }
+    Err(SessionParseError::invalid(
+        "read DSH seed boundary",
+        "seeded v3 session has no inherited end-seed marker",
+    ))
+}
+
+fn settlement_step(value: &Value) -> Option<(i64, i64)> {
+    Some((
+        value.pointer("/data/turn")?.as_i64()?,
+        value.pointer("/data/step")?.as_i64()?,
+    ))
+}
+
+fn stream_usage(value: &Value) -> Option<&Value> {
+    value
+        .pointer("/data/stream")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|record| {
+            record.get("type").and_then(Value::as_str) == Some("chunk")
+                && record.pointer("/chunk/type").and_then(Value::as_str) == Some("usage")
+        })?
+        .pointer("/chunk/usage")
 }
 
 fn read_session_bytes(path: &Path) -> SessionParseResult<DecodedSession> {
@@ -680,6 +761,90 @@ mod tests {
         assert_eq!(scanned.messages.len(), 1);
         assert_eq!(scanned.messages[0].timestamp, 1786358035361);
         assert_eq!(scanned.messages[0].tokens.input, 97);
+    }
+
+    #[test]
+    fn v3_nested_forks_skip_the_last_inherited_prefix_but_keep_resumed_usage() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write_zstd_session(
+            dir.path(),
+            "nested-child",
+            &[
+                r#"{"type":"session","version":3,"id":"nested-child","isSeeded":true}"#,
+                r#"{"type":"assistant/message","seq":0,"time":1786669450000,"data":{"turn":1,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":1000}}}"#,
+                r#"{"type":"session/end-seed","seq":1,"data":{"inherited":true}}"#,
+                r#"{"type":"assistant/message","seq":2,"time":1786669450001,"data":{"turn":1,"step":1,"message":{"source":{"model":"m"}},"usage":{"inputTokens":2000}}}"#,
+                r#"{"type":"session/end-seed","seq":3,"data":{"inherited":true}}"#,
+                r#"{"type":"assistant/message","seq":4,"time":1786669450002,"data":{"turn":2,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":10}}}"#,
+                r#"{"type":"session/end-seed","seq":5,"data":{}}"#,
+                r#"{"type":"assistant/message","seq":6,"time":1786669450003,"data":{"turn":3,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":20}}}"#,
+            ],
+        );
+        let scanned = parse_dsh_file(&path).unwrap();
+        assert_eq!(scanned.messages.len(), 2);
+        assert_eq!(scanned.messages[0].tokens.input, 10);
+        assert_eq!(scanned.messages[1].tokens.input, 20);
+        assert!(scanned.messages.iter().all(|message| message.is_turn_start));
+    }
+
+    #[test]
+    fn v3_seeded_session_without_inherited_boundary_is_an_explicit_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write_plain_session(
+            dir.path(),
+            "missing-boundary",
+            &[r#"{"type":"session","version":3,"id":"missing-boundary","isSeeded":true}"#],
+        );
+        let error = parse_dsh_file(&path).unwrap_err();
+        assert!(error.to_string().contains("no inherited end-seed marker"));
+    }
+
+    #[test]
+    fn v3_stream_usage_counts_retries_once_and_prefers_settled_message_usage() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write_plain_session(
+            dir.path(),
+            "retry-session",
+            &[
+                r#"{"type":"session","version":3,"id":"retry-session","isSeeded":false}"#,
+                r#"{"type":"request/header","data":{"header":{"config":{"provider":"deepseek","model":"deepseek-flash"}}}}"#,
+                r#"{"type":"assistant/attempt","seq":0,"time":1786669450000,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":1}}},{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5,"reasoningTokens":2}}}]}}"#,
+                r#"{"type":"assistant/message","seq":1,"time":1786669450001,"data":{"turn":1,"step":0,"message":{"id":"first"},"usage":{"inputTokens":12,"outputTokens":6,"reasoningTokens":2},"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":999}}}]}}"#,
+                r#"{"type":"llm/retry-started","seq":2,"data":{"turn":1,"step":0}}"#,
+                r#"{"type":"assistant/attempt","seq":3,"time":1786669450002,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":20,"outputTokens":8}}}]}}"#,
+                r#"{"type":"llm/retry-started","seq":4,"data":{"turn":1,"step":0}}"#,
+                r#"{"type":"assistant/attempt","seq":5,"time":1786669450003,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"finish"}}]}}"#,
+                r#"{"type":"assistant/message","seq":6,"time":1786669450004,"data":{"turn":1,"step":0,"message":{"id":"last"},"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":30,"outputTokens":9,"cacheReadTokens":40}}}]}}"#,
+            ],
+        );
+        let scanned = parse_dsh_file(&path).unwrap();
+        assert_eq!(scanned.messages.len(), 3);
+        assert_eq!(scanned.messages[0].tokens.total(), 18);
+        assert_eq!(scanned.messages[1].tokens.total(), 28);
+        assert_eq!(scanned.messages[2].tokens.total(), 79);
+        assert!(scanned.messages[0].is_turn_start);
+        assert!(scanned.messages[1..]
+            .iter()
+            .all(|message| !message.is_turn_start));
+        assert!(scanned
+            .messages
+            .iter()
+            .all(|message| message.model_id.as_ref() == "deepseek-flash"));
+    }
+
+    #[test]
+    fn malformed_settlement_usage_does_not_substitute_valid_stream_usage() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write_plain_session(
+            dir.path(),
+            "invalid-usage",
+            &[
+                r#"{"type":"assistant/message","time":1786669450000,"data":{"message":{"source":{"model":"m"}},"usage":{"inputTokens":-1},"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":10}}}]}}"#,
+            ],
+        );
+        let scanned = parse_dsh_file(&path).unwrap();
+        assert!(scanned.messages.is_empty());
+        assert_eq!(scanned.rejections.total(), 1);
     }
 
     #[test]
