@@ -16,9 +16,10 @@ use crate::tui::model_family::ModelFamily;
 use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
 use tokenx_engine::ClientId;
-use tui_piechart::{LegendPosition, PieChart, PieSlice, Resolution};
+use tui_piechart::PieSlice;
 
 use super::empty_state;
+use super::pie::{render_pie, LEGEND_RESERVED_W as PIE_LEGEND_RESERVED_W};
 use super::radar::{render_radar, RadarAxis};
 use super::widgets::{
     format_cost, format_tokens, get_client_display_name, truncate_model_display_name_to,
@@ -63,7 +64,6 @@ const HOUR_STRIP_LEN: usize = 24;
 const RADAR_MIN_H: u16 = 9;
 const RADAR_MIN_W: u16 = 24;
 const SIDE_BY_SIDE_MIN_W: u16 = 72;
-const PIE_LEGEND_RESERVED_W: u16 = 21;
 const PIE_BODY_WIDTH_NUMERATOR: u16 = 5;
 const PIE_BODY_WIDTH_DENOMINATOR: u16 = 4;
 const LEFT_COL_W: u16 = 44;
@@ -160,13 +160,7 @@ fn render_day_pie(frame: &mut Frame, app: &TuiModel, area: Rect, models: &[Ranke
         target_width,
         area.height,
     );
-    let pie = PieChart::new(slices)
-        .show_legend(true)
-        .show_percentages(true)
-        .legend_position(LegendPosition::Right)
-        .resolution(Resolution::Braille)
-        .style(app.theme.panel_style());
-    frame.render_widget(pie, chart_area);
+    render_pie(frame, chart_area, &slices, app.theme.panel_style());
 }
 
 fn graph_block(app: &TuiModel) -> Block<'_> {
@@ -929,6 +923,108 @@ mod tests {
     fn streak_day_unit_uses_the_requested_locale() {
         assert_eq!(streak_days_for_locale(31, "en"), "31d");
         assert_eq!(streak_days_for_locale(31, "zh-CN"), "31天");
+    }
+
+    #[test]
+    fn pie_render_quadrants_meet_at_the_disc_center() {
+        let app = make_app(120);
+        let models = ["gpt-5", "claude-opus-4", "gemini-2.5-pro", "deepseek-v3"]
+            .into_iter()
+            .map(|canonical_id| RankedModel {
+                canonical_id: canonical_id.to_owned(),
+                tokens: 25,
+                cost: 0.0,
+            })
+            .collect::<Vec<_>>();
+        for (width, height) in [
+            (24, 9),
+            (24, 10),
+            (33, 11),
+            (46, 20),
+            (65, 19),
+            (120, 16),
+            (120, 20),
+        ] {
+            let area = Rect::new(3, 5, width, height);
+            let mut terminal =
+                Terminal::new(TestBackend::new(area.right() + 2, area.bottom() + 2)).unwrap();
+            let frame = terminal
+                .draw(|frame| render_day_pie(frame, &app, area, &models))
+                .unwrap();
+            let dots = pie_dots(frame.buffer);
+            let center_x_twice = dots.iter().map(|dot| dot.0).min().unwrap()
+                + dots.iter().map(|dot| dot.0).max().unwrap();
+            let center_y_twice = dots.iter().map(|dot| dot.1).min().unwrap()
+                + dots.iter().map(|dot| dot.1).max().unwrap();
+            let left = [
+                app.family_color(ModelFamily::Gemini),
+                app.family_color(ModelFamily::Deepseek),
+            ];
+            let top = [
+                app.family_color(ModelFamily::Gpt),
+                app.family_color(ModelFamily::Deepseek),
+            ];
+            let join_x_twice = dots
+                .iter()
+                .filter(|dot| left.contains(&dot.2))
+                .map(|dot| dot.0)
+                .max()
+                .unwrap()
+                + dots
+                    .iter()
+                    .filter(|dot| !left.contains(&dot.2))
+                    .map(|dot| dot.0)
+                    .min()
+                    .unwrap();
+            let join_y_twice = dots
+                .iter()
+                .filter(|dot| top.contains(&dot.2))
+                .map(|dot| dot.1)
+                .max()
+                .unwrap()
+                + dots
+                    .iter()
+                    .filter(|dot| !top.contains(&dot.2))
+                    .map(|dot| dot.1)
+                    .min()
+                    .unwrap();
+            assert_eq!(
+                (join_x_twice, join_y_twice),
+                (center_x_twice, center_y_twice),
+                "area {area:?}"
+            );
+            assert!(dots
+                .iter()
+                .all(|(x, y, _)| area.contains(Position::new(x / 2, y / 4))));
+        }
+    }
+
+    fn pie_dots(buffer: &Buffer) -> Vec<(u16, u16, Color)> {
+        let mut dots = Vec::new();
+        for y in buffer.area.top()..buffer.area.bottom() {
+            for x in buffer.area.left()..buffer.area.right() {
+                let cell = &buffer[(x, y)];
+                let symbol = cell.symbol().chars().next().unwrap();
+                if ('\u{2801}'..='\u{28ff}').contains(&symbol) {
+                    let pattern = symbol as u32 - 0x2800;
+                    for (dx, dy, mask) in [
+                        (0, 0, 1),
+                        (0, 1, 2),
+                        (0, 2, 4),
+                        (0, 3, 64),
+                        (1, 0, 8),
+                        (1, 1, 16),
+                        (1, 2, 32),
+                        (1, 3, 128),
+                    ] {
+                        if pattern & mask != 0 {
+                            dots.push((x * 2 + dx, y * 4 + dy, cell.fg));
+                        }
+                    }
+                }
+            }
+        }
+        dots
     }
 
     #[test]

@@ -15,6 +15,7 @@ mod models;
 mod overview;
 mod overview_snapshot;
 mod period;
+mod pie;
 mod portraits;
 mod radar;
 mod sessions;
