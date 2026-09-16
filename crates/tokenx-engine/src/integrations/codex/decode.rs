@@ -47,11 +47,46 @@ pub struct CodexPayload {
     pub agent_nickname: Option<String>,
     /// Stable agent role from session metadata or subagent thread_spawn.
     pub agent_role: Option<String>,
-    /// Free-text body of an `event_msg` `user_message` payload. Used to detect
-    /// human turn boundaries: real human input is plain text, whereas
-    /// system-injected context (`<environment_context>`, `<system-reminder>`,
-    /// `<user_instructions>`, …) begins with `<`.
+    /// Legacy user-input body; known injected context prefixes are excluded.
     pub message: Option<String>,
+    /// Structured item carried by modern `item_completed` events.
+    pub item: Option<CodexTurnItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum CodexTurnItem {
+    UserMessage {
+        content: Vec<CodexUserInput>,
+    },
+    // Assistant messages, tools, and reasoning do not start human turns.
+    #[serde(other)]
+    Other,
+}
+
+impl CodexTurnItem {
+    fn is_human_turn(&self) -> bool {
+        match self {
+            Self::UserMessage { content } => content.iter().any(|input| match input {
+                CodexUserInput::Text { text } => codex_message_is_human_turn(Some(text)),
+                CodexUserInput::Image
+                | CodexUserInput::LocalImage
+                | CodexUserInput::Skill
+                | CodexUserInput::Mention => true,
+            }),
+            Self::Other => false,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CodexUserInput {
+    Text { text: String },
+    Image,
+    LocalImage,
+    Skill,
+    Mention,
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,9 +265,8 @@ pub(crate) struct CodexParseState {
     pub forked_child_waiting_for_turn_context: bool,
     pub forked_child_inherited_baseline: Option<CodexTotals>,
     pub forked_child_inherited_reported_total: Option<i64>,
-    /// Set when a human `user_message` event is seen; consumed by the next
-    /// token_count-derived message to mark it as a turn start. `#[serde(default)]`
-    /// keeps a pending turn alive across incremental re-parses of appended chunks.
+    /// Human input from a legacy event or completed user item marks the next
+    /// accepted token_count as a turn start, including across appended chunks.
     #[serde(default)]
     pub pending_turn_start: bool,
 }
@@ -596,24 +630,30 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                     handled = true;
                 }
 
-                // A human `user_message` event starts a new turn. The event
-                // itself carries no tokens, so we defer the flag to the next
-                // token_count-derived message (the assistant's reply). This
-                // counts `codex exec` one-shots too: they are non-interactive but still
-                // carry a real human prompt, so each is one turn. Only
-                // system-injected messages (leading `<`, e.g.
-                // <environment_context>, <system-reminder>) are excluded as
-                // non-human input. Forked-child replays of the parent prompt
-                // arrive before turn_context and are skipped by the
-                // `forked_child_waiting_for_turn_context` branch above, so they
-                // never reach here.
-                if entry.entry_type == "event_msg"
-                    && payload.payload_type.as_deref() == Some("user_message")
-                {
-                    if codex_message_is_human_turn(payload.message.as_deref()) {
-                        state.pending_turn_start = true;
+                // Both rollout formats mark the next accepted usage after human
+                // input. Co-emitted legacy and structured events share this flag;
+                // steering input can mark later usage in the same Codex turn_id.
+                // Inherited fork input is skipped by the replay branch above.
+                match event_type {
+                    Some("user_message") => {
+                        state.pending_turn_start |=
+                            codex_message_is_human_turn(payload.message.as_deref());
+                        handled = true;
                     }
-                    handled = true;
+                    Some("item_completed") => {
+                        let Some(item) = payload.item.as_ref() else {
+                            interrupt_on_record!(
+                                RecordRejectionReason::MalformedRecord,
+                                SessionParseError::invalid(
+                                    "validate Codex completed item",
+                                    "item is missing",
+                                )
+                            );
+                        };
+                        state.pending_turn_start |= item.is_human_turn();
+                        handled = true;
+                    }
+                    _ => {}
                 }
 
                 // Process token_count events
@@ -2676,6 +2716,203 @@ mod tests {
         assert_eq!(parsed.messages[0].model_id.as_ref(), "gpt-5.5");
     }
 
+    fn completed_user_item(content: Value) -> Value {
+        serde_json::json!({
+            "type": "item_completed", "turn_id": "turn-1",
+            "item": {"type": "UserMessage", "id": "prompt-1", "content": content}
+        })
+    }
+
+    fn turn_usage_event(sequence: i64) -> Value {
+        serde_json::json!({
+            "type": "token_count",
+            "info": {
+                "last_token_usage": {"input_tokens": 10, "output_tokens": 3},
+                "total_token_usage": {"input_tokens": 10 * sequence, "output_tokens": 3 * sequence}
+            }
+        })
+    }
+
+    fn parse_turn_events(events: &[Value]) -> ParsedCodexFile {
+        let mut content = String::from(
+            "{\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.2\",\"turn_id\":\"turn-1\"}}\n",
+        );
+        for event in events {
+            content.push_str(
+                &serde_json::json!({
+                    "timestamp": "2026-09-15T00:00:00Z",
+                    "type": "event_msg", "payload": event
+                })
+                .to_string(),
+            );
+            content.push('\n');
+        }
+        let file = create_test_file(&content);
+        parse_codex_file_incremental(file.path(), 0, CodexParseState::default())
+    }
+
+    #[test]
+    fn completed_user_item_and_legacy_event_share_one_pending_turn() {
+        let modern = completed_user_item(serde_json::json!([
+            {"type": "text", "text": "hello", "text_elements": []}
+        ]));
+        let legacy = serde_json::json!({"type": "user_message", "message": "hello"});
+        for mut events in [
+            vec![legacy.clone()],
+            vec![modern.clone()],
+            vec![modern.clone(), legacy.clone()],
+            vec![legacy, modern],
+        ] {
+            events.extend([
+                serde_json::json!({"type": "item_completed", "item": {"type": "AgentMessage", "text": "hi"}}),
+                turn_usage_event(1),
+                turn_usage_event(2),
+            ]);
+            let parsed = parse_turn_events(&events);
+            assert!(parsed.interrupted.is_none());
+            assert!(parsed.rejections.is_empty());
+            assert_eq!(parsed.messages.len(), 2);
+            assert!(parsed.messages[0].is_turn_start, "{events:?}");
+            assert!(!parsed.messages[1].is_turn_start, "{events:?}");
+            assert_eq!(parsed.messages[0].tokens.total(), 13);
+            assert_eq!(parsed.messages[1].tokens.total(), 13);
+        }
+    }
+
+    #[test]
+    fn completed_user_item_filters_context_and_counts_structured_input() {
+        for (content, expected) in [
+            (serde_json::json!([]), false),
+            (
+                serde_json::json!([
+                    {"type": "text", "text": "\n<environment_context>cwd=/tmp</environment_context>"},
+                    {"type": "text", "text": "<system-reminder>context</system-reminder>"},
+                    {"type": "text", "text": "<user_instructions>context</user_instructions>"}
+                ]),
+                false,
+            ),
+            (
+                serde_json::json!([
+                    {"type": "text", "text": "<environment_context>context</environment_context>"},
+                    {"type": "text", "text": "<div>explain this markup</div>"}
+                ]),
+                true,
+            ),
+            (
+                serde_json::json!([{"type": "image", "image_url": "data:image/png;base64,test"}]),
+                true,
+            ),
+            (
+                serde_json::json!([{"type": "local_image", "path": "/tmp/test.png"}]),
+                true,
+            ),
+            (
+                serde_json::json!([{"type": "skill", "name": "test", "path": "/tmp/SKILL.md"}]),
+                true,
+            ),
+            (
+                serde_json::json!([{"type": "mention", "name": "test", "path": "app://test"}]),
+                true,
+            ),
+        ] {
+            let parsed = parse_turn_events(&[
+                completed_user_item(content.clone()),
+                turn_usage_event(1),
+                turn_usage_event(2),
+            ]);
+            assert!(parsed.interrupted.is_none(), "{content}");
+            assert!(parsed.rejections.is_empty(), "{content}");
+            assert_eq!(parsed.messages.len(), 2);
+            assert_eq!(parsed.messages[0].is_turn_start, expected, "{content}");
+            assert!(!parsed.messages[1].is_turn_start);
+        }
+    }
+
+    #[test]
+    fn completed_user_item_steering_and_mixed_formats_keep_input_based_turns() {
+        let mut steering = completed_user_item(serde_json::json!([
+            {"type": "text", "text": "focus on the tests"}
+        ]));
+        steering["item"]["id"] = serde_json::json!("prompt-2");
+        let parsed = parse_turn_events(&[
+            serde_json::json!({"type": "user_message", "message": "start"}),
+            turn_usage_event(1),
+            steering,
+            turn_usage_event(2),
+            serde_json::json!({"type": "task_started", "turn_id": "turn-2"}),
+            serde_json::json!({"type": "item_started", "item": {"type": "UserMessage", "content": [{"type": "text", "text": "not completed"}]}}),
+            turn_usage_event(3),
+        ]);
+        assert!(parsed.interrupted.is_none());
+        assert!(parsed.rejections.is_empty());
+        assert_eq!(parsed.messages.len(), 3);
+        assert!(parsed.messages[0].is_turn_start);
+        assert!(parsed.messages[1].is_turn_start);
+        assert!(!parsed.messages[2].is_turn_start);
+    }
+
+    #[test]
+    fn completed_user_item_survives_duplicate_and_zero_usage_snapshots() {
+        let mut zero = turn_usage_event(0);
+        zero["info"]["last_token_usage"] =
+            serde_json::json!({"input_tokens": 0, "output_tokens": 0});
+        let parsed = parse_turn_events(&[
+            turn_usage_event(1),
+            completed_user_item(serde_json::json!([{"type": "text", "text": "continue"}])),
+            turn_usage_event(1),
+            zero,
+            turn_usage_event(2),
+            turn_usage_event(3),
+        ]);
+        assert!(parsed.interrupted.is_none());
+        assert!(parsed.rejections.is_empty());
+        assert_eq!(parsed.messages.len(), 3);
+        assert!(!parsed.messages[0].is_turn_start);
+        assert!(parsed.messages[1].is_turn_start);
+        assert!(!parsed.messages[2].is_turn_start);
+    }
+
+    #[test]
+    fn malformed_completed_user_item_interrupts_without_inventing_turns() {
+        for event in [
+            serde_json::json!({"type": "item_completed"}),
+            serde_json::json!({"type": "item_completed", "item": {"type": "UserMessage"}}),
+            completed_user_item(serde_json::json!([{"type": "text", "text": 42}])),
+            completed_user_item(serde_json::json!([{"type": "unknown_input"}])),
+        ] {
+            let parsed =
+                parse_turn_events(&[turn_usage_event(1), event.clone(), turn_usage_event(2)]);
+            assert!(parsed.interrupted.is_some(), "{event}");
+            assert_eq!(parsed.rejections.total(), 1);
+            assert_eq!(parsed.messages.len(), 1);
+            assert!(!parsed.messages[0].is_turn_start);
+            assert!(!parsed.state.pending_turn_start);
+        }
+    }
+
+    #[test]
+    fn completed_user_item_inherited_from_fork_does_not_mark_child_usage() {
+        let content = [
+            r#"{"type":"session_meta","payload":{"id":"child-session","forked_from_id":"parent-session","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent-session"}}}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"parent prompt"}]}}}"#,
+            r#"{"type":"turn_context","payload":{"model":"gpt-5.2"}}"#,
+            r#"{"timestamp":"2026-09-15T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":3},"last_token_usage":{"input_tokens":10,"output_tokens":3}}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"child prompt"}]}}}"#,
+            r#"{"timestamp":"2026-09-15T00:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20,"output_tokens":6},"last_token_usage":{"input_tokens":10,"output_tokens":3}}}}"#,
+        ].join("\n");
+        let file = create_test_file(&content);
+        let parsed = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+        assert!(parsed.interrupted.is_none());
+        assert!(parsed.rejections.is_empty());
+        assert_eq!(parsed.messages.len(), 2);
+        assert!(!parsed.messages[0].is_turn_start);
+        assert!(parsed.messages[1].is_turn_start);
+        assert!(parsed
+            .messages
+            .iter()
+            .all(|message| !message.is_main_session));
+    }
+
     #[test]
     fn test_user_message_marks_next_token_count_as_turn_start() {
         let content = [
@@ -2724,68 +2961,80 @@ mod tests {
         // A `codex exec` one-shot is non-interactive but still carries a real human
         // prompt, so it counts as exactly one turn (verified against a real
         // `codex exec` session: 1 user_message -> turn_count 1).
-        let content = [
-            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"source":"exec"}}"#,
-            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.2"}}"#,
-            r#"{"timestamp":"2026-01-01T00:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}"#,
-            // A real `codex exec` interleaves an agent_message between the user
-            // prompt and the token_count; the deferred turn flag must survive it.
-            r#"{"timestamp":"2026-01-01T00:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"hi"}}"#,
-            r#"{"timestamp":"2026-01-01T00:00:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3},"last_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3}}}}"#,
-        ]
-        .join("\n");
-        let file = create_test_file(&content);
+        for user_event in [
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"hello"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"hello"}]}}}"#,
+        ] {
+            let content = [
+                r#"{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"source":"exec"}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.2"}}"#,
+                user_event,
+                // A real `codex exec` interleaves an agent_message between the user
+                // prompt and the token_count; the deferred turn flag must survive it.
+                r#"{"timestamp":"2026-01-01T00:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"hi"}}"#,
+                r#"{"timestamp":"2026-01-01T00:00:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3},"last_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3}}}}"#,
+            ]
+            .join("\n");
+            let file = create_test_file(&content);
 
-        let messages = parse_codex_file(file.path());
+            let messages = parse_codex_file(file.path());
 
-        assert_eq!(messages.len(), 1);
-        assert!(
-            messages[0].is_turn_start,
-            "an exec one-shot with a human prompt counts as one turn"
-        );
-        assert_eq!(messages[0].agent.as_deref(), Some("Codex Exec"));
+            assert_eq!(messages.len(), 1);
+            assert!(
+                messages[0].is_turn_start,
+                "an exec one-shot with a human prompt counts as one turn"
+            );
+            assert_eq!(messages[0].agent.as_deref(), Some("Codex Exec"));
+        }
     }
 
     #[test]
     fn test_incremental_parse_preserves_pending_turn_start() {
-        let content = [
-            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.2"}}"#,
-            r#"{"timestamp":"2026-01-01T00:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}"#,
-            "",
-        ]
-        .join("\n");
-        let file = create_test_file(&content);
-        let initial_size = file.as_file().metadata().unwrap().len();
+        for user_event in [
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"hello"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"hello"}]}}}"#,
+        ] {
+            let content = [
+                r#"{"timestamp":"2026-01-01T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.2"}}"#,
+                user_event,
+                "",
+            ]
+            .join("\n");
+            let file = create_test_file(&content);
+            let initial_size = file.as_file().metadata().unwrap().len();
 
-        let initial = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
-        assert!(
-            initial.messages.is_empty(),
-            "no token_count yet, so no message"
-        );
-        assert!(
-            initial.state.pending_turn_start,
-            "a pending turn survives a chunk that ends before the token_count"
-        );
-        let appended = format!(
-            "{}\n",
-            r#"{"timestamp":"2026-01-01T00:00:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3},"last_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3}}}}"#
-        );
-        let mut reopened = file.reopen().unwrap();
-        reopened.seek(SeekFrom::End(0)).unwrap();
-        reopened.write_all(appended.as_bytes()).unwrap();
-        reopened.flush().unwrap();
+            let initial = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+            assert!(
+                initial.messages.is_empty(),
+                "no token_count yet, so no message"
+            );
+            assert!(
+                initial.state.pending_turn_start,
+                "a pending turn survives a chunk that ends before the token_count"
+            );
+            let appended = format!(
+                "{}\n",
+                r#"{"timestamp":"2026-01-01T00:00:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3},"last_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":3}}}}"#
+            );
+            let mut reopened = file.reopen().unwrap();
+            reopened.seek(SeekFrom::End(0)).unwrap();
+            reopened.write_all(appended.as_bytes()).unwrap();
+            reopened.flush().unwrap();
 
-        let incremental =
-            parse_codex_file_incremental(file.path(), initial_size, initial.state.clone());
+            let cached_state = bincode::serialize(&initial.state).unwrap();
+            let restored_state = bincode::deserialize(&cached_state).unwrap();
+            let incremental =
+                parse_codex_file_incremental(file.path(), initial_size, restored_state);
 
-        assert_eq!(incremental.messages.len(), 1);
-        assert!(
-            incremental.messages[0].is_turn_start,
-            "the deferred turn applies to the message parsed in the next chunk"
-        );
-        assert!(
-            !incremental.state.pending_turn_start,
-            "the pending flag is consumed once applied"
-        );
+            assert_eq!(incremental.messages.len(), 1);
+            assert!(
+                incremental.messages[0].is_turn_start,
+                "the deferred turn applies to the message parsed in the next chunk"
+            );
+            assert!(
+                !incremental.state.pending_turn_start,
+                "the pending flag is consumed once applied"
+            );
+        }
     }
 }

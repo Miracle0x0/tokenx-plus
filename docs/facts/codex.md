@@ -1,6 +1,32 @@
 # Codex local token-usage facts
 
-Last verified: 2026-09-07
+Last verified: 2026-09-16
+
+## Human-input turns
+
+Tokenx recognizes both legacy `event_msg/user_message` records, with text in
+`payload.message`, and `event_msg/item_completed` records whose
+`payload.item.type` is `UserMessage`, with structured input in
+`payload.item.content`. Local September samples from Codex CLI `0.153.4` and
+`0.154.0` use the completed-item form without legacy user-message events.
+
+Both forms mark the next accepted `token_count` record as a human-input turn.
+They share one pending marker, so co-emitted representations before that usage
+record count once. The marker survives incremental parsing and ignored duplicate
+or zero-token snapshots. Inherited fork input is excluded by the existing replay
+boundary. Assistant, tool, and reasoning items do not start human-input turns.
+
+Structured text uses the same injected-context exclusions as legacy text:
+`<environment_context>`, `<system-reminder>`, and `<user_instructions>` after
+leading whitespace. Other markup remains human input. Image, local-image, skill,
+and mention inputs also qualify; an empty content list does not. Malformed
+completed items use the decoder's explicit malformed-record diagnostic and
+interrupt parsing because they may affect subsequent turn attribution.
+
+This preserves Tokenx's input-based counting rather than counting distinct Codex
+`turn_id` values: steering input followed by further usage can count again within
+one execution turn. Neither `task_started` nor `turn_context` alone establishes a
+human-input turn.
 
 ## Cache-write source fields
 
