@@ -611,7 +611,10 @@ impl Generation {
     }
 
     pub fn rebind_pricing_diagnostics(&mut self, diagnostics: PricingDiagnostics) {
-        self.pricing_diagnostics = diagnostics;
+        self.pricing_diagnostics.retain(|diagnostic| {
+            diagnostic.kind() == crate::pricing::PricingDiagnosticKind::ServiceTierUnavailable
+        });
+        self.pricing_diagnostics.extend(diagnostics);
     }
 
     pub fn pricing_status(&self) -> PricingStatus {

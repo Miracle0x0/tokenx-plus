@@ -144,7 +144,7 @@ secondary projection and never controls eligibility.
 
 - Parsers ignore app/vendor `cost`, credits, spend, and billing-total fields.
 - Finalization clears any parser/cache cost and derives cost only from
-  canonical model identity, provider scope, and token buckets.
+  canonical model identity, provider scope, observed service tier, and token buckets.
 - In automatic lookup, custom pricing has highest priority and matches the
   final canonical model id exactly, case-insensitively. A forced Pricing Source
   limits lookup to that source, including when the selected source is custom.
@@ -175,10 +175,10 @@ secondary projection and never controls eligibility.
   remains `0.0` even if a catalog or custom override contains that key.
 - If no exact custom or public row matches, tokens remain and cost is `0.0`.
 
-Built-in private price overrides are not allowed. Service tier is not a
-separate pricing dimension; canonicalization may currently collapse route-tier
-labels, so derived cost may differ from provider invoices or subscription
-billing.
+Built-in private price overrides are not allowed. Explicit observed service
+tier is a separate pricing input under ADR 0014; it does not alter canonical
+model grouping. Canonicalization can still collapse decorated model labels,
+and local estimates may differ from invoices or subscription billing.
 
 ### Total-only token projection
 

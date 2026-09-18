@@ -596,7 +596,7 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let empty_pricing = format!(r#"{{"timestamp":{now},"data":{{}}}}"#);
+    let empty_pricing = format!(r#"{{"version":1,"timestamp":{now},"data":{{}}}}"#);
     for filename in [
         "pricing-litellm.json",
         "pricing-openrouter.json",

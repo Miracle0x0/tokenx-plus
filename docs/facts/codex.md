@@ -1,6 +1,27 @@
 # Codex local token-usage facts
 
-Last verified: 2026-09-16
+Last verified: 2026-09-19
+
+## Service-tier source fields
+
+Read-only inspection of 602 local session and archived-session JSONL files
+found 386 `event_msg/thread_settings_applied` records carrying
+`payload.thread_settings.service_tier`: 383 were `default` and three were
+`priority`, with the priority records in two sessions. Of those settings events,
+164 also named the current session through `payload.thread_id`; 222 omitted it.
+The 44,189 inspected `token_count` events carried `info` and `rate_limits`, but
+no response service-tier field. A service-tier property inside a tool schema
+was excluded because it does not describe usage.
+
+Tokenx retains the setting on each subsequent accepted token record. Missing
+or null tier in a settings snapshot clears the previous setting. Settings in
+inherited fork history are excluded by the replay boundary. Incremental state
+and cost-free record shards both preserve tier; tests use synthetic fixtures.
+The observed setting cannot establish whether the server ultimately processed
+a request at that tier. `fast` is normalized to the catalog's `priority` rates
+according to [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode);
+`flex` is supported with synthetic fixtures, not observed in this local sample.
+See [service-tier pricing](../pricing.md#codex-service-tier-pricing).
 
 ## Human-input turns
 

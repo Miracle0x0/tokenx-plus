@@ -17,6 +17,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0011](0011-frame-owned-tui-protocol.md) | Frame-owned TUI protocol | Accepted |
 | [0012](0012-configurable-pricing-source-order.md) | Configurable public pricing-source order | Accepted |
 | [0013](0013-configurable-model-mappings.md) | Configurable model mappings | Accepted |
+| [0014](0014-observed-service-tier-pricing.md) | Observed service-tier pricing | Accepted |
 
 ## Conventions
 

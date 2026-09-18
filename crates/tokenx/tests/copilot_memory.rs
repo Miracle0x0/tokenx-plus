@@ -16,7 +16,7 @@ fn prime_pricing_cache(home: &Path) {
         .duration_since(UNIX_EPOCH)
         .expect("system time before unix epoch")
         .as_secs();
-    let payload = format!(r#"{{"timestamp":{},"data":{{}}}}"#, now);
+    let payload = format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, now);
 
     let dir = home.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();

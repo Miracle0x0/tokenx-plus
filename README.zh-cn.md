@@ -63,7 +63,7 @@ Tokenx 支持 OpenCode、Claude Code、Codex、Gemini CLI、Amp 等多种编码�
 
 ## 定价
 
-Tokenx 在分组和定价前会规范化模型 ID，并支持通过可选的 [`model-mappings.toml`](docs/configuration.md#model-mappings) 自定义覆写。它先检查映射后名称对应的精确自定义价格，再检查已配置公共目录中的精确匹配；不会按前缀、子串或模糊匹配猜测价格。无法定价的模型会保留 token 用量，并把派生成本报告为 `$0.00`。
+Tokenx 在分组和定价前会规范化模型 ID，并支持通过可选的 [`model-mappings.toml`](docs/configuration.md#model-mappings) 自定义覆写。它先检查映射后名称对应的精确自定义价格，再检查已配置公共目录中的精确匹配；不会按前缀、子串或模糊匹配猜测价格。Codex 记录的 service tier 会选择目录中对应的费率。缺少模型或 tier 费率时保留 token 用量，不计入派生成本；tier 无法定价时会明确显示警告。
 
 目录优先级、只有总量的 token 分配方式和成本边界见[定价语义](docs/pricing.md)。
 

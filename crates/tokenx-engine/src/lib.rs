@@ -675,6 +675,7 @@ fn apply_canonical_token_pricing(
     pricing: Option<&pricing::PricingService>,
 ) -> Result<(), pricing::PricingComputationError> {
     message.cost = 0.0;
+    message.pricing_error = None;
 
     let Some(pricing) = pricing else {
         return Ok(());
@@ -688,6 +689,7 @@ fn apply_canonical_token_pricing(
         Some(message.provider_id.as_ref()),
         &message.tokens,
         Some(message.timestamp),
+        message.service_tier.as_deref(),
     )?;
 
     if calculated_cost > 0.0 {
@@ -827,9 +829,18 @@ fn price_source_eligible_messages<M: AsMut<records::UsageRecord>>(
         canonicalize_message_model(message, &mut model_cache, model_mappings);
         refresh_derived_message_fields(message);
         canonicalize_message_provider(message);
-        if apply_canonical_token_pricing(message, pricing).is_err() {
-            rejections.record(input_health::RecordRejectionReason::PricingComputationFailed);
-            return false;
+        if let Err(error) = apply_canonical_token_pricing(message, pricing) {
+            match error {
+                pricing::PricingComputationError::UnsupportedServiceTier { .. }
+                | pricing::PricingComputationError::MissingServiceTierRate { .. } => {
+                    message.pricing_error = Some(error);
+                }
+                _ => {
+                    rejections
+                        .record(input_health::RecordRejectionReason::PricingComputationFailed);
+                    return false;
+                }
+            }
         }
         true
     });

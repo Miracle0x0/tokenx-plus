@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const CACHE_TTL_SECS: u64 = 3600;
+pub const CACHE_FORMAT_VERSION: u32 = 1;
 
 pub fn get_cache_path(cache_dir: &Path, filename: &str) -> PathBuf {
     cache_dir.join(filename)
@@ -11,6 +12,7 @@ pub fn get_cache_path(cache_dir: &Path, filename: &str) -> PathBuf {
 
 #[derive(Serialize, Deserialize)]
 pub struct CachedData<T> {
+    pub version: u32,
     pub timestamp: u64,
     pub data: T,
 }
@@ -48,6 +50,12 @@ pub(crate) fn parse_cache<T: for<'de> Deserialize<'de>>(
     bytes: &[u8],
 ) -> Result<ParsedCache<T>, String> {
     let cached: CachedData<T> = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    if cached.version != CACHE_FORMAT_VERSION {
+        return Err(format!(
+            "unsupported pricing cache version: {}",
+            cached.version
+        ));
+    }
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
@@ -75,6 +83,7 @@ pub fn save_cache<T: Serialize>(
         .as_secs();
 
     let cached = CachedData {
+        version: CACHE_FORMAT_VERSION,
         timestamp: now,
         data,
     };

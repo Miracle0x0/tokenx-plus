@@ -25,6 +25,9 @@ pub struct UsageRecord {
     pub raw_model_id: std::sync::Arc<str>,
     #[serde(deserialize_with = "intern::de_intern")]
     pub provider_id: std::sync::Arc<str>,
+    /// Observed request/session service tier, independent of model identity.
+    #[serde(default, deserialize_with = "intern::de_intern_opt")]
+    pub service_tier: Option<std::sync::Arc<str>>,
     #[serde(deserialize_with = "intern::de_intern")]
     pub session_id: std::sync::Arc<str>,
     /// Whether the input record directly identifies this usage as belonging to a
@@ -38,6 +41,9 @@ pub struct UsageRecord {
     pub timestamp: i64,
     pub tokens: TokenBreakdown,
     pub cost: f64,
+    /// Derived pricing failure; never persisted in source-record shards.
+    #[serde(skip)]
+    pub(crate) pricing_error: Option<crate::pricing::PricingComputationError>,
     #[serde(default = "default_message_count")]
     pub message_count: i32,
     #[serde(default, deserialize_with = "intern::de_intern_opt")]
@@ -337,6 +343,7 @@ impl UsageRecord {
             model_id: intern::intern(model_id.as_ref()),
             raw_model_id: intern::intern(model_id.as_ref()),
             provider_id: intern::intern(provider_id.as_ref()),
+            service_tier: None,
             session_id: intern::intern(session_id.as_ref()),
             is_main_session: true,
             workspace_key: None,
@@ -344,6 +351,7 @@ impl UsageRecord {
             timestamp,
             tokens,
             cost,
+            pricing_error: None,
             message_count: default_message_count(),
             agent: agent.as_deref().map(intern::intern),
             agent_instance: None,

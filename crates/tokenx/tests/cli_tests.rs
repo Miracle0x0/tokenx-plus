@@ -14,7 +14,7 @@ fn prime_pricing_cache(base: &Path) {
         .duration_since(UNIX_EPOCH)
         .expect("system time before unix epoch")
         .as_secs();
-    let payload = format!(r#"{{"timestamp":{},"data":{{}}}}"#, now);
+    let payload = format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, now);
 
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
@@ -28,7 +28,7 @@ fn prime_override_pricing_cache(config_dir: &Path) {
         .duration_since(UNIX_EPOCH)
         .expect("system time before unix epoch")
         .as_secs();
-    let payload = format!(r#"{{"timestamp":{},"data":{{}}}}"#, now);
+    let payload = format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, now);
 
     let cache_dir = config_dir.join("cache");
     fs::create_dir_all(&cache_dir).unwrap();
@@ -665,10 +665,10 @@ fn invalid_model_mapping_file_fails_before_acquisition() {
 
 fn write_pricing_cache(base: &Path, timestamp: u64) {
     let litellm = format!(
-        r#"{{"timestamp":{},"data":{{"gpt-4o":{{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001}},"claude-sonnet-4":{{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}}}}"#,
+        r#"{{"version":1,"timestamp":{},"data":{{"gpt-4o":{{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001}},"claude-sonnet-4":{{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}}}}"#,
         timestamp
     );
-    let openrouter = format!(r#"{{"timestamp":{},"data":{{}}}}"#, timestamp);
+    let openrouter = format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, timestamp);
 
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
@@ -676,7 +676,7 @@ fn write_pricing_cache(base: &Path, timestamp: u64) {
     fs::write(dir.join("pricing-openrouter.json"), &openrouter).unwrap();
     fs::write(
         dir.join("pricing-models-dev.json"),
-        format!(r#"{{"timestamp":{},"data":{{}}}}"#, timestamp),
+        format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, timestamp),
     )
     .unwrap();
 }
@@ -697,6 +697,7 @@ fn write_fireworks_pricing_cache(base: &Path) {
         .expect("system time before unix epoch")
         .as_secs();
     let litellm = serde_json::json!({
+        "version": 1,
         "timestamp": now,
         "data": {
             "fireworks_ai/accounts/fireworks/models/deepseek-r1-0528-distill-qwen3-8b": {
@@ -706,6 +707,7 @@ fn write_fireworks_pricing_cache(base: &Path) {
         }
     });
     let openrouter = serde_json::json!({
+        "version": 1,
         "timestamp": now,
         "data": {
             "deepseek/deepseek-v4-pro": {
@@ -739,6 +741,7 @@ fn write_fireworks_pricing_cache(base: &Path) {
     fs::write(
         dir.join("pricing-models-dev.json"),
         serde_json::to_vec(&serde_json::json!({
+            "version": 1,
             "timestamp": now,
             "data": {}
         }))
@@ -1791,6 +1794,76 @@ fn test_models_json_output() {
     }
     assert!(first.get("cost").is_some());
     assert!(first.get("sessionCount").is_some());
+}
+
+#[test]
+fn codex_service_tier_prices_and_warnings_survive_generation_cache() {
+    for tier_available in [true, false] {
+        let tmp = create_codex_fixture_dir();
+        let session = tmp.path().join(".codex/sessions/session-1.jsonl");
+        let original = fs::read_to_string(&session).unwrap();
+        fs::write(
+            &session,
+            format!(
+                "{}\n{original}",
+                serde_json::json!({
+                    "type":"event_msg", "payload":{"type":"thread_settings_applied",
+                        "thread_settings":{"service_tier":"priority"}}
+                })
+            ),
+        )
+        .unwrap();
+        let mut rates = serde_json::json!({
+            "input_cost_per_token":1.0, "output_cost_per_token":2.0,
+            "cache_read_input_token_cost":0.25
+        });
+        if tier_available {
+            rates["input_cost_per_token_priority"] = 4.0.into();
+            rates["output_cost_per_token_priority"] = 7.0.into();
+            rates["cache_read_input_token_cost_priority"] = 0.5.into();
+        }
+        tokenx_engine::pricing::cache::save_cache(
+            &tmp.path().join(".tokenx/cache"),
+            "pricing-litellm.json",
+            &serde_json::json!({"gpt-4o-mini":rates}),
+        )
+        .unwrap();
+        for _ in 0..2 {
+            let output = offline_cmd_with_home(tmp.path())
+                .args(["models", "--json", "--client", "codex", "--no-spinner"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            let rows = model_rows(&document);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["tokens"]["input"], 100);
+            assert_eq!(rows[0]["cost"], if tier_available { 620.0 } else { 0.0 });
+            assert_eq!(
+                document["metadata"]["pricingStatus"],
+                if tier_available {
+                    "available"
+                } else {
+                    "availableWithWarnings"
+                }
+            );
+            let diagnostics = document["metadata"]["pricingDiagnostics"]
+                .as_array()
+                .unwrap();
+            assert_eq!(diagnostics.len(), usize::from(!tier_available));
+            if !tier_available {
+                assert_eq!(diagnostics[0]["kind"], "serviceTierUnavailable");
+                assert!(diagnostics[0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("priority"));
+            }
+        }
+    }
 }
 
 #[test]

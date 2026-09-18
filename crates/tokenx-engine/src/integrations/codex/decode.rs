@@ -38,6 +38,7 @@ pub struct CodexPayload {
     pub model_info: Option<CodexModelInfo>,
     pub info: Option<CodexInfo>,
     pub turn_id: Option<String>,
+    pub thread_settings: Option<CodexThreadSettings>,
     pub source: Option<Value>,
     /// Current working directory from session_meta.
     pub cwd: Option<String>,
@@ -51,6 +52,11 @@ pub struct CodexPayload {
     pub message: Option<String>,
     /// Structured item carried by modern `item_completed` events.
     pub item: Option<CodexTurnItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CodexThreadSettings {
+    pub service_tier: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,6 +254,7 @@ fn validate_codex_token_usage(usage: &CodexTokenUsage) -> SessionParseResult<Cod
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CodexParseState {
     pub current_model: Option<String>,
+    pub service_tier: Option<String>,
     pub previous_totals: Option<CodexTotals>,
     pub session_is_exec: bool,
     pub session_id_from_meta: Option<String>,
@@ -285,6 +292,7 @@ pub(crate) struct ParsedCodexFile {
 
 #[derive(Clone)]
 struct PendingCodexMessage {
+    service_tier: Option<String>,
     provider: String,
     session_id: String,
     timestamp: i64,
@@ -311,6 +319,10 @@ impl PendingCodexMessage {
             self.agent,
         );
         message.set_agent_instance(self.agent_instance);
+        message.service_tier = self
+            .service_tier
+            .as_deref()
+            .map(crate::records::intern::intern);
         message.is_turn_start = self.is_turn_start;
         message.is_main_session = self.is_main_session;
         set_codex_dedup_key(&mut message, model, &self.dedup_scope_id, self.total_usage);
@@ -635,6 +647,21 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                 // steering input can mark later usage in the same Codex turn_id.
                 // Inherited fork input is skipped by the replay branch above.
                 match event_type {
+                    Some("thread_settings_applied") => {
+                        let Some(settings) = payload.thread_settings.as_ref() else {
+                            interrupt_on_record!(
+                                RecordRejectionReason::MalformedRecord,
+                                SessionParseError::invalid(
+                                    "validate Codex thread settings",
+                                    "thread_settings is missing",
+                                )
+                            );
+                        };
+                        // A settings snapshot applies prospectively. Never infer
+                        // earlier usage from a later setting or today's config.
+                        state.service_tier = settings.service_tier.clone();
+                        handled = true;
+                    }
                     Some("user_message") => {
                         state.pending_turn_start |=
                             codex_message_is_human_turn(payload.message.as_deref());
@@ -765,6 +792,7 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                         .to_string();
                     let is_turn_start = std::mem::take(&mut state.pending_turn_start);
                     let pending = PendingCodexMessage {
+                        service_tier: state.service_tier.clone(),
                         provider: provider.to_string(),
                         session_id: session_id.to_string(),
                         timestamp,
@@ -1348,6 +1376,102 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    fn tier_setting(tier: Value) -> String {
+        serde_json::json!({"type": "event_msg", "payload": {
+            "type": "thread_settings_applied", "thread_settings": {"service_tier": tier}
+        }})
+        .to_string()
+    }
+
+    fn tier_usage(total: i64) -> String {
+        cache_write_snapshot(
+            serde_json::json!({"input_tokens": total}),
+            serde_json::json!({"input_tokens": 10}),
+        )
+    }
+
+    #[test]
+    fn service_tier_settings_are_prospective_and_survive_incremental_state() {
+        let mut file = create_test_file(&format!(
+            "{}\n{}\n{}\n",
+            tier_usage(10),
+            tier_setting("priority".into()),
+            tier_usage(20)
+        ));
+        let first = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+        assert_eq!(first.messages[0].service_tier, None);
+        assert_eq!(first.messages[1].service_tier.as_deref(), Some("priority"));
+        let state = bincode::deserialize(&bincode::serialize(&first.state).unwrap()).unwrap();
+        writeln!(
+            file,
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            tier_usage(20), // Duplicate snapshot remains ignored.
+            tier_usage(30),
+            tier_setting("default".into()),
+            tier_usage(40),
+            tier_setting("fast".into()),
+            tier_usage(50),
+            tier_setting(Value::Null),
+            tier_usage(60),
+            tier_setting("future-tier".into()),
+        )
+        .unwrap();
+        writeln!(file, "{}", tier_usage(70)).unwrap();
+        file.flush().unwrap();
+        let next = parse_codex_file_incremental(file.path(), first.consumed_offset, state);
+        assert!(next.interrupted.is_none());
+        let tiers = next
+            .messages
+            .iter()
+            .map(|r| r.service_tier.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tiers,
+            [
+                Some("priority"),
+                Some("default"),
+                Some("fast"),
+                None,
+                Some("future-tier")
+            ]
+        );
+        let full = parse_codex_file(file.path());
+        assert_eq!(full, [first.messages, next.messages].concat());
+    }
+
+    #[test]
+    fn malformed_service_tier_settings_interrupt_before_later_usage() {
+        for settings in [serde_json::json!({"service_tier": 7}), Value::Null] {
+            let bad = serde_json::json!({"type":"event_msg", "payload": {
+                "type":"thread_settings_applied", "thread_settings":settings
+            }});
+            let file =
+                create_test_file(&format!("{}\n{bad}\n{}\n", tier_usage(10), tier_usage(20)));
+            let parsed = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+            assert!(parsed.interrupted.is_some());
+            assert_eq!(parsed.messages.len(), 1);
+            assert_eq!(parsed.rejections.total(), 1);
+        }
+    }
+
+    #[test]
+    fn inherited_fork_settings_do_not_set_the_child_service_tier() {
+        let file = create_test_file(&format!(
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+            r#"{"type":"session_meta","payload":{"id":"child","forked_from_id":"parent"}}"#,
+            tier_setting("priority".into()),
+            tier_usage(10),
+            r#"{"type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+            tier_usage(20),
+            tier_setting("flex".into()),
+            tier_usage(30)
+        ));
+        let parsed = parse_codex_file(file.path());
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].service_tier, None);
+        assert_eq!(parsed[1].service_tier.as_deref(), Some("flex"));
     }
 
     #[test]
