@@ -4,6 +4,8 @@ pub mod litellm;
 pub mod lookup;
 pub mod models_dev;
 pub mod openrouter;
+mod service_tier;
+pub use service_tier::ServiceTierPricing;
 
 use custom::CustomPricing;
 use lookup::{compute_cost, LookupResult, PricingLookup};
@@ -41,6 +43,8 @@ pub(crate) type PricingDiagnosticSink<'a> = Option<&'a mut PricingDiagnostics>;
 #[serde(rename_all = "camelCase")]
 pub enum PricingDiagnosticKind {
     Warning,
+    /// Usage-derived failure that must survive catalog-diagnostic rebinding.
+    ServiceTierUnavailable,
     CachedFallback,
     Unavailable,
 }
@@ -483,6 +487,7 @@ impl PricingService {
             provider_id,
             usage,
             timestamp_ms,
+            None,
         )
     }
 
@@ -492,10 +497,13 @@ impl PricingService {
         provider_id: Option<&str>,
         usage: &TokenBreakdown,
         timestamp_ms: Option<i64>,
+        service_tier: Option<&str>,
     ) -> Result<f64, PricingComputationError> {
         if let Some(result) = self.custom.lookup_with_key(canonical_model_id) {
+            let pricing =
+                service_tier::effective_service_tier(result.pricing, service_tier, usage)?;
             return compute_cost(
-                result.pricing,
+                &pricing,
                 usage.input,
                 usage.output,
                 usage.cache_read,
@@ -509,6 +517,7 @@ impl PricingService {
             provider_id,
             usage,
             timestamp_ms,
+            service_tier,
         )
     }
 
@@ -1240,6 +1249,67 @@ mod tests {
     }
 
     #[test]
+    fn service_tier_pricing_respects_custom_authority_and_catalog_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("custom-pricing.json");
+        let public: ModelPricing = serde_json::from_value(serde_json::json!({
+            "input_cost_per_token": 1.0, "input_cost_per_token_priority": 3.0
+        }))
+        .unwrap();
+        let usage = TokenBreakdown {
+            input: 10,
+            ..Default::default()
+        };
+        let cost = |service: &PricingService| {
+            service.calculate_canonical_cost_with_provider_and_time(
+                "gpt-5.6-sol",
+                Some("openai"),
+                &usage,
+                None,
+                Some("priority"),
+            )
+        };
+        for tier_price in [Some(7.0), None] {
+            let mut row = serde_json::json!({"input_cost_per_token": 2.0});
+            if let Some(price) = tier_price {
+                row["input_cost_per_token_priority"] = price.into();
+            }
+            std::fs::write(
+                &path,
+                serde_json::json!({"models":{"gpt-5.6-sol":row}}).to_string(),
+            )
+            .unwrap();
+            let service = PricingService::new_with_custom(
+                CustomPricing::load_from_path(&path),
+                HashMap::from([("gpt-5.6-sol".into(), public.clone())]),
+                HashMap::new(),
+            );
+            if tier_price.is_some() {
+                assert_eq!(cost(&service).unwrap(), 70.0);
+            } else {
+                assert!(matches!(
+                    cost(&service),
+                    Err(PricingComputationError::MissingServiceTierRate { .. })
+                ));
+            }
+        }
+        // The selected source's base-only row cannot borrow another source's tier price.
+        let mut order = SourceOrder::default();
+        order.swap(0, 1);
+        let service = PricingService::new_with_custom_and_order(
+            CustomPricing::default(),
+            HashMap::from([("openai/gpt-5.6-sol".into(), public)]),
+            HashMap::from([("openai/gpt-5.6-sol".into(), model_pricing(2.0, 4.0))]),
+            HashMap::new(),
+            order,
+        );
+        assert!(matches!(
+            cost(&service),
+            Err(PricingComputationError::MissingServiceTierRate { .. })
+        ));
+    }
+
+    #[test]
     fn catalog_identity_ignores_cache_timestamp_for_identical_data() {
         let temp = tempfile::TempDir::new().unwrap();
         let custom_path = temp.path().join("custom-pricing.json");
@@ -1253,6 +1323,7 @@ mod tests {
         std::fs::write(
             &cache_path,
             serde_json::to_vec(&cache::CachedData {
+                version: cache::CACHE_FORMAT_VERSION,
                 timestamp: 1,
                 data: &data,
             })
@@ -1263,6 +1334,7 @@ mod tests {
         std::fs::write(
             &cache_path,
             serde_json::to_vec(&cache::CachedData {
+                version: cache::CACHE_FORMAT_VERSION,
                 timestamp: 2,
                 data: &data,
             })

@@ -98,6 +98,8 @@ pub(super) struct CachedUsageRecord {
     pub(super) raw_model_id: Arc<str>,
     #[serde(deserialize_with = "intern::de_intern")]
     pub(super) provider_id: Arc<str>,
+    #[serde(deserialize_with = "intern::de_intern_opt")]
+    pub(super) service_tier: Option<Arc<str>>,
     #[serde(deserialize_with = "intern::de_intern")]
     pub(super) session_id: Arc<str>,
     pub(super) is_main_session: bool,
@@ -122,6 +124,7 @@ impl From<CachedUsageRecord> for UsageRecord {
             model_id: cached.model_id,
             raw_model_id: cached.raw_model_id,
             provider_id: cached.provider_id,
+            service_tier: cached.service_tier,
             session_id: cached.session_id,
             is_main_session: cached.is_main_session,
             workspace_key: cached.workspace_key,
@@ -129,6 +132,7 @@ impl From<CachedUsageRecord> for UsageRecord {
             timestamp: cached.timestamp,
             tokens: cached.tokens,
             cost: 0.0,
+            pricing_error: None,
             message_count: cached.message_count,
             agent: cached.agent,
             agent_instance: cached.agent_instance,
@@ -143,6 +147,7 @@ pub(super) struct BorrowedCachedUsageRecord<'a> {
     pub(super) model_id: &'a str,
     pub(super) raw_model_id: &'a str,
     pub(super) provider_id: &'a str,
+    pub(super) service_tier: Option<&'a str>,
     pub(super) session_id: &'a str,
     pub(super) is_main_session: bool,
     pub(super) workspace_key: Option<&'a str>,
@@ -162,6 +167,7 @@ impl<'a> From<&'a UsageRecord> for BorrowedCachedUsageRecord<'a> {
             model_id: &record.model_id,
             raw_model_id: &record.raw_model_id,
             provider_id: &record.provider_id,
+            service_tier: record.service_tier.as_deref(),
             session_id: &record.session_id,
             is_main_session: record.is_main_session,
             workspace_key: record.workspace_key.as_deref(),

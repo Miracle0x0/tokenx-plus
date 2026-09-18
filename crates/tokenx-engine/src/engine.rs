@@ -298,7 +298,7 @@ fn build_generation_data(
 fn fold_generation_data(
     prepared: PreparedInventory,
     pricing: Option<Arc<crate::pricing::PricingService>>,
-    pricing_diagnostics: crate::pricing::PricingDiagnostics,
+    mut pricing_diagnostics: crate::pricing::PricingDiagnostics,
     calendar: crate::CalendarContext,
     model_mappings: &crate::ModelMappings,
     cancellation: &AcquisitionCancellation,
@@ -327,6 +327,7 @@ fn fold_generation_data(
             return Err(error);
         }
     };
+    pricing_diagnostics.extend(accumulator.take_pricing_diagnostics());
     let generation_parts = accumulator.into_generation_parts();
     let (usage_index, sessions) = match generation_parts {
         Ok(parts) => parts,
@@ -413,6 +414,145 @@ mod tests {
             None,
             Vec::new(),
         ))
+    }
+
+    fn tier_test_row(total: i64) -> String {
+        serde_json::json!({"type":"event_msg", "timestamp":"2026-09-18T00:00:00Z",
+        "payload":{"type":"token_count", "info":{
+            "total_token_usage":{"input_tokens":total},
+            "last_token_usage":{"input_tokens":10}
+        }}})
+        .to_string()
+    }
+
+    fn tier_test_setting(tier: &str) -> String {
+        serde_json::json!({"type":"event_msg", "payload":{
+            "type":"thread_settings_applied", "thread_settings":{"service_tier":tier}
+        }})
+        .to_string()
+    }
+
+    fn tier_test_engine(home: &std::path::Path, rates: serde_json::Value) -> AcquisitionEngine {
+        let service = crate::pricing::PricingService::new(
+            std::collections::HashMap::from([(
+                "gpt-5.6-sol".into(),
+                serde_json::from_value(rates).unwrap(),
+            )]),
+            Default::default(),
+        );
+        let pricing = Arc::new(crate::pricing::ResolvedPricingSnapshot::explicit(
+            crate::PricingContext::explicit_with_catalog("test", "tier-catalog"),
+            Some(Arc::new(service)),
+            Vec::new(),
+        ));
+        let config = AcquisitionConfig::new(
+            home.to_owned(),
+            DateRange::none(),
+            ClientUniverse::new([ClientId::Codex]).unwrap(),
+            ScannerSettings::default(),
+            test_calendar(),
+            pricing.context().clone(),
+        )
+        .unwrap();
+        AcquisitionEngine::new(config, pricing, home.join("input-cache")).unwrap()
+    }
+
+    fn tier_test_session(home: &std::path::Path) -> std::path::PathBuf {
+        let dir = home.join(".codex/sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tier-session.jsonl");
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                r#"{"type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+                tier_test_row(10),
+                tier_test_setting("priority"),
+                tier_test_row(20)
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn service_tier_costs_match_cold_cached_and_appended_acquisitions() {
+        use std::io::Write;
+        let home = tempfile::tempdir().unwrap();
+        let path = tier_test_session(home.path());
+        let rates = serde_json::json!({"input_cost_per_token":1.0,
+            "input_cost_per_token_priority":3.0});
+        let engine = tier_test_engine(home.path(), rates);
+        for _ in 0..2 {
+            let generation = engine.acquire().unwrap();
+            assert_eq!(generation.sessions()[0].cost, 40.0);
+            assert_eq!(generation.sessions()[0].tokens.input, 20);
+            assert_eq!(
+                generation.pricing_status(),
+                crate::pricing::PricingStatus::Available
+            );
+        }
+        // Repricing a shard must use its preserved tier, not an earlier cost.
+        let changed = tier_test_engine(
+            home.path(),
+            serde_json::json!({
+            "input_cost_per_token":2.0, "input_cost_per_token_priority":5.0}),
+        );
+        assert_eq!(changed.acquire().unwrap().sessions()[0].cost, 70.0);
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(
+            file,
+            "{}\n{}\n{}",
+            tier_test_row(30),
+            tier_test_setting("default"),
+            tier_test_row(40)
+        )
+        .unwrap();
+        file.flush().unwrap();
+        let appended = engine.acquire().unwrap();
+        assert_eq!(appended.sessions()[0].cost, 80.0);
+        assert_eq!(appended.sessions()[0].tokens.input, 40);
+        let rebuilt = AcquisitionEngine::new(
+            engine.config().clone(),
+            engine.pricing_snapshot(),
+            home.path().join("other-input-cache"),
+        )
+        .unwrap()
+        .acquire()
+        .unwrap();
+        assert_eq!(appended.sessions()[0].cost, rebuilt.sessions()[0].cost);
+        assert_eq!(appended.sessions()[0].tokens, rebuilt.sessions()[0].tokens);
+    }
+
+    #[test]
+    fn missing_service_tier_prices_keep_tokens_and_persist_generation_diagnostics() {
+        let home = tempfile::tempdir().unwrap();
+        tier_test_session(home.path());
+        let engine = tier_test_engine(home.path(), serde_json::json!({"input_cost_per_token":1.0}));
+        for _ in 0..2 {
+            let generation = engine.acquire().unwrap();
+            assert_eq!(generation.sessions()[0].tokens.input, 20);
+            assert_eq!(generation.sessions()[0].cost, 10.0);
+            assert_eq!(generation.health().rejected_records(), 0);
+            assert_eq!(
+                generation.pricing_status(),
+                crate::pricing::PricingStatus::AvailableWithWarnings
+            );
+            assert_eq!(generation.pricing_diagnostics().len(), 1);
+            assert!(generation.pricing_diagnostics()[0]
+                .message()
+                .contains("priority"));
+            let mut cached: Generation =
+                bincode::deserialize(&bincode::serialize(&generation).unwrap()).unwrap();
+            cached.rebind_pricing_diagnostics(Vec::new());
+            assert_eq!(
+                cached.pricing_diagnostics(),
+                generation.pricing_diagnostics()
+            );
+        }
     }
 
     #[test]

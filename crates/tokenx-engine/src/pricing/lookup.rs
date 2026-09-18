@@ -38,12 +38,21 @@ pub struct LookupResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PricingComputationError {
+    #[error("prompt token counts exceed i64::MAX")]
+    TokenCountOverflow,
     #[error("output and reasoning token counts exceed i64::MAX")]
     OutputReasoningTokenOverflow,
     #[error("invalid pricing timestamp in milliseconds: {timestamp_ms}")]
     InvalidTimestamp { timestamp_ms: i64 },
     #[error("pricing produced a non-finite {component} cost")]
     NonFiniteCost { component: &'static str },
+    #[error("unsupported service tier `{tier}`")]
+    UnsupportedServiceTier { tier: String },
+    #[error("service tier `{tier}` has no valid {component} rate in the selected pricing row")]
+    MissingServiceTierRate {
+        tier: String,
+        component: &'static str,
+    },
 }
 
 impl PricingLookup {
@@ -307,6 +316,7 @@ impl PricingLookup {
             provider_id,
             usage,
             timestamp_ms,
+            None,
         )
     }
 
@@ -316,8 +326,15 @@ impl PricingLookup {
         provider_id: Option<&str>,
         usage: &TokenBreakdown,
         timestamp_ms: Option<i64>,
+        service_tier: Option<&str>,
     ) -> Result<f64, PricingComputationError> {
         let Some(result) = self.lookup_canonical_with_provider(model_id, provider_id) else {
+            if let Some(tier) = service_tier.filter(|tier| *tier != "default") {
+                return Err(PricingComputationError::MissingServiceTierRate {
+                    tier: tier.to_string(),
+                    component: "model",
+                });
+            }
             return Ok(0.0);
         };
 
@@ -327,6 +344,7 @@ impl PricingLookup {
             Cow::Borrowed(&result.pricing)
         };
 
+        let pricing = super::service_tier::effective_service_tier(&pricing, service_tier, usage)?;
         compute_cost(
             &pricing,
             usage.input,
@@ -671,10 +689,16 @@ pub fn compute_cost(
     let cache_write_cost = tiered_cost(
         cache_write,
         pricing.cache_creation_input_token_cost,
-        &[(
-            TIERED_PRICING_THRESHOLD_200K_TOKENS,
-            pricing.cache_creation_input_token_cost_above_200k_tokens,
-        )],
+        &[
+            (
+                TIERED_PRICING_THRESHOLD_200K_TOKENS,
+                pricing.cache_creation_input_token_cost_above_200k_tokens,
+            ),
+            (
+                TIERED_PRICING_THRESHOLD_272K_TOKENS,
+                pricing.cache_creation_input_token_cost_above_272k_tokens,
+            ),
+        ],
         "cache-write",
     )?;
 

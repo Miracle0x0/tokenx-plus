@@ -63,6 +63,39 @@ each class. With unknown provider scope, only an exact unscoped row is eligible.
 Prefix, substring, fuzzy/edit-distance, arbitrary separator, and private alias
 matching are not pricing strategies.
 
+### Codex service-tier pricing
+
+Codex `event_msg/thread_settings_applied` snapshots supply
+`payload.thread_settings.service_tier`. The setting applies to subsequent usage
+records and survives cached and incremental parsing. A later setting does not
+reprice earlier records; inherited fork settings do not configure the child.
+Missing or null tier metadata uses the model's ordinary catalog estimate.
+`default` uses ordinary rates, `fast` and `priority` select the catalog's
+`_priority` rates, and `flex` selects `_flex` rates. Model identity and grouping
+remain independent of tier.
+
+LiteLLM's per-token input, output, cache-read, and cache-creation tier fields are
+retained, including `_above_272k_tokens_priority` and
+`_above_272k_tokens_flex`. When long-context pricing is present, tier selection
+uses inclusive prompt size (ordinary input plus cache reads and writes). Above
+272,000 prompt tokens, the long-context rates apply to the whole request.
+No fixed multiplier is inferred. Custom rows can provide the same per-token
+suffix fields; for example, `input_cost_per_token_priority`. Custom overrides
+and configured catalog order keep their existing authority: rates are not
+assembled from different sources.
+
+An unsupported explicit tier or a missing/invalid rate for a used token bucket
+leaves that record's tokens intact but excludes its cost. The generation reports
+`serviceTierUnavailable` with the model, tier, and affected record count, and
+pricing status becomes `availableWithWarnings` when catalogs are otherwise
+available. These usage-derived diagnostics survive generation-cache reuse.
+
+The recorded setting is evidence of requested service, not a server-confirmed
+billing tier. [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode)
+can serve a request at the standard tier; the inspected Codex token events do
+not record that response tier. Local costs remain catalog estimates, separate
+from invoices and [ChatGPT credit consumption](https://learn.chatgpt.com/docs/agent-configuration/speed).
+
 ### DeepSeek V4 time-period pricing
 
 OpenRouter time-period prices use the usage record's request timestamp in UTC.
@@ -143,13 +176,14 @@ Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:
 - `pricing-openrouter.json`
 - `pricing-models-dev.json`
 
-Deleting these files forces Tokenx to fetch pricing data again on the next
-lookup or usage load that needs pricing.
+Pricing cache envelopes are versioned so catalogs that discarded service-tier
+fields are refreshed automatically. Deleting these files also forces a fetch
+on the next lookup or usage load that needs pricing.
 
 Input-record shards are cost-free: they retain token buckets, timestamps, and
-model/provider identity, but not derived prices. The Generation cache contains
-aggregated costs and is invalidated when the pricing context, including source
-order, changes.
+model/provider identity and observed service tier, but not derived prices. The
+Generation cache contains aggregated costs and is invalidated when the pricing
+context, including source order, changes.
 
 Headless usage commands refresh missing or expired public catalogs before
 building their generation. The TUI enters immediately from its captured local

@@ -4,7 +4,7 @@ compile_error!("input-record cache requires stable Unix or Windows file identity
 // Input-record cache shards split serialization layout from decoder/input
 // semantics. Bump this only when the shard bincode layout changes; decoder
 // semantics are invalidated by their generated source contract fingerprint.
-const CACHE_FORMAT_VERSION: u32 = 2;
+const CACHE_FORMAT_VERSION: u32 = 3;
 #[cfg(test)]
 const UNSUPPORTED_CACHE_FORMAT_VERSION: u32 = CACHE_FORMAT_VERSION - 1;
 const SHARD_MAGIC: [u8; 8] = *b"TOKENXR\0";

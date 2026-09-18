@@ -34,7 +34,7 @@ struct CustomModelPricing {
     #[serde(rename = "pricingSource")]
     _pricing_source: Option<String>,
     #[serde(flatten)]
-    _metadata: HashMap<String, Value>,
+    service_tiers: super::service_tier::ServiceTierPricing,
     input_cost_per_million_tokens: Option<f64>,
     input_cost_per_million_tokens_above_128k_tokens: Option<f64>,
     input_cost_per_million_tokens_above_200k_tokens: Option<f64>,
@@ -171,7 +171,8 @@ impl CustomModelPricing {
                 "cache_read_input_token_cost_per_million_tokens_above_272k_tokens",
                 "cache_read_input_token_cost_above_272k_tokens",
             )?,
-            time_period_prices: None,
+            service_tiers: self.service_tiers,
+            ..Default::default()
         })
     }
 }

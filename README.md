@@ -63,7 +63,7 @@ Tokenx supports local data from OpenCode, Claude Code, Codex, Gemini CLI, Amp, a
 
 ## Pricing
 
-Tokenx canonicalizes model IDs before grouping and pricing, with optional user overrides in [`model-mappings.toml`](docs/configuration.md#model-mappings). Exact custom prices are checked first, followed by exact matches from the configured public catalogs. Prefix, substring, and fuzzy price guesses are not used. An unpriced model keeps its token usage and reports derived cost as `$0.00`.
+Tokenx canonicalizes model IDs before grouping and pricing, with optional user overrides in [`model-mappings.toml`](docs/configuration.md#model-mappings). Exact custom prices are checked first, followed by exact matches from the configured public catalogs. Prefix, substring, and fuzzy price guesses are not used. Recorded Codex service tiers select their corresponding catalog rates. Missing model or tier rates keep token usage with no derived cost; unavailable tier pricing produces an explicit warning.
 
 See [pricing semantics](docs/pricing.md) for catalog precedence, total-only token allocation, and cost boundaries.
 
