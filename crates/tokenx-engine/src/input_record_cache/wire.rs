@@ -19,7 +19,7 @@ use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -47,6 +47,14 @@ pub(super) fn ensure_cache_dir(dir: &Path) -> std::io::Result<()> {
                     "cache directory is not a real directory",
                 ));
             }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o7777 != 0o700 {
+                    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+                }
+            }
+            return Ok(());
         }
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
         Err(source) => return Err(source),
@@ -476,7 +484,9 @@ pub(super) fn read_shard_entry_with_plan(
     }
     file.seek(SeekFrom::Start(body_start))
         .map_err(|source| CacheReadFailureReason::BodyRead { source })?;
-    let mut body_reader = (&mut file).take(envelope.body_len);
+    // Only buffer the authenticated body; header-only planning must not prefetch
+    // record data. The outer Take counts bytes consumed by serde, not read-ahead.
+    let mut body_reader = BufReader::with_capacity(64 * 1024, &mut file).take(envelope.body_len);
     let body: CachedShardBody = bincode::options()
         .with_limit(envelope.body_len)
         .allow_trailing_bytes()

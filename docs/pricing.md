@@ -176,9 +176,11 @@ Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:
 - `pricing-openrouter.json`
 - `pricing-models-dev.json`
 
-Pricing cache envelopes are versioned so catalogs that discarded service-tier
-fields are refreshed automatically. Deleting these files also forces a fetch
-on the next lookup or usage load that needs pricing.
+Pricing cache schema 2 stores `version` and `data`; file modification time
+determines the one-hour freshness window. Older formats are refreshed.
+Identical fetched data renews only the file timestamp; changed data replaces
+the cache atomically. Deleting these files forces a fetch on the next lookup
+or usage load that needs pricing.
 
 Input-record shards are cost-free: they retain token buckets, timestamps, and
 model/provider identity and observed service tier, but not derived prices. The
@@ -188,7 +190,8 @@ context, including source order, changes.
 Headless usage commands refresh missing or expired public catalogs before
 building their generation. The TUI enters immediately from its captured local
 snapshot and performs the same refresh in its supervised background acquisition
-lifecycle. If refreshed catalog identity changes, the TUI installs a newly
+lifecycle, reusing already loaded fresh catalogs while their file identities,
+sizes, and modification times match. If refreshed catalog identity changes, the TUI installs a newly
 priced generation when the background build completes; the existing generation
 remains visible during a warm refresh.
 

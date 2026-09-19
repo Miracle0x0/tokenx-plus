@@ -592,11 +592,7 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
     .unwrap();
     let pricing_cache_dir = product_root.path().join("cache");
     std::fs::create_dir_all(&pricing_cache_dir).unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let empty_pricing = format!(r#"{{"version":1,"timestamp":{now},"data":{{}}}}"#);
+    let empty_pricing = r#"{"version":2,"data":{}}"#;
     for filename in [
         "pricing-litellm.json",
         "pricing-openrouter.json",

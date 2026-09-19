@@ -5,18 +5,13 @@ use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
 const LARGE_COPILOT_FIXTURE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_COPILOT_RSS_KB: u64 = 128 * 1024;
 
 fn prime_pricing_cache(home: &Path) {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time before unix epoch")
-        .as_secs();
-    let payload = format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, now);
+    let payload = r#"{"version":2,"data":{}}"#;
 
     let dir = home.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();

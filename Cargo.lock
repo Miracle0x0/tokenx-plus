@@ -3393,6 +3393,7 @@ dependencies = [
  "tracing-subscriber",
  "tui-piechart",
  "unicode-width",
+ "zstd",
 ]
 
 [[package]]

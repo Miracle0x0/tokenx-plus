@@ -34,7 +34,9 @@ ambient environment or pricing state during discovery and refresh.
 
 The three public pricing cache files are captured and parsed concurrently into
 fixed source slots. Resolution and diagnostics still merge in canonical
-LiteLLM, OpenRouter, and models.dev order.
+LiteLLM, OpenRouter, and models.dev order. Startup reuses this parsed snapshot
+while all three fresh files retain their size, modification time, and native
+identity. ADR 0016 defines pricing-cache freshness and metadata-only renewal.
 
 Selected integration bindings own client attribution, while their
 `IntegrationDriver` values own input discovery, input identity, parsing, and
@@ -222,7 +224,8 @@ same confirmed snapshots.
 Each cacheable input has an independent shard with a separately encoded header
 and body. Header discovery does not materialize the body. A planned hit succeeds
 only after the body is opened, its identity is checked, it decodes, and its
-message count matches the header.
+message count matches the header. Body decoding is buffered after authentication;
+its logical byte bound preserves trailing-data rejection despite read-ahead.
 
 Body failures retain the input, decoder contract, shard path, and root cause.
 The CLI emits an explicit diagnostic and reparses the authoritative current
@@ -284,9 +287,11 @@ reported explicitly; already completed removals are not rolled back.
 One local fold produces one immutable `Generation`: acquisition configuration,
 the prepared source fingerprint, canonical `UsageIndex`, sessions,
 `InputFootprint`, Data Health, and pricing diagnostics. The cache serializes
-that value once behind a versioned binary envelope and atomic rename. Buffered
-I/O batches small serialized fields while retaining authentication before
-deserialization and a second digest check during decoding.
+that value once as a Zstd frame behind the schema-6 binary envelope and atomic
+rename. Buffered compressed input and decoded output retain authentication
+before deserialization and a second digest check during decoding. The header
+authenticates both lengths under the existing generation body-size bound;
+ADR 0016 defines the compression and single-frame contract.
 
 Common/Grouped bundles and renderer projections are not cache state. Every
 usage projection is derived from the installed `UsageIndex`, and Sessions filters

@@ -161,6 +161,45 @@ struct CapturedPublicPricingCatalogs {
     litellm: CatalogSeed,
     openrouter: CatalogSeed,
     models_dev: CatalogSeed,
+    reusable_files: Option<[CatalogLease; 3]>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PricingFileStamp {
+    size: u64,
+    modified: std::time::SystemTime,
+    identity: crate::input_record_cache::InputFileIdentity,
+}
+
+impl PricingFileStamp {
+    fn capture(file: &fs::File) -> std::io::Result<Self> {
+        let metadata = file.metadata()?;
+        #[cfg(unix)]
+        let identity = crate::input_record_cache::input_file_identity(&metadata);
+        #[cfg(windows)]
+        let identity = crate::input_record_cache::input_file_identity_from_open_file(file)?;
+        Ok(Self {
+            size: metadata.len(),
+            modified: metadata.modified()?,
+            identity,
+        })
+    }
+}
+
+#[derive(Clone)]
+struct CatalogLease {
+    path: std::path::PathBuf,
+    stamp: PricingFileStamp,
+}
+
+impl CatalogLease {
+    fn can_reuse(&self) -> bool {
+        let current = fs::File::open(&self.path).and_then(|file| PricingFileStamp::capture(&file));
+        current.is_ok_and(|stamp| {
+            stamp == self.stamp
+                && cache::is_fresh_at(stamp.modified, std::time::SystemTime::now()) == Ok(true)
+        })
+    }
 }
 
 enum CatalogSeed {
@@ -543,6 +582,7 @@ pub struct ResolvedPricingSnapshot {
     service: Option<Arc<PricingService>>,
     diagnostics: PricingDiagnostics,
     custom: ResolvedCustomPricing,
+    reusable_files: Option<[CatalogLease; 3]>,
 }
 
 #[derive(Clone)]
@@ -592,6 +632,7 @@ impl ResolvedPricingSnapshot {
             service,
             diagnostics,
             custom,
+            reusable_files: None,
         }
     }
 
@@ -603,8 +644,12 @@ impl ResolvedPricingSnapshot {
     pub fn resolve_from(custom_path: &Path, cache_dir: &Path) -> Self {
         let custom_file = CapturedPricingFile::read(custom_path, MAX_CUSTOM_SNAPSHOT_BYTES);
         let custom = Self::resolve_custom(custom_path, custom_file);
-        let (catalogs, diagnostics) = CapturedPublicPricingCatalogs::read(cache_dir).into_local();
-        Self::from_parts(custom, catalogs, diagnostics)
+        let captured = CapturedPublicPricingCatalogs::read(cache_dir);
+        let reusable_files = captured.reusable_files.clone();
+        let (catalogs, diagnostics) = captured.into_local();
+        let mut snapshot = Self::from_parts(custom, catalogs, diagnostics);
+        snapshot.reusable_files = reusable_files;
+        snapshot
     }
 
     /// Resolve public catalogs, then freeze one coherent pricing snapshot.
@@ -624,6 +669,13 @@ impl ResolvedPricingSnapshot {
 
     /// Refresh public catalogs while retaining the captured custom authority.
     pub async fn refresh_public_catalogs(&self, cache_dir: &Path) -> Self {
+        if self.reusable_files.as_ref().is_some_and(|files| {
+            files
+                .iter()
+                .all(|file| file.path.parent() == Some(cache_dir) && file.can_reuse())
+        }) {
+            return self.clone();
+        }
         let (catalogs, diagnostics) = CapturedPublicPricingCatalogs::read(cache_dir)
             .refresh(cache_dir)
             .await;
@@ -644,6 +696,7 @@ impl ResolvedPricingSnapshot {
             }),
             diagnostics: self.diagnostics.clone(),
             custom: self.custom.clone(),
+            reusable_files: self.reusable_files.clone(),
         }
     }
 
@@ -695,6 +748,7 @@ impl ResolvedPricingSnapshot {
             service,
             diagnostics,
             custom,
+            reusable_files: None,
         }
     }
 
@@ -717,8 +771,14 @@ impl ResolvedPricingSnapshot {
 
 enum CapturedPricingFile {
     Missing,
-    Content(Vec<u8>),
-    Rejected { identity: String, reason: String },
+    Content {
+        bytes: Vec<u8>,
+        stamp: PricingFileStamp,
+    },
+    Rejected {
+        identity: String,
+        reason: String,
+    },
 }
 
 impl CapturedPublicPricingCatalogs {
@@ -728,12 +788,12 @@ impl CapturedPublicPricingCatalogs {
         let models_dev_path = cache_dir.join(CACHED_CATALOG_FILES[2]);
         let (litellm, (openrouter, models_dev)) = rayon::join(
             || {
-                capture_catalog_seed(
+                let (seed, reusable) = capture_catalog_seed(
                     CapturedPricingFile::read(&litellm_path, MAX_CATALOG_SNAPSHOT_BYTES),
                     &litellm_path,
                     "LiteLLM",
-                )
-                .map(PricingService::filter_litellm_data)
+                );
+                (seed.map(PricingService::filter_litellm_data), reusable)
             },
             || {
                 rayon::join(
@@ -754,10 +814,15 @@ impl CapturedPublicPricingCatalogs {
                 )
             },
         );
+        let reusable_files = match (litellm.1, openrouter.1, models_dev.1) {
+            (Some(a), Some(b), Some(c)) => Some([a, b, c]),
+            _ => None,
+        };
         Self {
-            litellm,
-            openrouter,
-            models_dev,
+            litellm: litellm.0,
+            openrouter: openrouter.0,
+            models_dev: models_dev.0,
+            reusable_files,
         }
     }
 
@@ -924,29 +989,43 @@ async fn resolve_models_dev_catalog(seed: CatalogSeed, cache_dir: &Path) -> Cata
     }
 }
 
-fn capture_catalog_seed(file: CapturedPricingFile, path: &Path, label: &str) -> CatalogSeed {
-    match file {
+fn capture_catalog_seed(
+    file: CapturedPricingFile,
+    path: &Path,
+    label: &str,
+) -> (CatalogSeed, Option<CatalogLease>) {
+    let mut reusable = None;
+    let seed = match file {
         CapturedPricingFile::Missing => {
             CatalogSeed::Unavailable(PricingDiagnostic::warning(format!(
                 "[tokenx] {label} pricing cache missing at {}",
-                path.display()
+                path.display(),
             )))
         }
         CapturedPricingFile::Rejected { reason, .. } => {
             CatalogSeed::Unavailable(PricingDiagnostic::warning(format!(
                 "[tokenx] {label} pricing cache ignored at {}: {reason}",
-                path.display()
+                path.display(),
             )))
         }
-        CapturedPricingFile::Content(bytes) => match cache::parse_cache(&bytes) {
-            Ok(cache::ParsedCache::Fresh(data)) => CatalogSeed::Fresh(data),
-            Ok(cache::ParsedCache::Stale(data)) => CatalogSeed::Stale(data),
-            Err(error) => CatalogSeed::Unavailable(PricingDiagnostic::warning(format!(
-                "[tokenx] {label} pricing cache ignored at {}: {error}",
-                path.display()
-            ))),
-        },
-    }
+        CapturedPricingFile::Content { bytes, stamp } => {
+            match cache::parse_cache(&bytes, stamp.modified) {
+                Ok(cache::ParsedCache::Fresh(data)) => {
+                    reusable = Some(CatalogLease {
+                        path: path.to_path_buf(),
+                        stamp,
+                    });
+                    CatalogSeed::Fresh(data)
+                }
+                Ok(cache::ParsedCache::Stale(data)) => CatalogSeed::Stale(data),
+                Err(error) => CatalogSeed::Unavailable(PricingDiagnostic::warning(format!(
+                    "[tokenx] {label} pricing cache ignored at {}: {error}",
+                    path.display(),
+                ))),
+            }
+        }
+    };
+    (seed, reusable)
 }
 
 fn update_catalog_digest(digest: &mut Sha256, filename: &str, catalog: Option<&PricingDataset>) {
@@ -982,7 +1061,7 @@ impl CapturedPricingFile {
                 };
             }
         };
-        let metadata = match file.metadata() {
+        let metadata = match PricingFileStamp::capture(&file) {
             Ok(metadata) => metadata,
             Err(error) => {
                 return Self::Rejected {
@@ -991,18 +1070,17 @@ impl CapturedPricingFile {
                 };
             }
         };
-        if metadata.len() > max_bytes {
+        if metadata.size > max_bytes {
             return Self::Rejected {
                 identity: "too-large".to_string(),
                 reason: format!(
                     "file is too large ({} bytes; max {} bytes)",
-                    metadata.len(),
-                    max_bytes
+                    metadata.size, max_bytes
                 ),
             };
         }
         let mut bytes = Vec::with_capacity(
-            usize::try_from(metadata.len())
+            usize::try_from(metadata.size)
                 .unwrap_or(usize::MAX)
                 .min(max_bytes as usize),
         );
@@ -1021,7 +1099,10 @@ impl CapturedPricingFile {
                 ),
             };
         }
-        Self::Content(bytes)
+        Self::Content {
+            bytes,
+            stamp: metadata,
+        }
     }
 
     fn fingerprint(&self, domain: &[u8]) -> String {
@@ -1029,7 +1110,7 @@ impl CapturedPricingFile {
         digest.update(domain);
         match self {
             Self::Missing => digest.update(b"missing\0"),
-            Self::Content(bytes) => {
+            Self::Content { bytes, .. } => {
                 digest.update(b"content\0");
                 digest.update(bytes);
             }
@@ -1048,7 +1129,7 @@ impl CapturedPricingFile {
         diagnostics: &mut PricingDiagnostics,
     ) -> Option<&'a [u8]> {
         match self {
-            Self::Content(bytes) => Some(bytes),
+            Self::Content { bytes, .. } => Some(bytes),
             Self::Missing => None,
             Self::Rejected { reason, .. } => {
                 diagnostics.push(PricingDiagnostic::warning(format!(
@@ -1324,7 +1405,6 @@ mod tests {
             &cache_path,
             serde_json::to_vec(&cache::CachedData {
                 version: cache::CACHE_FORMAT_VERSION,
-                timestamp: 1,
                 data: &data,
             })
             .unwrap(),
@@ -1335,7 +1415,6 @@ mod tests {
             &cache_path,
             serde_json::to_vec(&cache::CachedData {
                 version: cache::CACHE_FORMAT_VERSION,
-                timestamp: 2,
                 data: &data,
             })
             .unwrap(),
@@ -1463,6 +1542,13 @@ mod tests {
         .unwrap();
 
         let refreshed = local.refresh_public_catalogs(&cache_dir).await;
+        assert!(
+            Arc::ptr_eq(
+                local.service.as_ref().unwrap(),
+                refreshed.service.as_ref().unwrap()
+            ),
+            "fresh unchanged catalogs must reuse the already-parsed pricing service"
+        );
         let usage = TokenBreakdown {
             input: 1_000_000,
             ..TokenBreakdown::default()
@@ -1480,6 +1566,64 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    #[tokio::test]
+    async fn public_catalog_atomic_replacement_invalidates_a_same_stamp_reuse() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("custom-pricing.json");
+        let cache_dir = temp.path().join("cache");
+        let original = HashMap::from([("snapshot-model".to_owned(), model_pricing(1.0, 2.0))]);
+        for name in CACHED_CATALOG_FILES {
+            cache::save_cache(&cache_dir, name, &original).unwrap();
+        }
+        let local = ResolvedPricingSnapshot::resolve_from(&path, &cache_dir);
+        assert!(local
+            .reusable_files
+            .as_ref()
+            .unwrap()
+            .iter()
+            .all(CatalogLease::can_reuse));
+        let changed_path = cache_dir.join(CACHED_CATALOG_FILES[0]);
+        let modified = std::fs::metadata(&changed_path)
+            .unwrap()
+            .modified()
+            .unwrap();
+        let changed = HashMap::from([("snapshot-model".to_owned(), model_pricing(3.0, 2.0))]);
+        cache::save_cache(&cache_dir, CACHED_CATALOG_FILES[0], &changed).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&changed_path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert!(!local.reusable_files.as_ref().unwrap()[0].can_reuse());
+        let refreshed = local.refresh_public_catalogs(&cache_dir).await;
+        assert_ne!(local.context(), refreshed.context());
+        assert_eq!(
+            refreshed
+                .service()
+                .unwrap()
+                .calculate_cost_with_provider(
+                    "snapshot-model",
+                    None,
+                    &TokenBreakdown {
+                        input: 1,
+                        ..Default::default()
+                    }
+                )
+                .unwrap(),
+            3.0
+        );
+        let mut expired = local.reusable_files.as_ref().unwrap()[1].clone();
+        expired.stamp.modified = std::time::SystemTime::UNIX_EPOCH;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&expired.path)
+            .unwrap()
+            .set_modified(expired.stamp.modified)
+            .unwrap();
+        assert!(!expired.can_reuse());
     }
 
     #[test]

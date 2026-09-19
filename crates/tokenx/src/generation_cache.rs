@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokenx_engine::{AcquisitionConfig, ClientId, Generation};
 
 const CACHE_MAGIC: [u8; 8] = *b"TOKENXG\0";
-const CACHE_SCHEMA_VERSION: u32 = 5;
+const CACHE_SCHEMA_VERSION: u32 = 6;
 const CACHE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_GENERATION_BODY_BYTES: u64 = 256 * 1024 * 1024;
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
@@ -26,7 +26,8 @@ const FAILURE_SIGNATURE_LEN: usize = 32;
 const HEADER_DIGEST_LEN: usize = 32;
 // Retry continuity stays in this fixed, authenticated header so saving a new
 // generation never needs to materialize the previous generation body.
-const SIGNED_HEADER_LEN: usize = 8 + 4 + 8 + 8 + 32 + 4 + 8 + FAILURE_SIGNATURE_LEN;
+const DECODED_LEN_OFFSET: usize = 8 + 4 + 8 + 8 + 32 + 4 + 8 + FAILURE_SIGNATURE_LEN;
+const SIGNED_HEADER_LEN: usize = DECODED_LEN_OFFSET + 8;
 const HEADER_LEN: usize = SIGNED_HEADER_LEN + HEADER_DIGEST_LEN;
 const BODY_DIGEST_OFFSET: usize = 28;
 const RETRY_ATTEMPT_OFFSET: usize = 60;
@@ -235,6 +236,7 @@ struct CacheEnvelope {
 struct CacheHeader {
     saved_at_ms: u64,
     body_len: u64,
+    decoded_len: u64,
     body_digest: [u8; 32],
     retry_attempt: u32,
     retry_not_before_ms: u64,
@@ -474,16 +476,24 @@ pub(crate) fn save_generation_cache_with_retry_backoff(
         .map_or([0; FAILURE_SIGNATURE_LEN], |backoff| {
             backoff.failure_signature
         });
+    let decoded_len = bincode::serialized_size(generation)?;
+    if decoded_len > MAX_GENERATION_BODY_BYTES {
+        anyhow::bail!("generation cache decoded body exceeds {MAX_GENERATION_BODY_BYTES} bytes");
+    }
     tokenx_engine::fs_atomic::write_atomic_with(path, |file| {
         let mut file = BufWriter::with_capacity(CACHE_IO_BUFFER_BYTES, file);
         file.write_all(&[0_u8; HEADER_LEN])?;
-        let mut body_writer = DigestingWriter::new(&mut file, MAX_GENERATION_BODY_BYTES);
-        bincode::serialize_into(&mut body_writer, generation).map_err(std::io::Error::other)?;
+        let body_writer = DigestingWriter::new(&mut file, MAX_GENERATION_BODY_BYTES);
+        let mut encoder = zstd::stream::write::Encoder::new(body_writer, 3)?;
+        encoder.set_pledged_src_size(Some(decoded_len))?;
+        bincode::serialize_into(&mut encoder, generation).map_err(std::io::Error::other)?;
+        let mut body_writer = encoder.finish()?;
         body_writer.flush()?;
         let (body_len, body_digest) = body_writer.finish();
         let header = encode_cache_header(CacheHeader {
             saved_at_ms: timestamp,
             body_len,
+            decoded_len,
             body_digest,
             retry_attempt,
             retry_not_before_ms,
@@ -509,7 +519,8 @@ fn encode_cache_header(header: CacheHeader) -> [u8; HEADER_LEN] {
         .copy_from_slice(&header.retry_attempt.to_le_bytes());
     bytes[RETRY_NOT_BEFORE_OFFSET..FAILURE_SIGNATURE_OFFSET]
         .copy_from_slice(&header.retry_not_before_ms.to_le_bytes());
-    bytes[FAILURE_SIGNATURE_OFFSET..SIGNED_HEADER_LEN].copy_from_slice(&header.failure_signature);
+    bytes[FAILURE_SIGNATURE_OFFSET..DECODED_LEN_OFFSET].copy_from_slice(&header.failure_signature);
+    bytes[DECODED_LEN_OFFSET..SIGNED_HEADER_LEN].copy_from_slice(&header.decoded_len.to_le_bytes());
     let header_digest: [u8; HEADER_DIGEST_LEN] = Sha256::digest(&bytes[..SIGNED_HEADER_LEN]).into();
     bytes[SIGNED_HEADER_LEN..].copy_from_slice(&header_digest);
     bytes
@@ -551,12 +562,13 @@ fn decode_cache_header(bytes: &[u8]) -> anyhow::Result<CacheHeader> {
     let retry_attempt = read_u32(&bytes[RETRY_ATTEMPT_OFFSET..RETRY_NOT_BEFORE_OFFSET]);
     let retry_not_before_ms = read_u64(&bytes[RETRY_NOT_BEFORE_OFFSET..FAILURE_SIGNATURE_OFFSET]);
     let failure_signature: [u8; FAILURE_SIGNATURE_LEN] = bytes
-        [FAILURE_SIGNATURE_OFFSET..SIGNED_HEADER_LEN]
+        [FAILURE_SIGNATURE_OFFSET..DECODED_LEN_OFFSET]
         .try_into()
         .expect("fixed retry failure signature slice");
     let header = CacheHeader {
         saved_at_ms,
         body_len,
+        decoded_len: read_u64(&bytes[DECODED_LEN_OFFSET..SIGNED_HEADER_LEN]),
         body_digest,
         retry_attempt,
         retry_not_before_ms,
@@ -606,6 +618,9 @@ fn decode_generation_from_reader(
             MAX_GENERATION_BODY_BYTES
         );
     }
+    if header.decoded_len == 0 || header.decoded_len > MAX_GENERATION_BODY_BYTES {
+        anyhow::bail!("generation cache decoded body length exceeds its {MAX_GENERATION_BODY_BYTES}-byte limit");
+    }
     if actual_file_len != header.expected_file_len()? {
         anyhow::bail!("generation cache body length does not match its envelope");
     }
@@ -631,13 +646,25 @@ fn decode_generation_from_reader(
     // Hash the decode pass as well. Tokenx writes by atomic replacement, so
     // this should be identical; the second check also refuses a file mutated
     // through the already-open inode between verification and decoding.
-    let mut body_reader = DigestingReader::new((&mut reader).take(header.body_len));
+    let body_reader = DigestingReader::new((&mut reader).take(header.body_len));
+    let compressed = BufReader::with_capacity(CACHE_IO_BUFFER_BYTES, body_reader);
+    let mut decoder = zstd::stream::read::Decoder::with_buffer(compressed)?.single_frame();
+    decoder.window_log_max(MAX_GENERATION_BODY_BYTES.ilog2())?;
+    // Preserve the existing decoded-size bound even for a forged compressed frame.
+    let decoded_limit = header.decoded_len + 1;
+    let mut decoded = BufReader::with_capacity(CACHE_IO_BUFFER_BYTES, decoder).take(decoded_limit);
     let generation = bincode::DefaultOptions::new()
         .with_fixint_encoding()
-        .with_limit(MAX_GENERATION_BODY_BYTES)
+        .with_limit(header.decoded_len)
         .allow_trailing_bytes()
-        .deserialize_from::<_, Generation>(&mut body_reader);
-    let decoded_body_len = body_reader.bytes_read();
+        .deserialize_from::<_, Generation>(&mut decoded);
+    let decoded_body_len = decoded_limit - decoded.limit();
+    std::io::copy(&mut decoded, &mut std::io::sink())
+        .context("failed to finish decoding generation cache body")?;
+    let total_decoded = decoded_limit - decoded.limit();
+    let compressed = decoded.into_inner().into_inner().finish();
+    let frame_bytes = compressed.get_ref().bytes_read() - compressed.buffer().len() as u64;
+    let mut body_reader = compressed.into_inner();
     std::io::copy(&mut body_reader, &mut std::io::sink())
         .context("failed to finish reading generation cache body")?;
     let (body_len, actual_digest) = body_reader.finish();
@@ -647,8 +674,14 @@ fn decode_generation_from_reader(
     if actual_digest != header.body_digest {
         anyhow::bail!("generation cache changed after its integrity check");
     }
+    if total_decoded != header.decoded_len {
+        anyhow::bail!("generation cache decoded body length does not match its envelope");
+    }
+    if frame_bytes != header.body_len {
+        anyhow::bail!("generation cache has trailing compressed data");
+    }
     let generation = generation.context("failed to decode canonical generation")?;
-    if decoded_body_len != header.body_len {
+    if decoded_body_len != header.decoded_len {
         anyhow::bail!("generation cache body has trailing encoded data");
     }
     generation.validate()?;
@@ -958,6 +991,14 @@ mod tests {
         save_generation_cache(&generation).unwrap();
         let cache_bytes = std::fs::read(cache_file().unwrap()).unwrap();
         let header = decode_cache_header(&cache_bytes).unwrap();
+        assert_eq!(
+            header.decoded_len,
+            bincode::serialized_size(&generation).unwrap()
+        );
+        assert_eq!(
+            &cache_bytes[HEADER_LEN..HEADER_LEN + 4],
+            &[0x28, 0xb5, 0x2f, 0xfd]
+        );
         assert_eq!(header.retry_attempt, 0);
         assert_eq!(header.retry_not_before_ms, 0);
         assert_eq!(header.failure_signature, [0; FAILURE_SIGNATURE_LEN]);
@@ -1209,6 +1250,7 @@ mod tests {
         let header = encode_cache_header(CacheHeader {
             saved_at_ms: 1,
             body_len: MAX_GENERATION_BODY_BYTES + 1,
+            decoded_len: 1,
             body_digest: [0; 32],
             retry_attempt: 0,
             retry_not_before_ms: 0,
@@ -1217,6 +1259,63 @@ mod tests {
 
         let error = decode_generation(&header).expect_err("oversized body must be rejected");
         assert!(error.to_string().contains("limit"));
+    }
+
+    fn compressed_fixture(body: &[u8], decoded_len: u64) -> Vec<u8> {
+        let header = encode_cache_header(CacheHeader {
+            saved_at_ms: 1,
+            body_len: body.len() as u64,
+            decoded_len,
+            body_digest: Sha256::digest(body).into(),
+            retry_attempt: 0,
+            retry_not_before_ms: 0,
+            failure_signature: [0; FAILURE_SIGNATURE_LEN],
+        });
+        [header.as_slice(), body].concat()
+    }
+
+    #[test]
+    fn compressed_cache_rejects_trailing_frames_and_decoded_payloads() {
+        let root = tempfile::TempDir::new().unwrap();
+        let mut payload = bincode::serialize(&generation(root.path())).unwrap();
+        let mut compressed = zstd::encode_all(payload.as_slice(), 3).unwrap();
+        compressed.extend(zstd::encode_all(b"extra".as_slice(), 3).unwrap());
+        let bytes = compressed_fixture(&compressed, payload.len() as u64);
+        assert!(decode_generation(&bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("trailing compressed"));
+
+        payload.push(0);
+        let compressed = zstd::encode_all(payload.as_slice(), 3).unwrap();
+        let bytes = compressed_fixture(&compressed, payload.len() as u64);
+        assert!(decode_generation(&bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("trailing encoded"));
+    }
+
+    #[test]
+    fn compressed_cache_enforces_declared_expansion_and_rejects_invalid_frames() {
+        let compressed = zstd::encode_all(vec![0_u8; 4096].as_slice(), 3).unwrap();
+        let bytes = compressed_fixture(&compressed, 1);
+        assert!(decode_generation(&bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("decoded body length"));
+        let bytes = compressed_fixture(&compressed, MAX_GENERATION_BODY_BYTES + 1);
+        assert!(decode_generation(&bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("limit"));
+        assert!(decode_generation(&compressed_fixture(b"invalid compressed data", 32)).is_err());
+        let mut bytes = compressed_fixture(&compressed, 4096);
+        bytes[8..12].copy_from_slice(&5_u32.to_le_bytes());
+        resign_cache_header(&mut bytes);
+        assert!(decode_generation(&bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported"));
     }
 
     #[test]
