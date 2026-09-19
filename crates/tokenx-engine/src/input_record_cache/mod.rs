@@ -34,6 +34,8 @@ mod wire;
 pub(crate) use decoder::{DecoderId, DecoderVariant, DecoderVersion};
 pub(crate) use error::{InputRecordCacheError, InputSnapshotError, RelatedInputFailurePolicy};
 pub use error::{InputRecordCachePruneError, InputRecordCachePruneStats};
+#[cfg(unix)]
+pub(crate) use input::input_file_identity;
 pub(crate) use input::{
     build_codex_incremental_cache, hash_inventory_bytes, hash_inventory_len, hash_inventory_path,
     input_file_identity_from_open_file, CodexIncrementalCache, InputFileIdentity, InputFingerprint,

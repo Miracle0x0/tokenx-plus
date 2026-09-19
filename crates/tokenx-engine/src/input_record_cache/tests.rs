@@ -12,6 +12,61 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tempfile::{NamedTempFile, TempDir};
 
+#[test]
+fn buffered_record_body_still_rejects_trailing_encoded_data() {
+    let cache_home = TempDir::new().unwrap();
+    let input = write_temp_file(b"primary");
+    let version = test_decoder_version(1);
+    let fingerprint = InputFingerprint::from_path(input.path()).unwrap();
+    let mut cache = InputRecordShardStore::with_cache_dir(cache_home.path());
+    cache.insert(CachedInputEntry::new_with_version(
+        input.path(),
+        version,
+        fingerprint.clone(),
+        Vec::new(),
+        None,
+    ));
+    cache.save_if_dirty().unwrap();
+    let path = shard_path_for_test(cache_home.path(), input.path(), version);
+    let mut file = File::open(&path).unwrap();
+    let file_len = file.metadata().unwrap().len();
+    let mut envelope = read_current_shard_envelope(&mut file, file_len).unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.push(0);
+    envelope.body_len += 1;
+    envelope.body_digest =
+        Sha256::digest(&bytes[SHARD_ENVELOPE_BYTES + envelope.header_len as usize..]).into();
+    bytes[..SHARD_ENVELOPE_BYTES].copy_from_slice(&encode_shard_envelope(envelope));
+    std::fs::write(&path, bytes).unwrap();
+    let plan = CacheReadPlan::new(input.path(), version, fingerprint);
+    assert!(matches!(
+        read_shard_entry_with_plan(&path, &plan),
+        Err(CacheReadFailureReason::BodyTrailingData)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn cache_directory_permissions_only_change_when_repair_is_needed() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("cache");
+    ensure_cache_dir(&path).unwrap();
+    let before = std::fs::metadata(&path).unwrap();
+    ensure_cache_dir(&path).unwrap();
+    let after = std::fs::metadata(&path).unwrap();
+    assert_eq!(
+        (before.ctime(), before.ctime_nsec()),
+        (after.ctime(), after.ctime_nsec())
+    );
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o777)).unwrap();
+    ensure_cache_dir(&path).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+}
+
 fn restore_env_var(key: &str, value: Option<impl AsRef<std::ffi::OsStr>>) {
     unsafe {
         match value {

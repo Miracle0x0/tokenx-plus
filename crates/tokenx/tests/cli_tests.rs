@@ -10,11 +10,7 @@ use tempfile::TempDir;
 // ── Fixture helpers ────────────────────────────────────────────────────────
 
 fn prime_pricing_cache(base: &Path) {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time before unix epoch")
-        .as_secs();
-    let payload = format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, now);
+    let payload = r#"{"version":2,"data":{}}"#;
 
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
@@ -24,11 +20,7 @@ fn prime_pricing_cache(base: &Path) {
 }
 
 fn prime_override_pricing_cache(config_dir: &Path) {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time before unix epoch")
-        .as_secs();
-    let payload = format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, now);
+    let payload = r#"{"version":2,"data":{}}"#;
 
     let cache_dir = config_dir.join("cache");
     fs::create_dir_all(&cache_dir).unwrap();
@@ -664,21 +656,24 @@ fn invalid_model_mapping_file_fails_before_acquisition() {
 }
 
 fn write_pricing_cache(base: &Path, timestamp: u64) {
-    let litellm = format!(
-        r#"{{"version":1,"timestamp":{},"data":{{"gpt-4o":{{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001}},"claude-sonnet-4":{{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}}}}"#,
-        timestamp
-    );
-    let openrouter = format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, timestamp);
-
+    let litellm = r#"{"version":2,"data":{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001},"claude-sonnet-4":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}"#;
+    let empty = r#"{"version":2,"data":{}}"#;
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("pricing-litellm.json"), &litellm).unwrap();
-    fs::write(dir.join("pricing-openrouter.json"), &openrouter).unwrap();
-    fs::write(
-        dir.join("pricing-models-dev.json"),
-        format!(r#"{{"version":1,"timestamp":{},"data":{{}}}}"#, timestamp),
-    )
-    .unwrap();
+    for (name, payload) in [
+        ("pricing-litellm.json", litellm),
+        ("pricing-openrouter.json", empty),
+        ("pricing-models-dev.json", empty),
+    ] {
+        let path = dir.join(name);
+        fs::write(&path, payload).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(timestamp))
+            .unwrap();
+    }
 }
 
 fn create_pricing_fixture_dir() -> TempDir {
@@ -692,13 +687,8 @@ fn create_pricing_fixture_dir() -> TempDir {
 }
 
 fn write_fireworks_pricing_cache(base: &Path) {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time before unix epoch")
-        .as_secs();
     let litellm = serde_json::json!({
-        "version": 1,
-        "timestamp": now,
+        "version": 2,
         "data": {
             "fireworks_ai/accounts/fireworks/models/deepseek-r1-0528-distill-qwen3-8b": {
                 "input_cost_per_token": 0.0000002,
@@ -707,8 +697,7 @@ fn write_fireworks_pricing_cache(base: &Path) {
         }
     });
     let openrouter = serde_json::json!({
-        "version": 1,
-        "timestamp": now,
+        "version": 2,
         "data": {
             "deepseek/deepseek-v4-pro": {
                 "input_cost_per_token": 0.000001,
@@ -741,9 +730,8 @@ fn write_fireworks_pricing_cache(base: &Path) {
     fs::write(
         dir.join("pricing-models-dev.json"),
         serde_json::to_vec(&serde_json::json!({
-            "version": 1,
-            "timestamp": now,
-            "data": {}
+            "version": 2,
+                "data": {}
         }))
         .unwrap(),
     )

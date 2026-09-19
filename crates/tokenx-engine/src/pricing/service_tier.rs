@@ -267,7 +267,11 @@ mod tests {
     fn old_pricing_cache_without_tier_schema_is_not_reused() {
         let bytes = br#"{"timestamp":1,"data":{}}"#;
         assert!(
-            cache::parse_cache::<std::collections::HashMap<String, ModelPricing>>(bytes).is_err()
+            cache::parse_cache::<std::collections::HashMap<String, ModelPricing>>(
+                bytes,
+                std::time::SystemTime::now()
+            )
+            .is_err()
         );
     }
 }
