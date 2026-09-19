@@ -61,6 +61,11 @@ pub(crate) struct DetailSelections {
     pub(crate) period: Option<PeriodDetailSelection>,
 }
 
+pub(crate) struct ProjectionRequest {
+    pub(crate) query: UsageQuery,
+    pub(crate) details: DetailSelections,
+}
+
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 enum DetailModelIdentity {
     Model(Arc<str>),
@@ -361,7 +366,7 @@ pub(crate) struct InstalledGeneration {
     sessions: SessionSnapshot,
     // Keep the authority last so renderer projections release their interned
     // identities before Generation's lifetime guard prunes the weak pool.
-    generation: Generation,
+    generation: Arc<Generation>,
 }
 
 pub(crate) struct PreparedProjection {
@@ -406,8 +411,8 @@ pub(crate) enum LocalUsageState {
 }
 
 impl InstalledGeneration {
-    fn new(
-        generation: Generation,
+    pub(crate) fn new(
+        generation: Arc<Generation>,
         query: UsageQuery,
         detail_selections: DetailSelections,
     ) -> Result<Self> {
@@ -466,6 +471,27 @@ impl InstalledGeneration {
 
     pub(crate) fn generation(&self) -> &Generation {
         &self.generation
+    }
+
+    pub(crate) fn shared_generation(&self) -> Arc<Generation> {
+        Arc::clone(&self.generation)
+    }
+
+    pub(crate) fn reconcile_projection(
+        &mut self,
+        query: &UsageQuery,
+        detail_selections: DetailSelections,
+    ) -> Result<()> {
+        if &self.query != query {
+            self.install_projection(self.prepare_projection(query.clone(), detail_selections)?);
+        } else {
+            self.details = DetailProjectionCache::materialize_selected(
+                &self.view,
+                &self.periods,
+                detail_selections,
+            )?;
+        }
+        Ok(())
     }
 
     pub(crate) fn view(&self) -> &UsageProjection {
@@ -559,19 +585,27 @@ impl LocalUsageState {
         let Some(installed) = self.installed_mut() else {
             return false;
         };
-        installed.generation.rebind_pricing_diagnostics(diagnostics);
+        Arc::make_mut(&mut installed.generation).rebind_pricing_diagnostics(diagnostics);
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn install_generation(
         &mut self,
         generation: Generation,
         detail_selections: DetailSelections,
     ) -> Result<()> {
-        let installed =
-            InstalledGeneration::new(generation, self.query().clone(), detail_selections)?;
-        *self = Self::Ready(Box::new(installed));
+        let installed = InstalledGeneration::new(
+            Arc::new(generation),
+            self.query().clone(),
+            detail_selections,
+        )?;
+        self.install_prepared(Box::new(installed));
         Ok(())
+    }
+
+    pub(crate) fn install_prepared(&mut self, installed: Box<InstalledGeneration>) {
+        *self = Self::Ready(installed);
     }
 
     pub(crate) fn project_view(&self, query: &UsageQuery) -> Result<UsageProjection> {

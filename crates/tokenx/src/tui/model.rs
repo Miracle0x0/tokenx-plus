@@ -677,7 +677,7 @@ impl TuiModel {
         self.require_installed_generation().periods(kind)
     }
 
-    fn detail_selections(&self) -> DetailSelections {
+    pub(crate) fn detail_selections(&self) -> DetailSelections {
         DetailSelections {
             daily: self.selected_daily_detail_date,
             period: self.selected_period_detail,
@@ -788,7 +788,7 @@ impl TuiModel {
 
     #[cfg(test)]
     pub(crate) fn set_refresh_loading_for_test(&mut self, loading: bool) {
-        self.refresh_status.set_loading_for_test(loading);
+        self.refresh_status.set_loading(loading);
     }
 
     pub(crate) fn take_refresh_requests(&mut self) -> Vec<RefreshRequest> {
@@ -1166,19 +1166,39 @@ impl TuiModel {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn install_generation(&mut self, generation: Generation) -> Result<()> {
+        if generation.universe() != &self.client_universe() {
+            anyhow::bail!("generation client universe does not match TUI acquisition universe");
+        }
+        let installed = InstalledGeneration::new(
+            std::sync::Arc::new(generation),
+            self.local_usage.query().clone(),
+            self.detail_selections(),
+        )?;
+        self.install_prepared_generation(Box::new(installed))
+    }
+
+    pub(crate) fn generation_query(&self) -> tokenx_engine::UsageQuery {
+        self.local_usage.query().clone()
+    }
+
+    pub(crate) fn install_prepared_generation(
+        &mut self,
+        mut installed: Box<InstalledGeneration>,
+    ) -> Result<()> {
+        let generation = installed.generation();
         if generation.universe() != &self.client_universe() {
             anyhow::bail!("generation client universe does not match TUI acquisition universe");
         }
 
         let pricing_status = generation.pricing_status();
         let (had_graph_selection, selected_graph_date) = self.capture_usage_selection(true);
-        self.local_usage
-            .install_generation(generation, self.detail_selections())?;
+        installed.reconcile_projection(self.local_usage.query(), self.detail_selections())?;
+        self.local_usage.install_prepared(installed);
         self.bump_usage_revision();
         self.pricing_status = pricing_status;
         self.reconcile_usage_selection(had_graph_selection, selected_graph_date);
-        crate::acquisition::trim_allocator();
         Ok(())
     }
 
@@ -1356,6 +1376,10 @@ impl TuiModel {
             }
         }
 
+        self.poll_subscription();
+    }
+
+    pub(super) fn poll_subscription(&mut self) {
         match self.subscription.poll() {
             SubscriptionPoll::Batch(batch) => {
                 if self.install_subscription_batch(batch) {

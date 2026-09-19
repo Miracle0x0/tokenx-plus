@@ -16,6 +16,7 @@ mod page_state;
 mod presentation;
 mod render_artifacts;
 mod session_data;
+mod startup;
 mod subscription_display;
 mod task_supervisor;
 mod themes;
@@ -40,7 +41,7 @@ use std::time::Duration;
 
 #[cfg(test)]
 use crate::acquisition::acquisition_engine;
-use crate::generation_cache::{load_generation_cache, CacheResult, RetryBackoff};
+use crate::generation_cache::{CacheResult, RetryBackoff};
 use anyhow::Result;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -226,68 +227,22 @@ fn start_requested_subscription_fetch(app: &mut TuiModel, tasks: &mut TaskSuperv
     tasks.spawn_subscription_fetch(enabled, tx);
 }
 
-fn install_cached_generation(app: &mut TuiModel, cached_snapshot: Option<Generation>) -> bool {
-    if let Some(cached) = cached_snapshot {
-        match app.install_generation(cached) {
-            Ok(()) => {
-                app.set_generation_status_with_tone(
-                    rust_i18n::t!("tui.core.status.loaded_from_cache").as_ref(),
-                    StatusTone::Success,
-                );
-            }
-            Err(error) => {
-                let warning =
-                    rust_i18n::t!("tui.core.cache.rejected", error = format!("{error:#}"))
-                        .into_owned();
-                tracing::warn!(
-                    error = %error,
-                    "cached generation failed TUI projection; rebuilding from source inputs"
-                );
-                app.set_generation_cache_warning(Some(warning.clone()));
-                app.set_generation_status_with_tone(&warning, StatusTone::Warning);
-                return true;
-            }
-        }
-    }
-    false
-}
-
 fn shutdown_session(tasks: &mut TaskSupervisor, terminal_session: TerminalSession) {
     tasks.signal_cancel();
     drop(terminal_session);
     tasks.drain();
 }
 
-pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -> Result<TuiExit> {
+pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::TuiPlan) -> Result<TuiExit> {
     let crate::cli::TuiPlan {
         theme,
         refresh,
         no_refresh,
         debug,
-        startup:
-            crate::cli::StartupSnapshot {
-                paths,
-                input:
-                    crate::cli::ResolvedInputScope {
-                        home: home_dir,
-                        dsh_home,
-                        universe,
-                        restricted: _,
-                    },
-                settings,
-                calendar,
-                pricing,
-            },
-        date:
-            crate::cli::ResolvedDateRange {
-                range: date_range,
-                label: _,
-                relative: relative_date_range,
-                effective_date,
-            },
+        startup,
+        date,
         initial_tab,
     } = plan;
-
     if debug {
         let _ = tracing_subscriber::fmt()
             .with_env_filter("debug")
@@ -297,30 +252,10 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -
         theme,
         refresh: refresh.unwrap_or(0),
         no_refresh,
-        client_universe: universe.clone(),
+        client_universe: startup.input.universe.clone(),
         initial_tab,
-        effective_date,
+        effective_date: date.effective_date,
     };
-
-    // Single file read: load cache and check freshness in one pass.
-    let acquisition = crate::acquisition::acquisition_engine_with_dsh_home(
-        paths.cache_dir(),
-        home_dir,
-        universe,
-        date_range,
-        settings.scanner.clone(),
-        calendar,
-        pricing,
-        dsh_home,
-        settings.model_mappings.clone(),
-    )?;
-    let pricing_diagnostics = acquisition.pricing_snapshot().diagnostics().to_vec();
-    let (cached_snapshot, mut needs_background_load, retry_backoff, cache_startup_warning) =
-        decide_initial_data(
-            load_generation_cache(&paths.generation_cache_file(), acquisition.config())
-                .with_pricing_diagnostics(pricing_diagnostics),
-        );
-
     let original_hook = panic::take_hook();
     let tui_thread_id = thread::current().id();
     panic::set_hook(Box::new(move |info| {
@@ -330,31 +265,23 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -
         original_hook(info);
     }));
 
-    // Declare the task owner first so unwinding or a future early return drops
-    // the terminal session before TaskSupervisor can wait for blocking work.
-    let mut tasks = TaskSupervisor::new(runtime);
+    let mut events = EventHandler::new(Duration::from_millis(100));
+    // Restore the terminal before draining supervised work, including on unwind.
+    let mut tasks = TaskSupervisor::new(runtime, events.sender());
     let mut terminal_session = TerminalSession::enter()?;
-    let mut model = TuiModel::new(config, settings, paths.clone())?;
-    if let Some(warning) = cache_startup_warning {
-        tracing::warn!(warning = %warning, "generation cache unavailable at TUI startup");
-        model.set_generation_cache_warning(Some(warning));
-    }
-    needs_background_load |= install_cached_generation(&mut model, cached_snapshot);
-
-    let mut generation_controller = GenerationController::new(
-        acquisition,
-        paths.generation_cache_file(),
-        model.refresh_status(),
-    )
-    .with_relative_date_range(relative_date_range);
-    generation_controller.set_retry_backoff(retry_backoff);
-    generation_controller.start_initial_background_work(
-        &mut model,
-        &mut tasks,
-        paths.cache_dir(),
-        needs_background_load,
-    );
+    let mut model = TuiModel::new(config, startup.settings.clone(), startup.paths.clone())?;
+    let mut status = model.refresh_status();
+    status.set_loading(true);
+    model.set_refresh_status(status);
     let mut tui_frame = TuiFrame::new(model);
+    let query = tui_frame.model().generation_query();
+
+    // Local pricing, cache verification and projection cannot delay the first frame.
+    terminal_session
+        .terminal_mut()
+        .draw(|frame| tui_frame.render(frame))?;
+    tasks.spawn_startup(startup, date.range, query);
+    let mut generation_controller = None;
 
     #[cfg(unix)]
     let sigcont_flag = {
@@ -369,21 +296,17 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::ResolvedTuiPlan) -
         }
         flag
     };
-
-    let mut events = EventHandler::new(Duration::from_millis(100));
-
     let result = run_loop_with_background(
         terminal_session.terminal_mut(),
         &mut tui_frame,
         &mut events,
         &mut tasks,
         &mut generation_controller,
+        date.relative,
         #[cfg(unix)]
         &sigcont_flag,
     );
-
     shutdown_session(&mut tasks, terminal_session);
-
     result
 }
 
@@ -402,14 +325,75 @@ fn run_loop_with_background(
     tui_frame: &mut TuiFrame,
     events: &mut EventHandler,
     tasks: &mut TaskSupervisor,
-    generation_controller: &mut GenerationController,
+    generation_controller: &mut Option<GenerationController>,
+    relative_date_range: Option<crate::cli::RelativeDateRange>,
     #[cfg(unix)] sigcont_flag: &Arc<AtomicBool>,
 ) -> Result<TuiExit> {
     loop {
+        let mut initial_work = None;
+        if let Ok(startup) = tasks.try_recv_startup() {
+            let startup = startup?;
+            let app = tui_frame.model_mut();
+            if let Some(warning) = startup.warning {
+                tracing::warn!(warning = %warning, "generation cache unavailable at TUI startup");
+                app.set_generation_cache_warning(Some(warning));
+            }
+            if let Some(cached) = startup.cached {
+                app.install_prepared_generation(cached)?;
+                app.set_generation_status_with_tone(
+                    &rust_i18n::t!("tui.core.status.loaded_from_cache"),
+                    StatusTone::Success,
+                );
+            }
+            let cache_dir = startup.acquisition.input_cache_dir().to_path_buf();
+            let mut controller = GenerationController::new(
+                startup.acquisition,
+                startup.paths.generation_cache_file(),
+                app.refresh_status(),
+            )
+            .with_relative_date_range(relative_date_range);
+            controller.set_retry_backoff(startup.retry_backoff);
+            initial_work = Some((cache_dir, startup.needs_refresh));
+            *generation_controller = Some(controller);
+            tui_frame.reconcile_generation();
+        }
+
+        // Drain completed work before drawing; task completion wakes this loop
+        // independently of the animation tick or user input.
+        if let Some(controller) = generation_controller.as_mut() {
+            if let Ok(pricing) = tasks.try_recv_pricing() {
+                controller.apply_pricing_result(tui_frame.model_mut(), pricing);
+            }
+            match tasks.try_recv_acquisition() {
+                Ok(completed) => {
+                    if controller.apply_task_result(tui_frame.model_mut(), completed) {
+                        tui_frame.reconcile_generation();
+                    }
+                }
+                Err(TryRecvError::Disconnected) => {
+                    if tui_frame.model().is_background_loading() {
+                        tui_frame.model_mut().fail_local_usage_load(
+                            rust_i18n::t!("tui.core.status.background_disconnected").into_owned(),
+                        );
+                        tui_frame.model_mut().set_generation_status_with_tone(
+                            &rust_i18n::t!("tui.core.status.background_disconnected_error"),
+                            StatusTone::Danger,
+                        );
+                    }
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+            if let Ok(completed) = tasks.try_recv_persistence() {
+                controller.apply_persistence_result(tui_frame.model_mut(), completed);
+            }
+            if initial_work.is_none() {
+                controller.consume_app_intents(tui_frame.model_mut());
+                controller.on_tick(tui_frame.model_mut(), std::time::Instant::now());
+                controller.start_pending(tui_frame.model_mut(), tasks);
+            }
+        }
+        tui_frame.model_mut().poll_subscription();
         start_requested_subscription_fetch(tui_frame.model_mut(), tasks);
-        generation_controller.consume_app_intents(tui_frame.model_mut());
-        generation_controller.on_tick(tui_frame.model_mut(), std::time::Instant::now());
-        generation_controller.start_pending(tui_frame.model_mut(), tasks);
         tui_frame.flush_effects();
 
         #[cfg(unix)]
@@ -422,48 +406,29 @@ fn run_loop_with_background(
             );
             let _ = terminal.clear();
         }
-
         terminal.draw(|frame| tui_frame.render(frame))?;
 
-        if let Ok(pricing) = tasks.try_recv_pricing() {
-            generation_controller.apply_pricing_result(tui_frame.model_mut(), pricing);
-        }
-
-        match tasks.try_recv_acquisition() {
-            Ok(completed) => {
-                if generation_controller.apply_task_result(tui_frame.model_mut(), completed) {
-                    tui_frame.reconcile_generation();
-                }
+        if let Some(controller) = generation_controller.as_mut() {
+            if let Some((cache_dir, needs_refresh)) = initial_work {
+                controller.start_initial_background_work(
+                    tui_frame.model_mut(),
+                    tasks,
+                    cache_dir,
+                    needs_refresh,
+                );
             }
-            Err(TryRecvError::Disconnected) => {
-                if tui_frame.model().is_background_loading() {
-                    tui_frame.model_mut().fail_local_usage_load(
-                        rust_i18n::t!("tui.core.status.background_disconnected").into_owned(),
-                    );
-                    tui_frame.model_mut().set_generation_status_with_tone(
-                        rust_i18n::t!("tui.core.status.background_disconnected_error").as_ref(),
-                        StatusTone::Danger,
-                    );
-                }
-            }
-            Err(TryRecvError::Empty) => {}
+            controller.start_persistence(tasks);
         }
-
         match events.next()? {
-            Event::Tick => {
-                tui_frame.on_tick();
-            }
+            Event::Tick => tui_frame.on_tick(),
+            Event::BackgroundReady => {}
             Event::Key(key) => {
                 if let KeyEventOutcome::Exit(exit) = tui_frame.handle_key(key) {
                     return Ok(exit);
                 }
             }
-            Event::Mouse(mouse) => {
-                tui_frame.handle_mouse(mouse);
-            }
-            Event::Resize(w, h) => {
-                tui_frame.model_mut().handle_resize(w, h);
-            }
+            Event::Mouse(mouse) => tui_frame.handle_mouse(mouse),
+            Event::Resize(w, h) => tui_frame.model_mut().handle_resize(w, h),
         }
     }
 }
@@ -471,8 +436,7 @@ fn run_loop_with_background(
 #[cfg(test)]
 mod tests {
     use super::generation_controller::{
-        load_background_data, persist_background_load, run_acquisition_task, BackgroundLoad,
-        GenerationController,
+        load_background_data, run_acquisition_task, BackgroundLoad, GenerationController,
     };
     use super::*;
     use crate::theme::ThemeName;
@@ -922,11 +886,21 @@ mod tests {
         .unwrap()
     }
 
-    fn loaded_generation(generation: Generation) -> BackgroundLoad {
+    pub(super) fn loaded_generation(generation: Generation) -> BackgroundLoad {
+        let query = tokenx_engine::UsageQuery::full(
+            generation.universe(),
+            tokenx_engine::GroupBy::default(),
+            chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        );
         BackgroundLoad::Loaded {
-            generation: Box::new(generation),
-            cache_persistence_warning: None,
-            retry_backoff: None,
+            generation: Box::new(
+                local_usage::InstalledGeneration::new(
+                    Arc::new(generation),
+                    query,
+                    Default::default(),
+                )
+                .unwrap(),
+            ),
         }
     }
 
@@ -956,47 +930,9 @@ mod tests {
     }
 
     #[test]
-    fn cached_generation_install_error_warns_and_requests_rebuild() {
-        let restored = Arc::new(AtomicBool::new(false));
-        let restored_by_guard = Arc::clone(&restored);
-        let mut app = app_on_client(Tab::Overview, ClientId::Codex);
-        let cached = generation_fixture_with_health(
-            [ClientId::Amp],
-            tokenx_engine::FrozenUsageIndex::default(),
-            Vec::new(),
-            InputFootprint::default(),
-            tokenx_engine::input_health::HealthSummary::default(),
-        );
-        let (cached, mut needs_background_load, retry_backoff, cache_warning) =
-            decide_initial_data(CacheResult::Fresh(cached));
-        assert!(!needs_background_load);
-        assert!(retry_backoff.is_none());
-        assert!(cache_warning.is_none());
-
-        needs_background_load |= {
-            let _terminal_session = TerminalSession::with_restore_hook(move || {
-                restored_by_guard.store(true, Ordering::Release);
-            });
-            install_cached_generation(&mut app, cached)
-        };
-
-        assert!(needs_background_load);
-        assert!(app
-            .generation_cache_warning()
-            .unwrap()
-            .contains("cached generation rejected"));
-        assert!(app
-            .generation_cache_warning()
-            .unwrap()
-            .contains("generation client universe does not match"));
-        assert!(app.generation_for_test().is_none());
-        assert!(restored.load(Ordering::Acquire));
-    }
-
-    #[test]
     fn shutdown_restores_terminal_before_waiting_for_persistence() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let mut tasks = TaskSupervisor::new(runtime.handle().clone());
+        let mut tasks = TaskSupervisor::new(runtime.handle().clone(), mpsc::channel().0);
         let persistence_gate = tasks.persistence_gate_for_test();
         let (gate_held_tx, gate_held_rx) = mpsc::channel();
         let (restored_tx, restored_rx) = mpsc::channel();
@@ -1136,6 +1072,7 @@ mod tests {
         let changed = load_background_data(&loader, false, baseline).unwrap();
         match changed {
             BackgroundLoad::Loaded { generation, .. } => {
+                let generation = generation.generation();
                 assert_ne!(Some(generation.source_fingerprint()), baseline);
                 let data = generation
                     .project_usage(&tokenx_engine::UsageQuery::full(
@@ -1383,51 +1320,41 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn cache_failure_keeps_the_built_generation() {
         let home = TempDir::new().unwrap();
-        let blocked_config = home.path().join("config-is-a-file");
-        std::fs::write(&blocked_config, b"not a directory").unwrap();
-        let _guard = EnvGuard::set(&blocked_config);
+        let blocked_path = home.path().join("config-is-a-file");
+        std::fs::write(&blocked_path, b"not a directory").unwrap();
         let signature = tokenx_engine::SourceFingerprint::from_bytes([7; 32]);
-        let loaded = loaded_generation(generation_with_usage(
+        let generation = generation_with_usage(
             ClientId::Amp,
             42,
             "loaded-despite-cache-error",
             42,
             signature,
-        ));
-
-        let persisted =
-            persist_background_load(&blocked_config.join("generation.bin"), Ok(loaded)).unwrap();
-
-        match persisted {
-            BackgroundLoad::Loaded {
-                generation,
-                cache_persistence_warning,
-                retry_backoff: _,
-            } => {
-                let data = generation
-                    .project_usage(&tokenx_engine::UsageQuery::full(
-                        generation.universe(),
-                        tokenx_engine::GroupBy::Model,
-                        chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-                    ))
-                    .unwrap();
-                assert_eq!(data.total_tokens, 42);
-                assert_eq!(
-                    generation.sessions()[0].session_id.as_ref(),
-                    "loaded-despite-cache-error"
-                );
-                assert_eq!(generation.source_fingerprint(), signature);
-                let warning = cache_persistence_warning
-                    .as_deref()
-                    .expect("cache persistence warning must be retained");
-                assert!(warning.contains("Cache persistence warning"));
-            }
-            BackgroundLoad::Unchanged => {
-                panic!("loaded data must not become unchanged")
-            }
-        }
+        );
+        let mut app = app_on_client(Tab::Models, ClientId::Amp);
+        let mut controller = controller_for_client(&app, ClientId::Amp);
+        controller.apply_result_for_test(&mut app, Ok(loaded_generation(generation)), false);
+        let result = crate::generation_cache::save_generation_cache_with_retry_backoff(
+            &blocked_path.join("generation.bin"),
+            app.generation_for_test().unwrap(),
+        );
+        assert!(result.is_err());
+        controller.apply_persistence_result(
+            &mut app,
+            generation_controller::PersistenceResult {
+                request_id: 1,
+                result,
+            },
+        );
+        assert_eq!(app.usage().total_tokens, 42);
+        assert_eq!(
+            app.generation_for_test().unwrap().source_fingerprint(),
+            signature
+        );
+        assert!(app
+            .generation_cache_warning()
+            .unwrap()
+            .contains("Cache persistence warning"));
     }
 }

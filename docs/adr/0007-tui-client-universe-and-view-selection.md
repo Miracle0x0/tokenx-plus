@@ -64,11 +64,18 @@ directory. `scanner.extraScanPaths` is the sole authority for additional
 recursive client roots, while OpenCode uses the file-specific
 `scanner.opencodeDbPaths`.
 
-Acquisition stays in the background. Before the first generation exists, the
+The first frame precedes local pricing and generation-cache loading. Supervised
+workers prepare cached or newly acquired generations and their projections;
+completion wakes the UI directly. Acquisition stays in the background.
+Before the first generation exists, the
 local TUI is either loading or has an explicit cold failure; it cannot claim a
 successful empty report. A warm refresh leaves the installed generation
 visible. If that refresh fails, the same generation remains installed and the
 failure is exposed as a degraded diagnostic.
+
+Newly acquired generations are drawn before background persistence begins.
+Persistence has its own result and diagnostic; its failure cannot remove the
+installed generation. ADR 0015 defines the startup and persistence ordering.
 
 The remote Subscription tab has the separate ADR 0005 lifecycle and is
 not classified from the local generation. Its content, footer, and contextual

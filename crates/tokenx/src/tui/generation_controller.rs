@@ -6,8 +6,9 @@ use anyhow::Result;
 
 use crate::acquisition::{acquisition_engine_with_dsh_home, build_generation_with_cancellation};
 use crate::cli::RelativeDateRange;
-use crate::generation_cache::{save_generation_cache_with_retry_backoff, RetryBackoff};
+use crate::generation_cache::RetryBackoff;
 
+use super::local_usage::{InstalledGeneration, ProjectionRequest};
 use super::model::{StatusTone, TuiModel};
 use super::task_supervisor::TaskSupervisor;
 use crate::settings::{AUTO_REFRESH_STEP_MS, MAX_AUTO_REFRESH_MS, MIN_AUTO_REFRESH_MS};
@@ -71,8 +72,7 @@ impl RefreshStatus {
         self.loading.then_some(self.loading_elapsed)
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_loading_for_test(&mut self, loading: bool) {
+    pub(crate) fn set_loading(&mut self, loading: bool) {
         self.loading = loading;
         self.loading_elapsed = Duration::ZERO;
     }
@@ -99,10 +99,18 @@ struct ActivePricingRefresh {
 pub(super) enum BackgroundLoad {
     Unchanged,
     Loaded {
-        generation: Box<tokenx_engine::Generation>,
-        cache_persistence_warning: Option<String>,
-        retry_backoff: Option<RetryBackoff>,
+        generation: Box<InstalledGeneration>,
     },
+}
+
+pub(super) struct PersistenceResult {
+    pub(super) request_id: u64,
+    pub(super) result: Result<Option<RetryBackoff>>,
+}
+
+struct PendingPersistence {
+    request_id: u64,
+    generation: Option<Arc<tokenx_engine::Generation>>,
 }
 
 pub(super) struct AcquisitionTaskResult {
@@ -121,6 +129,7 @@ pub(super) struct GenerationController {
     last_checked: Instant,
     pending: Option<PendingRefresh>,
     active: Option<ActiveRefresh>,
+    persistence: Option<PendingPersistence>,
     pricing_refresh: Option<ActivePricingRefresh>,
     next_request_id: u64,
     retry_backoff: Option<RetryBackoff>,
@@ -140,6 +149,7 @@ impl GenerationController {
             last_checked: Instant::now(),
             pending: None,
             active: None,
+            persistence: None,
             pricing_refresh: None,
             next_request_id: 1,
             retry_backoff: None,
@@ -199,7 +209,7 @@ impl GenerationController {
         needs_generation_load: bool,
     ) {
         let needs_generation_load_after_pricing = if needs_generation_load {
-            self.request_initial_load(true);
+            self.request_initial_load(false);
             self.start_pending(app, tasks);
             self.active.is_none()
         } else {
@@ -258,7 +268,7 @@ impl GenerationController {
     }
 
     pub(super) fn start_pending(&mut self, app: &mut TuiModel, tasks: &mut TaskSupervisor) {
-        if self.pricing_refresh.is_some() || self.active.is_some() {
+        if self.pricing_refresh.is_some() || self.active.is_some() || self.persistence.is_some() {
             return;
         }
         let Some(pending) = self.pending.take() else {
@@ -302,9 +312,12 @@ impl GenerationController {
         tasks.spawn_acquisition(
             request_id,
             self.acquisition.clone(),
-            self.generation_cache_file.clone(),
             force,
             last_fingerprint,
+            ProjectionRequest {
+                query: app.generation_query(),
+                details: app.detail_selections(),
+            },
         );
     }
 
@@ -426,12 +439,9 @@ impl GenerationController {
         self.last_checked = Instant::now();
 
         match completed.result {
-            Ok(BackgroundLoad::Loaded {
-                generation,
-                cache_persistence_warning,
-                retry_backoff,
-            }) => {
-                if let Err(error) = app.install_generation(*generation) {
+            Ok(BackgroundLoad::Loaded { generation }) => {
+                let shared_generation = generation.shared_generation();
+                if let Err(error) = app.install_prepared_generation(generation) {
                     generation_background_failure(
                         app,
                         rust_i18n::t!(
@@ -441,20 +451,14 @@ impl GenerationController {
                         .into_owned(),
                     );
                 } else {
-                    self.set_retry_backoff(retry_backoff);
-                    let recovered_cache_warning = cache_persistence_warning
-                        .is_none()
-                        .then(|| app.generation_cache_warning().map(str::to_owned))
-                        .flatten();
-                    app.set_generation_cache_warning(cache_persistence_warning);
-                    if let Some(warning) = recovered_cache_warning {
-                        app.set_generation_status_with_tone(&warning, StatusTone::Warning);
-                    } else {
-                        app.set_generation_status_with_tone(
-                            &rust_i18n::t!("tui.generation.status.loaded"),
-                            StatusTone::Success,
-                        );
-                    }
+                    self.persistence = Some(PendingPersistence {
+                        request_id: completed.request_id,
+                        generation: Some(shared_generation),
+                    });
+                    app.set_generation_status_with_tone(
+                        &rust_i18n::t!("tui.generation.status.loaded"),
+                        StatusTone::Success,
+                    );
                 }
             }
             Ok(BackgroundLoad::Unchanged) if active.force => {
@@ -470,6 +474,58 @@ impl GenerationController {
         }
         self.publish_status(app);
         true
+    }
+
+    /// Called only after the installed generation has been drawn.
+    pub(super) fn start_persistence(&mut self, tasks: &mut TaskSupervisor) {
+        if let Some(pending) = self.persistence.as_mut() {
+            if let Some(generation) = pending.generation.take() {
+                tasks.spawn_persistence(
+                    pending.request_id,
+                    self.generation_cache_file.clone(),
+                    generation,
+                );
+            }
+        }
+    }
+
+    pub(super) fn apply_persistence_result(
+        &mut self,
+        app: &mut TuiModel,
+        completed: PersistenceResult,
+    ) {
+        if !self
+            .persistence
+            .as_ref()
+            .is_some_and(|pending| pending.request_id == completed.request_id)
+        {
+            tracing::warn!(
+                request_id = completed.request_id,
+                "ignored stale persistence result"
+            );
+            return;
+        }
+        self.persistence = None;
+        match completed.result {
+            Ok(retry_backoff) => {
+                self.set_retry_backoff(retry_backoff);
+                if let Some(warning) = app.generation_cache_warning().map(str::to_owned) {
+                    app.set_generation_status_with_tone(&warning, StatusTone::Warning);
+                }
+                app.set_generation_cache_warning(None);
+            }
+            Err(error) => {
+                let warning = rust_i18n::t!(
+                    "tui.generation.error.cache_persistence",
+                    diagnostic = format!("{error:#}")
+                )
+                .into_owned();
+                tracing::warn!(error = %error, "local generation loaded but cache persistence failed");
+                self.set_retry_backoff(None);
+                app.set_generation_cache_warning(Some(warning.clone()));
+                app.set_generation_status_with_tone(&warning, StatusTone::Warning);
+            }
+        }
     }
 
     fn queue(&mut self, pending: PendingRefresh) {
@@ -592,6 +648,14 @@ pub(super) fn load_background_data(
         engine,
         force,
         last_fingerprint,
+        ProjectionRequest {
+            query: tokenx_engine::UsageQuery::full(
+                engine.config().universe(),
+                tokenx_engine::GroupBy::default(),
+                engine.config().calendar().current_date(),
+            ),
+            details: Default::default(),
+        },
         &tokenx_engine::AcquisitionCancellation::default(),
     )
 }
@@ -600,6 +664,7 @@ pub(super) fn load_background_data_with_cancellation(
     engine: &tokenx_engine::AcquisitionEngine,
     force: bool,
     last_fingerprint: Option<tokenx_engine::SourceFingerprint>,
+    projection: ProjectionRequest,
     cancellation: &tokenx_engine::AcquisitionCancellation,
 ) -> Result<BackgroundLoad> {
     let prepared = engine.prepare_with_cancellation(cancellation)?;
@@ -608,79 +673,18 @@ pub(super) fn load_background_data_with_cancellation(
         return Ok(BackgroundLoad::Unchanged);
     }
 
-    build_generation_with_cancellation(engine, prepared, cancellation).map(|generation| {
-        BackgroundLoad::Loaded {
-            generation: Box::new(generation),
-            cache_persistence_warning: None,
-            retry_backoff: None,
-        }
+    let generation = build_generation_with_cancellation(engine, prepared, cancellation)?;
+    Ok(BackgroundLoad::Loaded {
+        generation: Box::new(InstalledGeneration::new(
+            Arc::new(generation),
+            projection.query,
+            projection.details,
+        )?),
     })
 }
 
-#[cfg(test)]
-pub(super) fn persist_background_load(
-    generation_cache_file: &std::path::Path,
-    result: Result<BackgroundLoad>,
-) -> Result<BackgroundLoad> {
-    persist_background_load_with_cancellation(
-        generation_cache_file,
-        result,
-        &tokenx_engine::AcquisitionCancellation::default(),
-    )
-}
-
-pub(super) fn persist_background_load_with_cancellation(
-    generation_cache_file: &std::path::Path,
-    result: Result<BackgroundLoad>,
-    cancellation: &tokenx_engine::AcquisitionCancellation,
-) -> Result<BackgroundLoad> {
-    let result = result?;
-    cancellation
-        .check(tokenx_engine::AcquisitionPhase::GenerationFinalization)
-        .map_err(anyhow::Error::new)?;
-    let BackgroundLoad::Loaded {
-        generation,
-        cache_persistence_warning: _,
-        retry_backoff: _,
-    } = result
-    else {
-        return Ok(BackgroundLoad::Unchanged);
-    };
-
-    match save_generation_cache_with_retry_backoff(generation_cache_file, &generation) {
-        Ok(retry_backoff) => Ok(BackgroundLoad::Loaded {
-            generation,
-            cache_persistence_warning: None,
-            retry_backoff,
-        }),
-        Err(error) => {
-            let diagnostic = format!("{error:#}");
-            tracing::warn!(
-                error = %diagnostic,
-                "local generation loaded but cache persistence failed"
-            );
-            Ok(BackgroundLoad::Loaded {
-                generation,
-                cache_persistence_warning: Some(
-                    rust_i18n::t!(
-                        "tui.generation.error.cache_persistence",
-                        diagnostic = diagnostic
-                    )
-                    .into_owned(),
-                ),
-                retry_backoff: None,
-            })
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn run_acquisition_task(
-    tx: &mpsc::Sender<AcquisitionTaskResult>,
-    request_id: u64,
-    task: impl FnOnce() -> Result<BackgroundLoad>,
-) {
-    let result = panic::catch_unwind(panic::AssertUnwindSafe(task)).unwrap_or_else(|payload| {
+pub(super) fn catch_background_task<T>(task: impl FnOnce() -> Result<T>) -> Result<T> {
+    panic::catch_unwind(panic::AssertUnwindSafe(task)).unwrap_or_else(|payload| {
         let message = payload
             .downcast_ref::<&str>()
             .copied()
@@ -691,7 +695,16 @@ pub(super) fn run_acquisition_task(
             message = message
         )
         .into_owned()))
-    });
+    })
+}
+
+#[cfg(test)]
+pub(super) fn run_acquisition_task(
+    tx: &mpsc::Sender<AcquisitionTaskResult>,
+    request_id: u64,
+    task: impl FnOnce() -> Result<BackgroundLoad>,
+) {
+    let result = catch_background_task(task);
     if tx
         .send(AcquisitionTaskResult { request_id, result })
         .is_err()
@@ -709,18 +722,7 @@ pub(super) fn run_acquisition_task_with_cancellation(
     cancellation: &tokenx_engine::AcquisitionCancellation,
     task: impl FnOnce() -> Result<BackgroundLoad>,
 ) {
-    let result = panic::catch_unwind(panic::AssertUnwindSafe(task)).unwrap_or_else(|payload| {
-        let message = payload
-            .downcast_ref::<&str>()
-            .copied()
-            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-            .unwrap_or("unknown panic payload");
-        Err(anyhow::anyhow!(rust_i18n::t!(
-            "tui.generation.error.worker_panic",
-            message = message
-        )
-        .into_owned()))
-    });
+    let result = catch_background_task(task);
     if cancellation.is_cancelled() {
         return;
     }
@@ -913,7 +915,7 @@ mod tests {
     #[test]
     fn initial_generation_load_starts_before_pricing_refresh() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let mut tasks = TaskSupervisor::new(runtime.handle().clone());
+        let mut tasks = TaskSupervisor::new(runtime.handle().clone(), mpsc::channel().0);
         let (mut app, mut controller) = harness(false);
 
         controller.start_initial_background_work(
@@ -924,6 +926,10 @@ mod tests {
         );
 
         assert!(controller.active.is_some());
+        assert!(
+            !controller.active.unwrap().force,
+            "startup age alone must not force a rebuild"
+        );
         assert!(controller.pricing_refresh.is_some());
         assert!(
             !controller
@@ -1063,14 +1069,18 @@ mod tests {
 
         controller.apply_result_for_test(
             &mut app,
-            Ok(BackgroundLoad::Loaded {
-                generation: Box::new(generation),
-                cache_persistence_warning: None,
-                retry_backoff: None,
-            }),
+            Ok(crate::tui::tests::loaded_generation(generation)),
             true,
         );
 
+        assert_eq!(app.generation_cache_warning(), Some(warning));
+        controller.apply_persistence_result(
+            &mut app,
+            PersistenceResult {
+                request_id: 1,
+                result: Ok(None),
+            },
+        );
         assert_eq!(app.generation_cache_warning(), None);
         assert_eq!(app.status_message.as_deref(), Some(warning));
         assert_eq!(app.status_message_tone(), StatusTone::Warning);
@@ -1087,5 +1097,48 @@ mod tests {
         });
 
         assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn pending_persistence_keeps_manual_refresh_queued_until_the_write_finishes() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let mut tasks = TaskSupervisor::new(runtime.handle().clone(), mpsc::channel().0);
+        let (mut app, mut controller) = harness(false);
+        let generation = crate::tui::generation_fixture_with_health(
+            [ClientId::Amp],
+            Default::default(),
+            Vec::new(),
+            Default::default(),
+            Default::default(),
+        );
+        controller.apply_result_for_test(
+            &mut app,
+            Ok(crate::tui::tests::loaded_generation(generation)),
+            false,
+        );
+        assert!(app.has_installed_generation());
+        assert!(!app.is_background_loading());
+        controller.request_initial_load(true);
+        controller.start_pending(&mut app, &mut tasks);
+        assert!(controller.active.is_none());
+        assert!(controller.pending.unwrap().request.force());
+        controller.apply_persistence_result(
+            &mut app,
+            PersistenceResult {
+                request_id: 99,
+                result: Err(anyhow::anyhow!("obsolete write")),
+            },
+        );
+        assert!(controller.persistence.is_some());
+        assert!(app.generation_cache_warning().is_none());
+        controller.apply_persistence_result(
+            &mut app,
+            PersistenceResult {
+                request_id: 1,
+                result: Ok(None),
+            },
+        );
+        assert!(controller.persistence.is_none());
+        assert!(controller.pending.unwrap().request.force());
     }
 }

@@ -390,12 +390,12 @@ pub enum AcquisitionConfigError {
 ///
 /// This is the only cacheable application state. Public projections are derived
 /// from `usage_index` and are deliberately absent from the persisted shape.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Generation {
     acquisition: AcquisitionConfig,
     source_fingerprint: SourceFingerprint,
-    usage_index: FrozenUsageIndex,
+    usage_index: Arc<FrozenUsageIndex>,
     sessions: Arc<[SessionUsage]>,
     input_footprint: InputFootprint,
     health: HealthSummary,
@@ -425,7 +425,7 @@ impl<'de> Deserialize<'de> for Generation {
         let generation = Self {
             acquisition: wire.acquisition,
             source_fingerprint: wire.source_fingerprint,
-            usage_index: wire.usage_index.into_index(),
+            usage_index: Arc::new(wire.usage_index.into_index()),
             sessions: wire.sessions,
             input_footprint: wire.input_footprint,
             health: wire.health,
@@ -437,7 +437,7 @@ impl<'de> Deserialize<'de> for Generation {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct InternedIdentityLifetime;
 
 impl Drop for InternedIdentityLifetime {
@@ -482,7 +482,7 @@ impl Generation {
         let generation = Self {
             acquisition,
             source_fingerprint,
-            usage_index,
+            usage_index: Arc::new(usage_index),
             sessions: sessions.into(),
             input_footprint,
             health,

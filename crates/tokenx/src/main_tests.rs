@@ -676,12 +676,7 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
     let ExecutionPlan::Tui(resolved) = resolved else {
         panic!("expected resolved TUI plan");
     };
-    assert_eq!(
-        tokenx_engine::pricing::PricingStatus::from_diagnostics(
-            resolved.startup.pricing.diagnostics()
-        ),
-        tokenx_engine::pricing::PricingStatus::Available
-    );
+    assert!(matches!(resolved.startup.pricing, PendingPricing));
 }
 
 #[test]

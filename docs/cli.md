@@ -59,6 +59,12 @@ CLI options override settings for the current TUI process and do not rewrite
 `settings.json`. The TUI captures normal mouse input; use the terminal's
 modified selection gesture, usually `Shift+drag`, to select terminal text.
 
+The interface appears while local data loads in the background. Available
+cached usage appears before refresh checks; an expired cache with unchanged
+inputs keeps its existing statistics. New statistics appear before their cache
+write completes. Refresh and cache-write failures remain visible while the
+last installed data stays available.
+
 ## Models output
 
 ```bash

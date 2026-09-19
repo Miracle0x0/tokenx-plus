@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,6 +17,7 @@ use tokenx_engine::{AcquisitionConfig, ClientId, Generation};
 
 const CACHE_MAGIC: [u8; 8] = *b"TOKENXG\0";
 const CACHE_SCHEMA_VERSION: u32 = 5;
+const CACHE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_GENERATION_BODY_BYTES: u64 = 256 * 1024 * 1024;
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
 const RETRY_BASE_DELAY_MS: u64 = 5 * 60 * 1000;
@@ -474,8 +475,9 @@ pub(crate) fn save_generation_cache_with_retry_backoff(
             backoff.failure_signature
         });
     tokenx_engine::fs_atomic::write_atomic_with(path, |file| {
+        let mut file = BufWriter::with_capacity(CACHE_IO_BUFFER_BYTES, file);
         file.write_all(&[0_u8; HEADER_LEN])?;
-        let mut body_writer = DigestingWriter::new(file, MAX_GENERATION_BODY_BYTES);
+        let mut body_writer = DigestingWriter::new(&mut file, MAX_GENERATION_BODY_BYTES);
         bincode::serialize_into(&mut body_writer, generation).map_err(std::io::Error::other)?;
         body_writer.flush()?;
         let (body_len, body_digest) = body_writer.finish();
@@ -489,6 +491,7 @@ pub(crate) fn save_generation_cache_with_retry_backoff(
         });
         file.seek(SeekFrom::Start(0))?;
         file.write_all(&header)?;
+        file.flush()?;
         Ok(())
     })
     .with_context(|| rust_i18n::t!("cache.error.persist", path = path.display().to_string()))?;
@@ -579,7 +582,7 @@ fn decode_generation(bytes: &[u8]) -> anyhow::Result<CacheEnvelope> {
 }
 
 fn decode_generation_from_reader(
-    mut reader: impl Read + Seek,
+    reader: impl Read + Seek,
     actual_file_len: u64,
 ) -> anyhow::Result<CacheEnvelope> {
     let max_file_len = u64::try_from(HEADER_LEN)
@@ -590,6 +593,7 @@ fn decode_generation_from_reader(
         anyhow::bail!("generation cache is {actual_file_len} bytes; limit is {max_file_len} bytes");
     }
 
+    let mut reader = BufReader::with_capacity(CACHE_IO_BUFFER_BYTES, reader);
     let mut header_bytes = [0_u8; HEADER_LEN];
     reader
         .read_exact(&mut header_bytes)
@@ -682,15 +686,15 @@ fn decode_generation_from_reader(
     })
 }
 
-struct DigestingWriter<'a> {
-    inner: &'a mut std::fs::File,
+struct DigestingWriter<W> {
+    inner: W,
     digest: Sha256,
     bytes_written: u64,
     limit: u64,
 }
 
-impl<'a> DigestingWriter<'a> {
-    fn new(inner: &'a mut std::fs::File, limit: u64) -> Self {
+impl<W: Write> DigestingWriter<W> {
+    fn new(inner: W, limit: u64) -> Self {
         Self {
             inner,
             digest: Sha256::new(),
@@ -704,7 +708,7 @@ impl<'a> DigestingWriter<'a> {
     }
 }
 
-impl Write for DigestingWriter<'_> {
+impl<W: Write> Write for DigestingWriter<W> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         let requested = u64::try_from(bytes.len())
             .map_err(|_| std::io::Error::other("generation cache write length overflow"))?;
@@ -1230,10 +1234,12 @@ mod tests {
     struct CountingReader {
         inner: std::io::Cursor<Vec<u8>>,
         bytes_read: Arc<AtomicUsize>,
+        read_calls: Arc<AtomicUsize>,
     }
 
     impl Read for CountingReader {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.read_calls.fetch_add(1, Ordering::Relaxed);
             let read = self.inner.read(buffer)?;
             self.bytes_read.fetch_add(read, Ordering::Relaxed);
             Ok(read)
@@ -1254,9 +1260,11 @@ mod tests {
         save_generation_cache(&generation(temp.path())).unwrap();
         let bytes = std::fs::read(cache_file().unwrap()).unwrap();
         let bytes_read = Arc::new(AtomicUsize::new(0));
+        let read_calls = Arc::new(AtomicUsize::new(0));
         let reader = CountingReader {
             inner: std::io::Cursor::new(bytes.clone()),
             bytes_read: Arc::clone(&bytes_read),
+            read_calls: Arc::clone(&read_calls),
         };
 
         decode_generation_from_reader(reader, bytes.len() as u64).unwrap();
@@ -1265,6 +1273,11 @@ mod tests {
         assert_eq!(
             bytes_read.load(Ordering::Relaxed),
             HEADER_LEN + body_len * 2
+        );
+        assert!(
+            read_calls.load(Ordering::Relaxed)
+                <= bytes.len().div_ceil(CACHE_IO_BUFFER_BYTES)
+                    + body_len.div_ceil(CACHE_IO_BUFFER_BYTES)
         );
     }
 
@@ -1281,6 +1294,7 @@ mod tests {
         let reader = CountingReader {
             inner: std::io::Cursor::new(bytes.clone()),
             bytes_read: Arc::clone(&bytes_read),
+            read_calls: Arc::new(AtomicUsize::new(0)),
         };
 
         let error = decode_generation_from_reader(reader, bytes.len() as u64)

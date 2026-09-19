@@ -536,21 +536,19 @@ pub(crate) struct ModelsPlan<PricingState> {
 pub(crate) type ResolvedModelsPlan = ModelsPlan<RuntimePricing>;
 
 #[derive(Debug)]
-pub(crate) struct TuiPlan<PricingState> {
+pub(crate) struct TuiPlan {
     pub(crate) theme: Option<ThemeName>,
     pub(crate) refresh: Option<u64>,
     pub(crate) no_refresh: bool,
     pub(crate) debug: bool,
-    pub(crate) startup: StartupSnapshot<PricingState>,
+    pub(crate) startup: StartupSnapshot<PendingPricing>,
     pub(crate) date: ResolvedDateRange,
     pub(crate) initial_tab: Option<Tab>,
 }
 
-pub(crate) type ResolvedTuiPlan = TuiPlan<RuntimePricing>;
-
 #[derive(Debug)]
 pub(crate) enum ExecutionPlan<PricingState> {
-    Tui(TuiPlan<PricingState>),
+    Tui(TuiPlan),
     Models(ModelsPlan<PricingState>),
     Pricing {
         paths: ProductPaths,
@@ -588,7 +586,7 @@ impl ExecutionPlan<PendingPricing> {
 
     pub(crate) async fn bind_pricing(self) -> ExecutionPlan<RuntimePricing> {
         match self {
-            Self::Tui(plan) => ExecutionPlan::Tui(plan.bind_local_pricing()),
+            Self::Tui(plan) => ExecutionPlan::Tui(plan),
             Self::Models(plan) => ExecutionPlan::Models(plan.bind_refreshed_pricing().await),
             Self::Pricing { paths, subcommand } => ExecutionPlan::Pricing { paths, subcommand },
             Self::InitModelMappings { paths, no_spinner } => {
@@ -603,7 +601,7 @@ impl ExecutionPlan<PendingPricing> {
 }
 
 impl StartupSnapshot<PendingPricing> {
-    fn bind_local_pricing(self) -> ResolvedStartupSnapshot {
+    pub(crate) fn bind_local_pricing(self) -> ResolvedStartupSnapshot {
         let pricing = Arc::new(
             tokenx_engine::pricing::ResolvedPricingSnapshot::resolve_from(
                 &self.paths.custom_pricing_file(),
@@ -665,33 +663,7 @@ impl ModelsPlan<PendingPricing> {
     }
 }
 
-impl TuiPlan<PendingPricing> {
-    fn bind_local_pricing(self) -> ResolvedTuiPlan {
-        let Self {
-            theme,
-            refresh,
-            no_refresh,
-            debug,
-            startup,
-            date,
-            initial_tab,
-        } = self;
-        TuiPlan {
-            theme,
-            refresh,
-            no_refresh,
-            debug,
-            startup: startup.bind_local_pricing(),
-            date,
-            initial_tab,
-        }
-    }
-}
-
-fn resolve_tui(
-    args: TuiArgs,
-    terminal: TerminalState,
-) -> Result<TuiPlan<PendingPricing>, CliFailure> {
+fn resolve_tui(args: TuiArgs, terminal: TerminalState) -> Result<TuiPlan, CliFailure> {
     if !terminal.interactive() {
         return Err(CliFailure::invalid_message(rust_i18n::t!(
             "cli.error.tui_requires_terminal"

@@ -51,7 +51,7 @@ fn wait_for_exit(child: &mut std::process::Child) -> ExitStatus {
     }
 }
 
-fn run_tui_with_input(input: &[u8]) -> (ExitStatus, Vec<u8>) {
+fn run_tui_with_input(input: &[u8], block_local_pricing: bool) -> (ExitStatus, Vec<u8>) {
     let mut master_fd = -1;
     let mut slave_fd = -1;
     let size = libc::winsize {
@@ -101,8 +101,8 @@ fn run_tui_with_input(input: &[u8]) -> (ExitStatus, Vec<u8>) {
                     output.extend_from_slice(&buffer[..read]);
                     if ready_tx.is_some()
                         && output
-                            .windows(ENTER_ALTERNATE_SCREEN.len())
-                            .any(|window| window == ENTER_ALTERNATE_SCREEN)
+                            .windows(HIDE_CURSOR.len())
+                            .any(|window| window == HIDE_CURSOR)
                     {
                         let _ = ready_tx.take().unwrap().send(());
                     }
@@ -116,9 +116,17 @@ fn run_tui_with_input(input: &[u8]) -> (ExitStatus, Vec<u8>) {
 
     let home = TempDir::new().expect("create isolated TUI home");
     let config_dir = home.path().join("tokenx-config");
+    let pricing_path = config_dir.join("custom-pricing.json");
+    if block_local_pricing {
+        use std::os::unix::ffi::OsStrExt;
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let path = std::ffi::CString::new(pricing_path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: path is a live NUL-terminated string in an isolated fixture.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    }
     let mut child = Command::new(env!("CARGO_BIN_EXE_tokenx"))
-        .args(["tui", "--no-refresh"])
-        .env("HOME", home.path())
+        .args(["--language", "en", "tui", "--no-refresh", "--home"])
+        .arg(home.path())
         .env("TOKENX_CONFIG_DIR", config_dir)
         .env("TERM", "xterm-256color")
         .env("HTTP_PROXY", "http://127.0.0.1:9")
@@ -131,9 +139,19 @@ fn run_tui_with_input(input: &[u8]) -> (ExitStatus, Vec<u8>) {
         .spawn()
         .expect("spawn TUI in PTY");
 
-    ready_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("TUI did not enter alternate screen");
+    if let Err(error) = ready_rx.recv_timeout(Duration::from_secs(10)) {
+        child.kill().expect("stop stalled TUI");
+        child.wait().expect("reap stalled TUI");
+        panic!("TUI did not draw its first frame: {error}");
+    }
+    if block_local_pricing {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(pricing_path)
+            .unwrap()
+            .write_all(b"{}")
+            .unwrap();
+    }
     master.write_all(input).expect("write TUI key input");
     master.flush().expect("flush TUI key input");
 
@@ -175,7 +193,7 @@ fn run_tui_with_input(input: &[u8]) -> (ExitStatus, Vec<u8>) {
 
 #[test]
 fn q_exits_tui_successfully_after_restoring_terminal() {
-    let (status, output) = run_tui_with_input(b"q");
+    let (status, output) = run_tui_with_input(b"q", false);
     assert_eq!(
         status.code(),
         Some(0),
@@ -186,10 +204,21 @@ fn q_exits_tui_successfully_after_restoring_terminal() {
 
 #[test]
 fn ctrl_c_exits_tui_with_130_after_restoring_terminal() {
-    let (status, output) = run_tui_with_input(b"\x03");
+    let (status, output) = run_tui_with_input(b"\x03", false);
     assert_eq!(
         status.code(),
         Some(130),
+        "{}",
+        String::from_utf8_lossy(&output)
+    );
+}
+
+#[test]
+fn first_frame_does_not_wait_for_local_pricing_io() {
+    let (status, output) = run_tui_with_input(b"q", true);
+    assert_eq!(
+        status.code(),
+        Some(0),
         "{}",
         String::from_utf8_lossy(&output)
     );
