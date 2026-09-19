@@ -79,11 +79,9 @@ pub(crate) fn build_generation_with_cancellation(
     prepared: PreparedAcquisition,
     cancellation: &tokenx_engine::AcquisitionCancellation,
 ) -> Result<Generation> {
-    let generation = engine
+    engine
         .build_with_cancellation(prepared, cancellation)
-        .map_err(anyhow::Error::new);
-    trim_allocator();
-    generation
+        .map_err(anyhow::Error::new)
 }
 
 /// Return freed allocator pages after replacing a generation or projection.

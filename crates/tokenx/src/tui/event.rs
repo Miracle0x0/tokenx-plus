@@ -10,10 +10,12 @@ pub enum Event {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Resize(u16, u16),
+    BackgroundReady,
 }
 
 pub struct EventHandler {
     rx: mpsc::Receiver<Event>,
+    tx: mpsc::Sender<Event>,
 }
 
 fn should_forward_key_event(key: &KeyEvent) -> bool {
@@ -56,8 +58,11 @@ impl EventHandler {
             }
         });
 
-        drop(tx);
-        Self { rx }
+        Self { rx, tx }
+    }
+
+    pub(super) fn sender(&self) -> mpsc::Sender<Event> {
+        self.tx.clone()
     }
 
     pub fn next(&mut self) -> Result<Event> {

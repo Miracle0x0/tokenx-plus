@@ -111,12 +111,15 @@ Each inventory has one versioned SHA-256 `SourceFingerprint` over canonical
 clients, integration and unit order, decoder/unit identity, and every declared
 input's native path, label, presence, size, mtime, and native identity.
 
-Automatic refresh prepares once. An unchanged full `SourceFingerprint` drops
+Automatic refresh and ordinary expired-cache startup checks prepare once.
+An unchanged full `SourceFingerprint` drops
 the inventory and skips parse, aggregation, and cache writes; a changed fingerprint
 executes that same inventory. Forced refresh also prepares and executes once. A
 fresh cached generation establishes the initial comparison fingerprint from
-its persisted signature without startup discovery; stale or missing generations
-prepare and execute in the background.
+its persisted signature without startup discovery. Stale generations are
+displayed before their background inventory check; missing generations require
+background acquisition. Due input-integrity retries and acquisition-context
+changes still rebuild even when inventory metadata is unchanged.
 
 Codex is the exception because incremental append validation requires content
 identity. Its decoder computes the digest during the same pass that parses the
@@ -281,7 +284,9 @@ reported explicitly; already completed removals are not rolled back.
 One local fold produces one immutable `Generation`: acquisition configuration,
 the prepared source fingerprint, canonical `UsageIndex`, sessions,
 `InputFootprint`, Data Health, and pricing diagnostics. The cache serializes
-that value once behind a versioned binary envelope and atomic rename.
+that value once behind a versioned binary envelope and atomic rename. Buffered
+I/O batches small serialized fields while retaining authentication before
+deserialization and a second digest check during decoding.
 
 Common/Grouped bundles and renderer projections are not cache state. Every
 usage projection is derived from the installed `UsageIndex`, and Sessions filters
@@ -290,15 +295,17 @@ the installed session snapshot. Cache decoding validates the complete
 health. A schema mismatch, malformed envelope, trailing bytes, or invalid
 generation is a complete cache miss.
 
-Generation persistence failure is explicit. A warm TUI may retain the same
-in-memory `Generation` and expose a degraded diagnostic, but it must not claim
-that persistence succeeded. ADR 0009 owns the canonical generation boundary;
-ADR 0007 owns refresh installation and projection behavior.
+The TUI installs and draws a new generation before its supervised background
+write begins. Generation persistence failure is explicit: the same in-memory
+`Generation` remains available with a cache diagnostic, without claiming that
+persistence succeeded. ADR 0009 owns the canonical generation boundary;
+ADR 0007 and ADR 0015 own refresh installation and publication ordering.
 
 ### Resident-memory behavior
 
-After transient load state or a replaced generation is dropped, Linux/glibc
-builds trim freed pages. The application composition root limits glibc to one
+After headless acquisition or TUI background persistence, Linux/glibc builds
+trim freed pages. Generation installation on the terminal thread does not trim
+the allocator. The application composition root limits glibc to one
 arena before constructing the Tokio runtime or any acquisition worker threads,
 so short-lived parallel folds do not leave detached arena high-water marks; a
 rejected allocator policy fails process initialization explicitly.
