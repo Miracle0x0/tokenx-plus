@@ -272,12 +272,10 @@ fn render_legend(frame: &mut Frame, app: &TuiModel, area: Rect) {
             .then_with(|| left_name.cmp(right_name))
     });
 
-    let limit = if app.is_narrow() { 3 } else { 5 };
     let name_width = if app.is_narrow() { 12 } else { 18 };
     let total_models = models.len();
     let visible_count = visible_legend_count(
         models.iter().map(|(model, _)| model.as_str()),
-        limit,
         name_width,
         area.width as usize,
     );
@@ -317,7 +315,6 @@ fn render_legend(frame: &mut Frame, app: &TuiModel, area: Rect) {
 
 fn visible_legend_count<'a>(
     models: impl IntoIterator<Item = &'a str>,
-    limit: usize,
     name_width: usize,
     available_width: usize,
 ) -> usize {
@@ -325,7 +322,7 @@ fn visible_legend_count<'a>(
     let mut used_width = 0usize;
     let mut visible_count = 0;
 
-    for model in models.iter().copied().take(limit) {
+    for model in models.iter().copied() {
         let display_name = truncate_string(model, name_width);
         let item_width = width("■") + 1 + width(&display_name);
         let gap_width = if visible_count == 0 { 0 } else { width("  ") };
@@ -626,29 +623,64 @@ mod tests {
         // '■' + space + 18-cell name = 20 cells per item, gaps are 2 cells, and
         // while models stay hidden 4 more cells are reserved for the `+N` suffix.
         let models = ["123456789012345678"; 5];
-        assert_eq!(visible_legend_count(models, 5, 18, 67), 2);
-        assert_eq!(visible_legend_count(models, 5, 18, 68), 3);
-        assert_eq!(visible_legend_count(models, 5, 18, 89), 3);
-        assert_eq!(visible_legend_count(models, 5, 18, 90), 4);
+        assert_eq!(visible_legend_count(models, 18, 67), 2);
+        assert_eq!(visible_legend_count(models, 18, 68), 3);
+        assert_eq!(visible_legend_count(models, 18, 89), 3);
+        assert_eq!(visible_legend_count(models, 18, 90), 4);
         // Once every model fits, the last item needs no suffix reservation.
-        assert_eq!(visible_legend_count(models, 5, 18, 107), 4);
-        assert_eq!(visible_legend_count(models, 5, 18, 108), 5);
+        assert_eq!(visible_legend_count(models, 18, 107), 4);
+        assert_eq!(visible_legend_count(models, 18, 108), 5);
     }
 
     #[test]
     fn legend_suffix_width_grows_with_the_hidden_count() {
         // 2-cell names make each item 4 cells ('■' + space + name), gaps 2.
         let models = ["aa"; 12];
-        // At 28 cells the fifth model plus its `+7` reservation does not fit…
-        assert_eq!(visible_legend_count(models, 5, 18, 28), 4);
-        // …but at 32 it does, because `+7` needs only 4 cells after 5 items.
-        assert_eq!(visible_legend_count(models, 5, 18, 32), 5);
+        // Two items plus `+10` need 15 cells; three plus `+9` need 20.
+        assert_eq!(visible_legend_count(models, 18, 14), 1);
+        assert_eq!(visible_legend_count(models, 18, 15), 2);
+        assert_eq!(visible_legend_count(models, 18, 19), 2);
+        assert_eq!(visible_legend_count(models, 18, 20), 3);
     }
 
     #[test]
     fn legend_width_uses_rendered_character_width() {
-        assert_eq!(visible_legend_count(["模型"], 1, 18, 5), 0);
-        assert_eq!(visible_legend_count(["模型"], 1, 18, 6), 1);
+        assert_eq!(visible_legend_count(["模型"], 18, 5), 0);
+        assert_eq!(visible_legend_count(["模型"], 18, 6), 1);
+        assert_eq!(visible_legend_count(["e\u{301}"], 18, 3), 1);
+    }
+
+    #[test]
+    fn legend_fills_its_available_width_without_a_model_count_limit() {
+        for terminal_width in [40, 120] {
+            let app = app_with_models(terminal_width, &["a", "b", "c", "d", "e", "f", "g", "h"]);
+            for (legend_width, expected) in [
+                (32, "■ a  ■ b  ■ c  ■ d  ■ e  ■ f  +2"),
+                (38, "■ a  ■ b  ■ c  ■ d  ■ e  ■ f  ■ g  ■ h"),
+            ] {
+                let mut terminal = Terminal::new(TestBackend::new(terminal_width, 1)).unwrap();
+                terminal
+                    .draw(|frame| render_legend(frame, &app, Rect::new(2, 0, legend_width, 1)))
+                    .unwrap();
+
+                assert_eq!(buffer_lines(&terminal)[0].trim(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn legend_preserves_model_name_truncation() {
+        let model = "model-with-a-long-name";
+        for (terminal_width, expected) in [(40, "■ model-with-…"), (120, "■ model-with-a-long…")]
+        {
+            let app = app_with_models(terminal_width, &[model]);
+            let mut terminal = Terminal::new(TestBackend::new(terminal_width, 1)).unwrap();
+            terminal
+                .draw(|frame| render_legend(frame, &app, frame.area()))
+                .unwrap();
+
+            assert_eq!(buffer_lines(&terminal)[0].trim_end(), expected);
+        }
     }
 
     #[test]
