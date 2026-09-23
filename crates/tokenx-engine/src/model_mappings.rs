@@ -207,6 +207,36 @@ mod tests {
     }
 
     #[test]
+    fn claude_version_spellings_preserve_family_and_version() {
+        for (family, major) in [("opus", 5), ("sonnet", 4), ("haiku", 4), ("fable", 5)] {
+            for minor in 1..=9 {
+                let expected = format!("claude-{family}-{major}.{minor}");
+                for observed in [
+                    expected.clone(),
+                    format!("claude-{family}-{major}-{minor}"),
+                    format!("claude-{major}-{minor}-{family}"),
+                    format!("{family}-{major}.{minor}"),
+                    format!("{family}-{major}-{minor}"),
+                    format!("anthropic/claude-{family}-{major}-{minor}"),
+                    format!("custom:Claude-{family}-{major}-{minor}"),
+                    format!("claude-{family}-{major}-{minor}-20260923"),
+                    format!("claude-{family}-{major}-{minor}-thinking"),
+                    format!("claude-{family}-{major}-{minor}-max"),
+                    format!("Claude {family} {major}.{minor} (Thinking)"),
+                ] {
+                    let mappings = ModelMappings::default();
+                    assert_eq!(mappings.canonicalize(&observed), expected, "{observed}");
+                    assert_eq!(
+                        mappings.resolved().canonicalize(&observed),
+                        expected,
+                        "{observed}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn defaults_and_user_override_share_one_boundary() {
         let mappings = ModelMappings::default();
         for model in [

@@ -636,6 +636,95 @@ fn model_mapping_overrides_reprice_cached_raw_models_and_standalone_lookup() {
 }
 
 #[test]
+fn claude_usage_merges_spellings_without_merging_versions_or_families() {
+    let tmp = create_empty_fixture_dir();
+    let project = tmp.path().join(".claude/projects/claude-versions");
+    fs::create_dir_all(&project).unwrap();
+    let records = [
+        "claude-opus-5",
+        "claude-opus-5-5",
+        "claude-opus-5.5",
+        "opus-5-5",
+        "opus-5.5",
+        "claude-opus-5-6",
+        "claude-opus-5.6",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4.6",
+        "claude-haiku-4-5",
+        "claude-haiku-4.5",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, model)| {
+        serde_json::json!({
+            "type": "assistant",
+            "timestamp": "2026-09-23T10:00:00Z",
+            "requestId": format!("request-{index}"),
+            "message": {
+                "id": format!("message-{index}"),
+                "model": model,
+                "usage": {"input_tokens": 100, "output_tokens": 10}
+            }
+        })
+        .to_string()
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+    fs::write(project.join("session.jsonl"), records).unwrap();
+    fs::write(
+        tmp.path().join(".tokenx/custom-pricing.json"),
+        r#"{"models":{
+            "claude-opus-5":{"input_cost_per_million_tokens":100,"output_cost_per_million_tokens":200},
+            "claude-opus-5.5":{"input_cost_per_million_tokens":1,"output_cost_per_million_tokens":2},
+            "claude-opus-5.6":{"input_cost_per_million_tokens":3,"output_cost_per_million_tokens":4},
+            "claude-sonnet-4.6":{"input_cost_per_million_tokens":5,"output_cost_per_million_tokens":6},
+            "claude-haiku-4.5":{"input_cost_per_million_tokens":7,"output_cost_per_million_tokens":8}
+        }}"#,
+    )
+    .unwrap();
+
+    for _ in 0..2 {
+        let output = offline_cmd_with_home(tmp.path())
+            .args([
+                "models",
+                "--client",
+                "claude",
+                "--since",
+                "2026-09-23",
+                "--until",
+                "2026-09-23",
+                "--json",
+                "--no-spinner",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(model_rows(&document).len(), 5);
+        assert_eq!(document["data"]["totals"]["tokens"], 1210);
+        for (model, input, output, cost) in [
+            ("claude-opus-5", 100, 10, 0.012),
+            ("claude-opus-5.5", 400, 40, 0.00048),
+            ("claude-opus-5.6", 200, 20, 0.00068),
+            ("claude-sonnet-4.6", 200, 20, 0.00112),
+            ("claude-haiku-4.5", 200, 20, 0.00156),
+        ] {
+            let row = model_rows(&document)
+                .iter()
+                .find(|row| row["modelId"] == model)
+                .unwrap();
+            assert_eq!(row["tokens"]["input"], input);
+            assert_eq!(row["tokens"]["output"], output);
+            assert!((row["cost"].as_f64().unwrap() - cost).abs() < 1e-12);
+        }
+    }
+}
+
+#[test]
 fn invalid_model_mapping_file_fails_before_acquisition() {
     let tmp = create_empty_fixture_dir();
     let path = tmp.path().join(".tokenx/model-mappings.toml");

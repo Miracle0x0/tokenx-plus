@@ -51,6 +51,27 @@ fn inferred_provider_enables_provider_scoped_exact_lookup() {
 }
 
 #[test]
+fn opus_5_5_spellings_use_their_own_price() {
+    let lookup = PricingLookup::new(
+        HashMap::from([
+            ("claude-opus-5".into(), pricing(1.0, 2.0)),
+            ("claude-opus-5.5".into(), pricing(3.0, 4.0)),
+        ]),
+        HashMap::new(),
+    );
+    let without_minor = PricingLookup::new(
+        HashMap::from([("claude-opus-5".into(), pricing(1.0, 2.0))]),
+        HashMap::new(),
+    );
+    for observed in ["claude-opus-5-5", "claude-opus-5.5", "opus-5-5", "opus-5.5"] {
+        let result = lookup.lookup(observed).unwrap();
+        assert_eq!(result.matched_key, "claude-opus-5.5", "{observed}");
+        assert_eq!(result.pricing.input_cost_per_token, Some(3.0));
+        assert!(without_minor.lookup(observed).is_none(), "{observed}");
+    }
+}
+
+#[test]
 fn observed_provider_takes_precedence_over_family_inference() {
     let lookup = PricingLookup::new(
         HashMap::from([
