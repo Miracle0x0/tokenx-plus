@@ -50,7 +50,11 @@ shards and recomputes prices, aggregate buckets, and sessions together. Shard
 and Generation envelopes use new versions for the changed wire types.
 
 The default rules include `deepseek-v4.1-*` and `deepseek-flash`, both targeting
-`deepseek-v4.1-flash`, as well as the existing named aliases.
+`deepseek-v4.1-flash`, as well as explicit Claude Opus 5 preview and routing
+aliases. Modern Claude version spellings normalize by family and actual
+version: `claude-opus-5-5` and `opus-5.5` become `claude-opus-5.5`, while
+`claude-opus-5-6` becomes `claude-opus-5.6` and `claude-sonnet-4-6` becomes
+`claude-sonnet-4.6`. Different families and versions remain separate identities.
 
 ## Consequences
 

@@ -370,9 +370,6 @@ fn canonicalize_deepseek_observed_model(model: &str) -> Option<String> {
 fn canonicalize_modern_claude_observed_model(model: &str) -> Option<String> {
     let model = canonical_model_segment(model);
     let model = model.strip_suffix("-thinking").unwrap_or(model);
-    if is_claude_opus_5_model(model) {
-        return None;
-    }
 
     let parts: Vec<&str> = model
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -523,11 +520,13 @@ mod tests {
     }
 
     #[test]
-    fn canonicalizes_claude_opus_5_dash_variants_to_the_family_id() {
+    fn canonicalizes_claude_opus_5_release_and_route_aliases() {
         let cases = [
             "claude-opus-5-preview",
             "claude-opus-5-20260801",
-            "claude-opus-5-1",
+            "claude-opus-5-thinking",
+            "anthropic/claude-opus-5-aws",
+            "anthropic/claude-opus-5-ps-aws-dst",
             "anthropic/claude-opus-5-max",
             "Claude Opus 5 Preview",
         ];
@@ -541,6 +540,11 @@ mod tests {
         }
 
         assert_eq!(canonicalize_model_id("claude-opus-5.1"), "claude-opus-5.1");
+        assert_eq!(canonicalize_model_id("claude-opus-5-1"), "claude-opus-5.1");
+        assert_eq!(
+            canonicalize_model_id("claude-opus-5-unrecognized"),
+            "claude-opus-5-unrecognized"
+        );
         assert_eq!(
             canonicalize_model_id("claude-sonnet-5-preview"),
             "claude-sonnet-5-preview"
