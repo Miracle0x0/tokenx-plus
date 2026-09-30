@@ -222,6 +222,7 @@ fn parse_usage_row(
         output,
         cache_read: raw_cache_read,
         cache_write: raw_cache_write,
+        cache_write_1h: 0,
         reasoning: raw_reasoning,
     };
     let Some(total) = tokens.checked_total() else {

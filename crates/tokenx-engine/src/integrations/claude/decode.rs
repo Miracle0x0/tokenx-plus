@@ -349,6 +349,21 @@ pub struct ClaudeUsage {
     pub output_tokens: Option<i64>,
     pub cache_read_input_tokens: Option<i64>,
     pub cache_creation_input_tokens: Option<i64>,
+    pub cache_creation: Option<ClaudeCacheCreation>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClaudeCacheCreation {
+    pub ephemeral_1h_input_tokens: Option<i64>,
+}
+
+impl ClaudeUsage {
+    fn cache_write_1h(&self) -> i64 {
+        self.cache_creation
+            .as_ref()
+            .and_then(|creation| creation.ephemeral_1h_input_tokens)
+            .unwrap_or(0)
+    }
 }
 
 fn normalize_claude_agent_label(agent_type: &str) -> Option<String> {
@@ -1029,6 +1044,7 @@ fn parse_claude_file_with_project_resolver(
                         output: usage.output_tokens.unwrap_or(0),
                         cache_read: usage.cache_read_input_tokens.unwrap_or(0),
                         cache_write: usage.cache_creation_input_tokens.unwrap_or(0),
+                        cache_write_1h: usage.cache_write_1h(),
                         reasoning: 0,
                     })
                     .unwrap_or_default();
@@ -1293,6 +1309,14 @@ fn parse_claude_file_with_project_resolver(
         }
     }
 
+    // Merge raw stream maxima before bounding the subset: a later duplicate
+    // can supply the total without repeating the one-hour split.
+    for message in &mut messages {
+        message.tokens.cache_write_1h = message
+            .tokens
+            .cache_write_1h
+            .min(message.tokens.cache_write);
+    }
     messages.retain(|message| crate::has_positive_tokens(&message.tokens));
 
     let project_dependency = apply_resolved_project_workspace(
@@ -1645,6 +1669,7 @@ fn merge_claude_duplicate(existing: &mut UsageRecord, usage: &ClaudeUsage, parse
     t.cache_write = t
         .cache_write
         .max(usage.cache_creation_input_tokens.unwrap_or(0));
+    t.cache_write_1h = t.cache_write_1h.max(usage.cache_write_1h());
 
     if parsed_timestamp >= existing.timestamp {
         existing.set_timestamp(parsed_timestamp);
@@ -1777,6 +1802,7 @@ fn extract_claude_tool_result_message(
             output: 0,
             cache_read: 0,
             cache_write: 0,
+            cache_write_1h: 0,
             reasoning: 0,
         },
         0.0,
@@ -2923,7 +2949,83 @@ mod tests {
         assert_eq!(messages[0].tokens.output, 500);
         assert_eq!(messages[0].tokens.cache_read, 200);
         assert_eq!(messages[0].tokens.cache_write, 100);
+        assert_eq!(messages[0].tokens.cache_write_1h, 0);
         assert_eq!(messages[0].tokens.reasoning, 0);
+    }
+
+    #[test]
+    fn one_hour_cache_creation_is_a_subset_of_total_writes() {
+        for (hourly, expected) in [(None, 0), (Some(0), 0), (Some(60), 60), (Some(140), 100)] {
+            let mut usage = serde_json::json!({"cache_creation_input_tokens": 100});
+            if let Some(hourly) = hourly {
+                usage["cache_creation"] = serde_json::json!({
+                    "ephemeral_5m_input_tokens": 40,
+                    "ephemeral_1h_input_tokens": hourly
+                });
+            }
+            let entry = serde_json::json!({
+                "type": "assistant", "timestamp": "2026-09-21T10:00:00Z",
+                "message": {"id": "message", "model": "claude-sonnet-4.6", "usage": usage}
+            });
+            let file = create_test_file(&entry.to_string());
+            let messages = parse_claude_file(file.path()).unwrap();
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].tokens.cache_write, 100);
+            assert_eq!(messages[0].tokens.cache_write_1h, expected);
+            assert_eq!(messages[0].tokens.total(), 100);
+        }
+    }
+
+    #[test]
+    fn one_hour_cache_creation_merges_raw_stream_maxima_before_clamping() {
+        let first = serde_json::json!({
+            "type": "assistant", "timestamp": "2026-09-21T10:00:00Z", "requestId": "request",
+            "message": {"id": "message", "model": "claude-sonnet-4.6", "usage": {
+                "cache_creation_input_tokens": 50,
+                "cache_creation": {"ephemeral_1h_input_tokens": 100}
+            }}
+        });
+        let last = serde_json::json!({
+            "type": "assistant", "timestamp": "2026-09-21T10:00:01Z", "requestId": "request",
+            "message": {"id": "message", "model": "claude-sonnet-4.6", "usage": {
+                "cache_creation_input_tokens": 200, "output_tokens": 10
+            }}
+        });
+        for entries in [[&first, &last], [&last, &first]] {
+            let file = create_test_file(&format!("{}\n{}", entries[0], entries[1]));
+            let messages = parse_claude_file(file.path()).unwrap();
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].tokens.cache_write, 200);
+            assert_eq!(messages[0].tokens.cache_write_1h, 100);
+            assert_eq!(messages[0].tokens.total(), 210);
+        }
+    }
+
+    #[test]
+    fn invalid_one_hour_cache_creation_reports_damage_and_keeps_confirmed_usage() {
+        for hourly in [serde_json::json!(-1), serde_json::json!("invalid")] {
+            let interrupts = hourly.is_string();
+            let bad = serde_json::json!({
+                "type": "assistant", "timestamp": "2026-09-21T10:00:00Z",
+                "message": {"id": "bad", "model": "claude-sonnet-4.6", "usage": {
+                    "cache_creation_input_tokens": 100,
+                    "cache_creation": {"ephemeral_1h_input_tokens": hourly}
+                }}
+            });
+            let good = serde_json::json!({
+                "type": "assistant", "timestamp": "2026-09-21T10:00:01Z",
+                "message": {"id": "good", "model": "claude-sonnet-4.6", "usage": {
+                    "cache_creation_input_tokens": 100,
+                    "cache_creation": {"ephemeral_1h_input_tokens": 60}
+                }}
+            });
+            let file = create_test_file(&format!("{good}\n{bad}"));
+            let scanned = super::parse_claude_file(file.path()).unwrap();
+            assert_eq!(scanned.messages.len(), 1);
+            assert_eq!(scanned.messages[0].tokens.cache_write_1h, 60);
+            assert_eq!(scanned.rejections.total(), 1);
+            assert_eq!(scanned.interrupted.is_some(), interrupts);
+        }
     }
 
     #[test]

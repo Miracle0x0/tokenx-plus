@@ -173,6 +173,7 @@ fn parse_amp_ledger_records(
             output: tokens.output.unwrap_or(0).max(0),
             cache_read: tokens.cache_read_input_tokens.unwrap_or(0).max(0),
             cache_write: tokens.cache_creation_input_tokens.unwrap_or(0).max(0),
+            cache_write_1h: 0,
             reasoning: 0,
         };
         let Some(token_total) = tokens.checked_total() else {
@@ -243,6 +244,7 @@ fn parse_amp_message_records(
             output: usage.output_tokens.unwrap_or(0).max(0),
             cache_read: usage.cache_read_input_tokens.unwrap_or(0).max(0),
             cache_write: usage.cache_creation_input_tokens.unwrap_or(0).max(0),
+            cache_write_1h: 0,
             reasoning: 0,
         };
         let Some(token_total) = tokens.checked_total() else {

@@ -521,7 +521,14 @@ fn compute_cost_applies_multiple_tiers_in_order() {
         ..Default::default()
     };
 
-    let cost = compute_cost(&model_pricing, 300_000, 0, 0, 0, 0).unwrap();
+    let cost = compute_cost(
+        &model_pricing,
+        &TokenBreakdown {
+            input: 300_000,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let expected = 128_000.0 + 72_000.0 * 2.0 + 56_000.0 * 3.0 + 16_000.0 * 4.0 + 28_000.0 * 5.0;
 
     assert_eq!(cost, expected);
@@ -538,7 +545,15 @@ fn compute_cost_applies_cache_tiers_per_bucket() {
         ..Default::default()
     };
 
-    let cost = compute_cost(&model_pricing, 0, 0, 300_000, 300_000, 0).unwrap();
+    let cost = compute_cost(
+        &model_pricing,
+        &TokenBreakdown {
+            cache_read: 300_000,
+            cache_write: 300_000,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let expected_cache_read = 200_000.0 + 72_000.0 * 2.0 + 28_000.0 * 3.0;
     let expected_cache_write = 200_000.0 * 4.0 + 100_000.0 * 5.0;
 
@@ -555,7 +570,18 @@ fn compute_cost_ignores_invalid_prices() {
     };
 
     assert_eq!(
-        compute_cost(&model_pricing, 10, 10, 10, 10, 10).unwrap(),
+        compute_cost(
+            &model_pricing,
+            &TokenBreakdown {
+                input: 10,
+                output: 10,
+                cache_read: 10,
+                cache_write: 10,
+                reasoning: 10,
+                ..Default::default()
+            }
+        )
+        .unwrap(),
         0.0
     );
 }
@@ -563,7 +589,15 @@ fn compute_cost_ignores_invalid_prices() {
 #[test]
 fn compute_cost_rejects_output_reasoning_token_overflow() {
     let model_pricing = pricing(0.0, 1.0);
-    let error = compute_cost(&model_pricing, 0, i64::MAX, 0, 0, 1).unwrap_err();
+    let error = compute_cost(
+        &model_pricing,
+        &TokenBreakdown {
+            output: i64::MAX,
+            reasoning: 1,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
 
     assert_eq!(error, PricingComputationError::OutputReasoningTokenOverflow);
 }
@@ -571,10 +605,150 @@ fn compute_cost_rejects_output_reasoning_token_overflow() {
 #[test]
 fn compute_cost_rejects_non_finite_component_cost() {
     let model_pricing = pricing(f64::MAX, 0.0);
-    let error = compute_cost(&model_pricing, i64::MAX, 0, 0, 0, 0).unwrap_err();
+    let error = compute_cost(
+        &model_pricing,
+        &TokenBreakdown {
+            input: i64::MAX,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
 
     assert_eq!(
         error,
         PricingComputationError::NonFiniteCost { component: "input" }
+    );
+}
+
+#[test]
+fn compute_cost_prices_mixed_cache_durations_at_their_published_rates() {
+    let row = ModelPricing {
+        cache_creation_input_token_cost: Some(1.25e-5),
+        cache_creation_input_token_cost_above_1hr: Some(2e-5),
+        ..Default::default()
+    };
+    let usage = TokenBreakdown {
+        cache_write: 200_000,
+        cache_write_1h: 100_000,
+        ..Default::default()
+    };
+    assert!((compute_cost(&row, &usage).unwrap() - 3.25).abs() < 1e-12);
+    assert_eq!(usage.total(), 200_000);
+}
+
+#[test]
+fn compute_cost_prices_one_hour_cache_writes_across_the_200k_tier() {
+    let row = ModelPricing {
+        cache_creation_input_token_cost: Some(1.0),
+        cache_creation_input_token_cost_above_200k_tokens: Some(2.0),
+        cache_creation_input_token_cost_above_1hr: Some(3.0),
+        cache_creation_input_token_cost_above_1hr_above_200k_tokens: Some(4.0),
+        ..Default::default()
+    };
+    for hourly in [200_000, 200_001] {
+        let usage = TokenBreakdown {
+            cache_write: 200_001 + hourly,
+            cache_write_1h: hourly,
+            ..Default::default()
+        };
+        assert_eq!(
+            compute_cost(&row, &usage).unwrap(),
+            200_000.0 + 2.0 + 200_000.0 * 3.0 + (hourly - 200_000) as f64 * 4.0
+        );
+    }
+}
+
+#[test]
+fn one_hour_only_pricing_rows_are_usable_and_accept_explicit_zero_rates() {
+    for rate in [0.0, 2e-5] {
+        let lookup = PricingLookup::new(
+            HashMap::from([(
+                "claude-sonnet-4.6".into(),
+                ModelPricing {
+                    cache_creation_input_token_cost_above_1hr: Some(rate),
+                    ..Default::default()
+                },
+            )]),
+            HashMap::new(),
+        );
+        assert!(lookup.lookup("claude-sonnet-4.6").is_some());
+        let usage = TokenBreakdown {
+            cache_write: 100_000,
+            cache_write_1h: 100_000,
+            ..Default::default()
+        };
+        assert_eq!(
+            lookup
+                .calculate_cost_with_provider("claude-sonnet-4.6", Some("anthropic"), &usage)
+                .unwrap(),
+            100_000.0 * rate
+        );
+    }
+}
+
+#[test]
+fn missing_or_invalid_one_hour_rates_are_explicit_pricing_errors() {
+    let usage = TokenBreakdown {
+        cache_write: 300_000,
+        cache_write_1h: 100_000,
+        ..Default::default()
+    };
+    for rate in [None, Some(-1.0), Some(f64::NAN), Some(f64::INFINITY)] {
+        let row = ModelPricing {
+            cache_creation_input_token_cost: Some(1.0),
+            cache_creation_input_token_cost_above_200k_tokens: Some(2.0),
+            cache_creation_input_token_cost_above_1hr: rate,
+            ..Default::default()
+        };
+        assert_eq!(
+            compute_cost(&row, &usage),
+            Err(PricingComputationError::MissingCacheWrite1hRate)
+        );
+        let ordinary = TokenBreakdown {
+            cache_write_1h: 0,
+            ..usage.clone()
+        };
+        assert_eq!(compute_cost(&row, &ordinary).unwrap(), 400_000.0);
+    }
+}
+
+#[test]
+fn one_hour_pricing_keeps_selected_provider_and_catalog_authority() {
+    let complete = ModelPricing {
+        cache_creation_input_token_cost: Some(1.25e-5),
+        cache_creation_input_token_cost_above_1hr: Some(2e-5),
+        ..Default::default()
+    };
+    let incomplete = ModelPricing {
+        cache_creation_input_token_cost_above_1hr: None,
+        ..complete.clone()
+    };
+    let usage = TokenBreakdown {
+        cache_write: 100,
+        cache_write_1h: 100,
+        ..Default::default()
+    };
+    let scoped = PricingLookup::new(
+        HashMap::from([("claude-sonnet-4.6".into(), complete.clone())]),
+        HashMap::from([("anthropic/claude-sonnet-4.6".into(), incomplete.clone())]),
+    );
+    assert_eq!(
+        scoped.calculate_cost_with_provider("claude-sonnet-4.6", Some("anthropic"), &usage),
+        Err(PricingComputationError::MissingCacheWrite1hRate)
+    );
+    let ordered = PricingLookup::new_with_models_dev_and_order(
+        HashMap::from([("claude-sonnet-4.6".into(), complete)]),
+        HashMap::from([("claude-sonnet-4.6".into(), incomplete)]),
+        HashMap::new(),
+        serde_json::from_str(r#"["openrouter","litellm","models.dev"]"#).unwrap(),
+    );
+    assert_eq!(
+        ordered.calculate_cost_with_provider("claude-sonnet-4.6", Some("anthropic"), &usage),
+        Err(PricingComputationError::MissingCacheWrite1hRate)
+    );
+    let empty = PricingLookup::new(HashMap::new(), HashMap::new());
+    assert_eq!(
+        empty.calculate_cost_with_provider("claude-sonnet-4.6", Some("anthropic"), &usage),
+        Err(PricingComputationError::MissingCacheWrite1hRate)
     );
 }

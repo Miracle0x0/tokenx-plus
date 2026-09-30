@@ -120,6 +120,7 @@ pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
             output: output.max(0),
             cache_read: cache_read.max(0),
             cache_write: cache_write.max(0),
+            cache_write_1h: 0,
             reasoning: reasoning.max(0),
         };
         let Some(token_total) = tokens.checked_total() else {

@@ -171,6 +171,7 @@ fn deserialize_tokens(value: &Value) -> SessionParseResult<Option<GeminiTokens>>
         output: tokens.output.unwrap_or(0),
         cache_read: tokens.cached.unwrap_or(0),
         cache_write: tokens.tool.unwrap_or(0),
+        cache_write_1h: 0,
         reasoning: tokens.thoughts.unwrap_or(0),
     };
     if additive_tokens.checked_total().is_none() {
@@ -376,6 +377,7 @@ fn build_gemini_token_message(
             output: tokens.output.unwrap_or(0).max(0),
             cache_read,
             cache_write: 0,
+            cache_write_1h: 0,
             reasoning: tokens.thoughts.unwrap_or(0).max(0),
         },
         0.0,
@@ -709,6 +711,7 @@ fn build_messages_from_usages(
                     output: usage.output.max(0),
                     cache_read,
                     cache_write: 0,
+                    cache_write_1h: 0,
                     reasoning: usage.reasoning.max(0),
                 },
                 0.0,
@@ -922,6 +925,7 @@ fn extract_gemini_usage_from_value(
         output,
         cache_read: cached,
         cache_write: 0,
+        cache_write_1h: 0,
         reasoning,
     })
     .checked_total()

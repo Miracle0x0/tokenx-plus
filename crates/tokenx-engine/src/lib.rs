@@ -129,6 +129,8 @@ pub struct TokenBreakdown {
     pub output: i64,
     pub cache_read: i64,
     pub cache_write: i64,
+    /// One-hour cache creation tokens, already included in `cache_write`.
+    pub cache_write_1h: i64,
     pub reasoning: i64,
 }
 
@@ -139,6 +141,7 @@ impl TokenBreakdown {
             output: self.output.checked_add(other.output)?,
             cache_read: self.cache_read.checked_add(other.cache_read)?,
             cache_write: self.cache_write.checked_add(other.cache_write)?,
+            cache_write_1h: self.cache_write_1h.checked_add(other.cache_write_1h)?,
             reasoning: self.reasoning.checked_add(other.reasoning)?,
         })
     }
@@ -656,7 +659,7 @@ pub(crate) fn positive_token_total(tokens: &TokenBreakdown) -> Option<i64> {
         tokens.cache_write,
         tokens.reasoning,
     ];
-    if buckets.into_iter().any(|value| value < 0) {
+    if buckets.into_iter().any(|value| value < 0) || tokens.cache_write_1h < 0 {
         return None;
     }
     buckets.into_iter().try_fold(0_i64, i64::checked_add)
@@ -768,6 +771,8 @@ fn record_finalization(record: &records::UsageRecord) -> RecordFinalization {
     ]
     .into_iter()
     .any(|value| value < 0)
+        || record.tokens.cache_write_1h < 0
+        || record.tokens.cache_write_1h > record.tokens.cache_write
         || record.tokens.checked_total().is_none()
     {
         return RecordFinalization::Reject(RecordRejectionReason::InvalidUsageRecord);
@@ -832,7 +837,8 @@ fn price_source_eligible_messages<M: AsMut<records::UsageRecord>>(
         if let Err(error) = apply_canonical_token_pricing(message, pricing) {
             match error {
                 pricing::PricingComputationError::UnsupportedServiceTier { .. }
-                | pricing::PricingComputationError::MissingServiceTierRate { .. } => {
+                | pricing::PricingComputationError::MissingServiceTierRate { .. }
+                | pricing::PricingComputationError::MissingCacheWrite1hRate => {
                     message.pricing_error = Some(error);
                 }
                 _ => {

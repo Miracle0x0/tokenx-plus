@@ -612,7 +612,11 @@ impl Generation {
 
     pub fn rebind_pricing_diagnostics(&mut self, diagnostics: PricingDiagnostics) {
         self.pricing_diagnostics.retain(|diagnostic| {
-            diagnostic.kind() == crate::pricing::PricingDiagnosticKind::ServiceTierUnavailable
+            matches!(
+                diagnostic.kind(),
+                crate::pricing::PricingDiagnosticKind::ServiceTierUnavailable
+                    | crate::pricing::PricingDiagnosticKind::CacheWrite1hUnavailable
+            )
         });
         self.pricing_diagnostics.extend(diagnostics);
     }

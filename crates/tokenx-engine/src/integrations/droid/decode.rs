@@ -388,6 +388,7 @@ pub fn parse_droid_file(path: &Path) -> SessionParseResult<ScannedInput> {
         output: usage.output_tokens.unwrap_or(0),
         cache_read: usage.cache_read_tokens.unwrap_or(0),
         cache_write: usage.cache_creation_tokens.unwrap_or(0),
+        cache_write_1h: 0,
         reasoning: usage.thinking_tokens.unwrap_or(0),
     };
     if [

@@ -43,6 +43,8 @@ pub struct ModelPricing {
     pub output_cost_per_token_above_272k_tokens: Option<f64>,
     pub cache_creation_input_token_cost: Option<f64>,
     pub cache_creation_input_token_cost_above_200k_tokens: Option<f64>,
+    pub cache_creation_input_token_cost_above_1hr: Option<f64>,
+    pub cache_creation_input_token_cost_above_1hr_above_200k_tokens: Option<f64>,
     pub cache_creation_input_token_cost_above_272k_tokens: Option<f64>,
     pub cache_read_input_token_cost: Option<f64>,
     pub cache_read_input_token_cost_above_200k_tokens: Option<f64>,

@@ -485,6 +485,7 @@ fn tokens_from_usage(usage: &Value) -> Result<Option<TokenBreakdown>, ()> {
         output: raw_output.saturating_sub(reasoning).max(0),
         cache_read,
         cache_write,
+        cache_write_1h: 0,
         reasoning,
     };
     match tokens.checked_total() {

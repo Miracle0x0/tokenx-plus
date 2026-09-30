@@ -165,6 +165,7 @@ pub fn parse_kilo_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
             output: tokens.output.max(0),
             cache_read: tokens.cache.read.max(0),
             cache_write: tokens.cache.write.max(0),
+            cache_write_1h: 0,
             reasoning: tokens.reasoning.unwrap_or(0).max(0),
         };
         let Some(token_total) = token_breakdown.checked_total() else {

@@ -140,6 +140,7 @@ pub fn parse_commandcode_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     output,
                     cache_read: 0,
                     cache_write: 0,
+                    cache_write_1h: 0,
                     reasoning: 0,
                 };
                 if tokens.checked_total().is_none() {

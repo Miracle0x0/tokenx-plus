@@ -161,6 +161,7 @@ impl CodeBuddyUsage {
                 self.cached_write_tokens,
                 self.prompt_cache_write_tokens,
             ]),
+            cache_write_1h: 0,
             reasoning: first_present(&[
                 self.completion_thinking_tokens,
                 self.completion_thinking_tokens_camel,

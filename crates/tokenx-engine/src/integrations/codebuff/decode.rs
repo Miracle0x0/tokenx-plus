@@ -265,6 +265,7 @@ impl AssistantUsage {
             output: self.output_tokens,
             cache_read: self.cache_read_input_tokens,
             cache_write: self.cache_creation_input_tokens,
+            cache_write_1h: 0,
             reasoning: 0,
         };
         let total = tokens

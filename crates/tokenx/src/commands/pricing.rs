@@ -108,6 +108,10 @@ pub(crate) async fn run_pricing_lookup(
                     #[serde(skip_serializing_if = "Option::is_none")]
                     cache_creation_input_token_cost: Option<f64>,
                     #[serde(skip_serializing_if = "Option::is_none")]
+                    cache_creation_input_token_cost_above_1hr: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    cache_creation_input_token_cost_above_1hr_above_200k_tokens: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
                     time_period_prices: Option<Vec<TimePeriodPricingValues>>,
                 }
 
@@ -150,6 +154,12 @@ pub(crate) async fn run_pricing_lookup(
                         cache_creation_input_token_cost: pricing
                             .pricing
                             .cache_creation_input_token_cost,
+                        cache_creation_input_token_cost_above_1hr: pricing
+                            .pricing
+                            .cache_creation_input_token_cost_above_1hr,
+                        cache_creation_input_token_cost_above_1hr_above_200k_tokens: pricing
+                            .pricing
+                            .cache_creation_input_token_cost_above_1hr_above_200k_tokens,
                         time_period_prices: pricing.pricing.time_period_prices.as_ref().map(
                             |periods| {
                                 periods
@@ -240,6 +250,15 @@ pub(crate) async fn run_pricing_lookup(
                         )
                     );
                 }
+                if let Some(rate) = pricing.pricing.cache_creation_input_token_cost_above_1hr {
+                    println!(
+                        "  {}",
+                        rust_i18n::t!(
+                            "commands.pricing.rate_cache_write_1h",
+                            price = format!("${:.2}", rate * 1_000_000.0)
+                        )
+                    );
+                }
                 if let Some(periods) = pricing.pricing.time_period_prices.as_ref() {
                     println!();
                     println!("  {}", rust_i18n::t!("commands.pricing.time_periods_title"));
@@ -323,6 +342,10 @@ pub(crate) fn run_pricing_list_overrides(
         cache_read_input_token_cost_per_million_tokens: Option<f64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_creation_input_token_cost_per_million_tokens: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_creation_input_token_cost_per_million_tokens_above_1hr: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens: Option<f64>,
     }
 
     fn entry(model_id: &str, pricing: &ModelPricing) -> OverrideEntry {
@@ -336,6 +359,11 @@ pub(crate) fn run_pricing_list_overrides(
             cache_creation_input_token_cost_per_million_tokens: per_million(
                 pricing.cache_creation_input_token_cost,
             ),
+            cache_creation_input_token_cost_per_million_tokens_above_1hr: per_million(
+                pricing.cache_creation_input_token_cost_above_1hr,
+            ),
+            cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens:
+                per_million(pricing.cache_creation_input_token_cost_above_1hr_above_200k_tokens),
         }
     }
 
@@ -426,6 +454,15 @@ pub(crate) fn run_pricing_list_overrides(
                 rust_i18n::t!(
                     "commands.pricing.rate_cache_write",
                     price = format!("${:.2}", cache_write)
+                )
+            );
+        }
+        if let Some(rate) = entry.cache_creation_input_token_cost_per_million_tokens_above_1hr {
+            println!(
+                "    {}",
+                rust_i18n::t!(
+                    "commands.pricing.rate_cache_write_1h",
+                    price = format!("${:.2}", rate)
                 )
             );
         }

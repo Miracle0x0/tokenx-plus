@@ -176,15 +176,7 @@ mod tests {
 
     fn cost(pricing: &ModelPricing, tier: Option<&str>, usage: &TokenBreakdown) -> f64 {
         let selected = effective_service_tier(pricing, tier, usage).unwrap();
-        compute_cost(
-            &selected,
-            usage.input,
-            usage.output,
-            usage.cache_read,
-            usage.cache_write,
-            usage.reasoning,
-        )
-        .unwrap()
+        compute_cost(&selected, usage).unwrap()
     }
 
     #[test]
@@ -197,6 +189,7 @@ mod tests {
             output: 2,
             cache_read: 4,
             cache_write: 3,
+            cache_write_1h: 0,
             reasoning: 1,
         };
         assert_eq!(cost(&row, Some("priority"), &usage), 78.0);
@@ -216,6 +209,7 @@ mod tests {
             output: 2,
             cache_read: 271_998,
             cache_write: 1,
+            cache_write_1h: 0,
             reasoning: 1,
         };
         assert_eq!(

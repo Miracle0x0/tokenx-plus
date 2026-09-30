@@ -185,6 +185,7 @@ fn parse_gen_metadata(
         output,
         cache_read,
         cache_write: 0,
+        cache_write_1h: 0,
         reasoning,
     };
     let token_total = tokens.checked_total().ok_or_else(|| {

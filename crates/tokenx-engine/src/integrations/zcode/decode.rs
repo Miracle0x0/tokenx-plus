@@ -108,6 +108,7 @@ impl ZcodeUsage {
             output: self.output.unwrap_or(0).max(0),
             cache_read,
             cache_write: self.cache_write.unwrap_or(0).max(0),
+            cache_write_1h: 0,
             reasoning: self.reasoning.unwrap_or(0).max(0),
         }
         .checked_total()
@@ -145,6 +146,7 @@ impl ZcodeUsage {
             output,
             cache_read,
             cache_write,
+            cache_write_1h: 0,
             reasoning,
         };
         if breakdown.checked_total()? == 0 {
@@ -311,6 +313,7 @@ pub fn parse_zcode_file(path: &Path) -> SessionParseResult<ScannedInput> {
                         output,
                         cache_read: 0,
                         cache_write: 0,
+                        cache_write_1h: 0,
                         reasoning: 0,
                     }
                 };
@@ -736,6 +739,7 @@ mod tests {
                 output: 45,
                 cache_read: 30,
                 cache_write: 10,
+                cache_write_1h: 0,
                 reasoning: 5,
             })
         );

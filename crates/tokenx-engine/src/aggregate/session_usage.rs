@@ -263,6 +263,7 @@ mod tests {
                 output: 4,
                 cache_read: -2,
                 cache_write: 3,
+                cache_write_1h: 0,
                 reasoning: 1,
             },
             0.25,

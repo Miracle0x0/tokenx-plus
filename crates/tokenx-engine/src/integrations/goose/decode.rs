@@ -208,6 +208,7 @@ pub fn parse_goose_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
                 output,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: if total > non_reasoning_tokens {
                     total - non_reasoning_tokens
                 } else {

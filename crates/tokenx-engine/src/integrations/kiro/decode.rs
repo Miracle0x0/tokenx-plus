@@ -498,6 +498,7 @@ pub fn parse_kiro_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 output,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             };
             tokens.checked_total().ok_or_else(|| {
@@ -729,6 +730,7 @@ fn parse_kiro_global_storage_file(path: &Path) -> SessionParseResult<ScannedInpu
             output,
             cache_read: 0,
             cache_write: 0,
+            cache_write_1h: 0,
             reasoning: 0,
         },
         0.0,
@@ -892,6 +894,7 @@ pub fn parse_kiro_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
                 output,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             };
             if tokens.checked_total().is_none() {
