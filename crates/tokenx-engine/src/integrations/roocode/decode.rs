@@ -65,6 +65,7 @@ pub fn parse_roocode_file(path: &Path) -> SessionParseResult<ScannedInput> {
             output: payload.tokens_out,
             cache_read: payload.cache_reads,
             cache_write: payload.cache_writes,
+            cache_write_1h: 0,
             reasoning: 0,
         };
         match crate::positive_token_total(&token_breakdown) {

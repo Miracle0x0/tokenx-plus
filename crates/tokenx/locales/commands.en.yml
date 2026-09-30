@@ -41,6 +41,7 @@ commands:
     rate_output: "Output: %{price} / 1M token"
     rate_cache_read: "Cache Read:  %{price} / 1M token"
     rate_cache_write: "Cache Write: %{price} / 1M token"
+    rate_cache_write_1h: "Cache Write (1h): %{price} / 1M token"
     time_periods_title: "Time-period rates (UTC):"
     every_day: "Every day"
     all_day: "All day"

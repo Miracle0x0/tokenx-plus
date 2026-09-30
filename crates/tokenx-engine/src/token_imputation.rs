@@ -45,6 +45,7 @@ pub(crate) fn impute_total_only_token_breakdown(total: i64) -> TokenBreakdown {
         output: values[1] as i64,
         cache_read: values[2] as i64,
         cache_write: values[3] as i64,
+        cache_write_1h: 0,
         reasoning: values[4] as i64,
     }
 }
@@ -150,6 +151,7 @@ pub(crate) fn impute_total_only_token_breakdowns(totals: &[i64]) -> Vec<TokenBre
             output: values[1] as i64,
             cache_read: values[2] as i64,
             cache_write: values[3] as i64,
+            cache_write_1h: 0,
             reasoning: values[4] as i64,
         })
         .collect()
@@ -170,6 +172,7 @@ mod tests {
                 output: 155_346,
                 cache_read: 33_846_861,
                 cache_write: 143_603,
+                cache_write_1h: 0,
                 reasoning: 49_025,
             }
         );
@@ -229,6 +232,7 @@ mod tests {
                 output: 155_346,
                 cache_read: 33_846_861,
                 cache_write: 143_603,
+                cache_write_1h: 0,
                 reasoning: 49_025,
             }
         );

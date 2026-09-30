@@ -45,6 +45,8 @@ pub enum PricingDiagnosticKind {
     Warning,
     /// Usage-derived failure that must survive catalog-diagnostic rebinding.
     ServiceTierUnavailable,
+    /// Usage-derived failure for an observed one-hour cache write.
+    CacheWrite1hUnavailable,
     CachedFallback,
     Unavailable,
 }
@@ -499,6 +501,7 @@ impl PricingService {
             output,
             cache_read,
             cache_write,
+            cache_write_1h: 0,
             reasoning,
         };
         self.calculate_cost_with_provider(model_id, None, &usage)
@@ -541,14 +544,7 @@ impl PricingService {
         if let Some(result) = self.custom.lookup_with_key(canonical_model_id) {
             let pricing =
                 service_tier::effective_service_tier(result.pricing, service_tier, usage)?;
-            return compute_cost(
-                &pricing,
-                usage.input,
-                usage.output,
-                usage.cache_read,
-                usage.cache_write,
-                usage.reasoning,
-            );
+            return compute_cost(&pricing, usage);
         }
 
         self.lookup.calculate_canonical_cost_with_provider_and_time(
@@ -1391,6 +1387,49 @@ mod tests {
     }
 
     #[test]
+    fn one_hour_cache_pricing_respects_custom_authority() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("custom-pricing.json");
+        let usage = TokenBreakdown {
+            cache_write: 100_000,
+            cache_write_1h: 100_000,
+            ..Default::default()
+        };
+        for hourly in [None, Some(7e-5)] {
+            let mut row = serde_json::json!({"input_cost_per_token": 1e-5});
+            if let Some(hourly) = hourly {
+                row["cache_creation_input_token_cost_above_1hr"] = hourly.into();
+            }
+            std::fs::write(
+                &path,
+                serde_json::json!({"models": {"claude-sonnet-4.6": row}}).to_string(),
+            )
+            .unwrap();
+            let service = PricingService::new_with_custom(
+                CustomPricing::load_from_path(&path),
+                HashMap::from([(
+                    "claude-sonnet-4.6".into(),
+                    ModelPricing {
+                        cache_creation_input_token_cost_above_1hr: Some(2e-5),
+                        ..Default::default()
+                    },
+                )]),
+                HashMap::new(),
+            );
+            let cost = service.calculate_cost_with_provider(
+                "claude-sonnet-4.6",
+                Some("anthropic"),
+                &usage,
+            );
+            if let Some(hourly) = hourly {
+                assert_eq!(cost.unwrap(), 100_000.0 * hourly);
+            } else {
+                assert_eq!(cost, Err(PricingComputationError::MissingCacheWrite1hRate));
+            }
+        }
+    }
+
+    #[test]
     fn catalog_identity_ignores_cache_timestamp_for_identical_data() {
         let temp = tempfile::TempDir::new().unwrap();
         let custom_path = temp.path().join("custom-pricing.json");
@@ -1785,6 +1824,7 @@ mod tests {
             output: 100_000,
             cache_read: 50_000,
             cache_write: 20_000,
+            cache_write_1h: 0,
             reasoning: 0,
         };
 

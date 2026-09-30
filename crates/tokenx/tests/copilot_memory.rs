@@ -11,7 +11,7 @@ const LARGE_COPILOT_FIXTURE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_COPILOT_RSS_KB: u64 = 128 * 1024;
 
 fn prime_pricing_cache(home: &Path) {
-    let payload = r#"{"version":2,"data":{}}"#;
+    let payload = r#"{"version":3,"data":{}}"#;
 
     let dir = home.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();

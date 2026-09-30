@@ -253,6 +253,8 @@ fn cached_usage_record_wire_shape_excludes_runtime_cost() {
         1,
         TokenBreakdown {
             input: 3,
+            cache_write: 100,
+            cache_write_1h: 60,
             ..TokenBreakdown::default()
         },
         123.45,
@@ -265,6 +267,43 @@ fn cached_usage_record_wire_shape_excludes_runtime_cost() {
     let restored = UsageRecord::from(cached);
     assert_eq!(restored.cost, 0.0);
     assert_eq!(restored.tokens.input, 3);
+    assert_eq!(restored.tokens.cache_write, 100);
+    assert_eq!(restored.tokens.cache_write_1h, 60);
+    assert_eq!(restored.tokens.total(), 103);
+}
+
+#[test]
+fn one_hour_cache_creation_survives_binary_record_shards() {
+    let root = TempDir::new().unwrap();
+    let input = write_temp_file(b"transcript");
+    let version = DecoderVersion::current(DecoderId::Claude);
+    let fingerprint = InputFingerprint::from_path(input.path()).unwrap();
+    let tokens = TokenBreakdown {
+        cache_write: 100,
+        cache_write_1h: 60,
+        ..Default::default()
+    };
+    let mut cache = InputRecordShardStore::with_cache_dir(root.path());
+    cache.insert(CachedInputEntry::new_with_version(
+        input.path(),
+        version,
+        fingerprint.clone(),
+        vec![UsageRecord::new(
+            "claude-sonnet-4.6",
+            "anthropic",
+            "session",
+            1,
+            tokens.clone(),
+            5.0,
+        )],
+        None,
+    ));
+    cache.save_if_dirty().unwrap();
+    let plan = CacheReadPlan::new(input.path(), version, fingerprint);
+    let path = shard_path_for_test(root.path(), input.path(), version);
+    let restored = read_shard_entry_with_plan(&path, &plan).unwrap();
+    assert_eq!(restored.records[0].tokens, tokens);
+    assert_eq!(restored.records[0].cost, 0.0);
 }
 
 #[test]
@@ -896,6 +935,7 @@ fn test_input_record_cache_round_trip() {
                 output: 2,
                 cache_read: 3,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             },
             17.5,
@@ -1050,6 +1090,7 @@ fn test_write_records_writes_borrowed_shard_without_dirty_entry() {
             output: 2,
             cache_read: 0,
             cache_write: 0,
+            cache_write_1h: 0,
             reasoning: 0,
         },
         99.0,
@@ -1120,6 +1161,7 @@ fn test_explicit_prune_removes_orphans_and_stale_decoder_contracts() {
                     output: 0,
                     cache_read: 0,
                     cache_write: 0,
+                    cache_write_1h: 0,
                     reasoning: 0,
                 },
                 0.0,
@@ -1339,6 +1381,7 @@ fn test_report_load_does_not_prune_orphaned_input_shards() {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             },
             0.0,
@@ -1757,6 +1800,7 @@ fn test_get_meta_ignores_stale_decoder_contract() {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             },
             0.0,
@@ -1801,6 +1845,7 @@ fn test_get_meta_ignores_stale_decoder_id() {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             },
             0.0,
@@ -1928,6 +1973,7 @@ fn test_same_path_different_decoder_versions_use_distinct_shards() {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             },
             0.0,
@@ -1948,6 +1994,7 @@ fn test_same_path_different_decoder_versions_use_distinct_shards() {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             },
             0.0,
@@ -2015,6 +2062,7 @@ fn test_take_records_revalidates_read_plan_after_shard_rewrite() {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             },
             0.0,
@@ -2047,6 +2095,7 @@ fn test_take_records_revalidates_read_plan_after_shard_rewrite() {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 0,
             },
             0.0,

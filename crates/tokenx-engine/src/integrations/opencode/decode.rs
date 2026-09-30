@@ -471,6 +471,7 @@ pub fn parse_opencode_sqlite(db_path: &Path) -> Result<ScannedInput, OpenCodeSql
             output,
             cache_read,
             cache_write,
+            cache_write_1h: 0,
             reasoning,
         };
         match crate::positive_token_total(&token_breakdown) {

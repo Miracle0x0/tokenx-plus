@@ -53,6 +53,8 @@ pub enum PricingComputationError {
         tier: String,
         component: &'static str,
     },
+    #[error("one-hour cache writes have no valid rate in the selected pricing row")]
+    MissingCacheWrite1hRate,
 }
 
 impl PricingLookup {
@@ -289,6 +291,7 @@ impl PricingLookup {
             output,
             cache_read,
             cache_write,
+            cache_write_1h: 0,
             reasoning,
         };
         self.calculate_cost_with_provider(model_id, None, &usage)
@@ -329,6 +332,9 @@ impl PricingLookup {
         service_tier: Option<&str>,
     ) -> Result<f64, PricingComputationError> {
         let Some(result) = self.lookup_canonical_with_provider(model_id, provider_id) else {
+            if usage.cache_write_1h > 0 {
+                return Err(PricingComputationError::MissingCacheWrite1hRate);
+            }
             if let Some(tier) = service_tier.filter(|tier| *tier != "default") {
                 return Err(PricingComputationError::MissingServiceTierRate {
                     tier: tier.to_string(),
@@ -345,14 +351,7 @@ impl PricingLookup {
         };
 
         let pricing = super::service_tier::effective_service_tier(&pricing, service_tier, usage)?;
-        compute_cost(
-            &pricing,
-            usage.input,
-            usage.output,
-            usage.cache_read,
-            usage.cache_write,
-            usage.reasoning,
-        )
+        compute_cost(&pricing, usage)
     }
 }
 
@@ -449,6 +448,8 @@ fn has_any_usable_pricing(pricing: &ModelPricing) -> bool {
         pricing.cache_read_input_token_cost_above_200k_tokens,
         pricing.cache_read_input_token_cost_above_272k_tokens,
         pricing.cache_creation_input_token_cost_above_200k_tokens,
+        pricing.cache_creation_input_token_cost_above_1hr,
+        pricing.cache_creation_input_token_cost_above_1hr_above_200k_tokens,
     ]
     .into_iter()
     .any(|price| price.is_some_and(is_valid_price_value))
@@ -571,11 +572,7 @@ fn build_lookup_cache_key(model_id: &str, provider_scope: Option<&str>) -> Strin
 
 pub fn compute_cost(
     pricing: &ModelPricing,
-    input: i64,
-    output: i64,
-    cache_read: i64,
-    cache_write: i64,
-    reasoning: i64,
+    usage: &TokenBreakdown,
 ) -> Result<f64, PricingComputationError> {
     let safe_price = |price: Option<f64>| {
         price
@@ -617,13 +614,23 @@ pub fn compute_cost(
         )
     };
 
-    let input = input.max(0) as f64;
-    let output = output
+    let input = usage.input.max(0) as f64;
+    let output = usage
+        .output
         .max(0)
-        .checked_add(reasoning.max(0))
+        .checked_add(usage.reasoning.max(0))
         .ok_or(PricingComputationError::OutputReasoningTokenOverflow)? as f64;
-    let cache_read = cache_read.max(0) as f64;
-    let cache_write = cache_write.max(0) as f64;
+    let cache_read = usage.cache_read.max(0) as f64;
+    let cache_write_1h = usage.cache_write_1h.max(0).min(usage.cache_write.max(0));
+    let cache_write = (usage.cache_write.max(0) - cache_write_1h) as f64;
+    let cache_write_1h = cache_write_1h as f64;
+    if cache_write_1h > 0.0
+        && !pricing
+            .cache_creation_input_token_cost_above_1hr
+            .is_some_and(is_valid_price_value)
+    {
+        return Err(PricingComputationError::MissingCacheWrite1hRate);
+    }
 
     let input_cost = tiered_cost(
         input,
@@ -702,8 +709,18 @@ pub fn compute_cost(
         "cache-write",
     )?;
 
+    let cache_write_1h_cost = tiered_cost(
+        cache_write_1h,
+        pricing.cache_creation_input_token_cost_above_1hr,
+        &[(
+            TIERED_PRICING_THRESHOLD_200K_TOKENS,
+            pricing.cache_creation_input_token_cost_above_1hr_above_200k_tokens,
+        )],
+        "cache-write-1h",
+    )?;
+
     finite_cost(
-        input_cost + output_cost + cache_read_cost + cache_write_cost,
+        input_cost + output_cost + cache_read_cost + cache_write_cost + cache_write_1h_cost,
         "total",
     )
 }

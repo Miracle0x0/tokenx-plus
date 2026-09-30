@@ -10,7 +10,7 @@ use tempfile::TempDir;
 // ── Fixture helpers ────────────────────────────────────────────────────────
 
 fn prime_pricing_cache(base: &Path) {
-    let payload = r#"{"version":2,"data":{}}"#;
+    let payload = r#"{"version":3,"data":{}}"#;
 
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
@@ -20,7 +20,7 @@ fn prime_pricing_cache(base: &Path) {
 }
 
 fn prime_override_pricing_cache(config_dir: &Path) {
-    let payload = r#"{"version":2,"data":{}}"#;
+    let payload = r#"{"version":3,"data":{}}"#;
 
     let cache_dir = config_dir.join("cache");
     fs::create_dir_all(&cache_dir).unwrap();
@@ -745,8 +745,8 @@ fn invalid_model_mapping_file_fails_before_acquisition() {
 }
 
 fn write_pricing_cache(base: &Path, timestamp: u64) {
-    let litellm = r#"{"version":2,"data":{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001},"claude-sonnet-4":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}"#;
-    let empty = r#"{"version":2,"data":{}}"#;
+    let litellm = r#"{"version":3,"data":{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001},"claude-sonnet-4":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}"#;
+    let empty = r#"{"version":3,"data":{}}"#;
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
     for (name, payload) in [
@@ -777,7 +777,7 @@ fn create_pricing_fixture_dir() -> TempDir {
 
 fn write_fireworks_pricing_cache(base: &Path) {
     let litellm = serde_json::json!({
-        "version": 2,
+        "version": tokenx_engine::pricing::cache::CACHE_FORMAT_VERSION,
         "data": {
             "fireworks_ai/accounts/fireworks/models/deepseek-r1-0528-distill-qwen3-8b": {
                 "input_cost_per_token": 0.0000002,
@@ -786,7 +786,7 @@ fn write_fireworks_pricing_cache(base: &Path) {
         }
     });
     let openrouter = serde_json::json!({
-        "version": 2,
+        "version": tokenx_engine::pricing::cache::CACHE_FORMAT_VERSION,
         "data": {
             "deepseek/deepseek-v4-pro": {
                 "input_cost_per_token": 0.000001,
@@ -819,7 +819,7 @@ fn write_fireworks_pricing_cache(base: &Path) {
     fs::write(
         dir.join("pricing-models-dev.json"),
         serde_json::to_vec(&serde_json::json!({
-            "version": 2,
+            "version": tokenx_engine::pricing::cache::CACHE_FORMAT_VERSION,
                 "data": {}
         }))
         .unwrap(),
@@ -1979,6 +1979,180 @@ fn test_every_local_json_command_uses_the_common_envelope() {
         assert!(document["metadata"]["processingTimeMs"].is_number());
         assert!(document["metadata"]["inputFootprint"].is_object());
     }
+}
+
+#[test]
+fn claude_one_hour_cache_prices_and_warnings_survive_input_cache_and_repricing() {
+    for hourly in [None, Some(0.0), Some(2e-5)] {
+        let tmp = create_empty_fixture_dir();
+        let project = tmp.path().join(".claude/projects/-fixture");
+        fs::create_dir_all(&project).unwrap();
+        let records = [0, 100_000].into_iter().enumerate().map(|(index, hourly)| {
+            serde_json::json!({
+                "type": "assistant", "timestamp": "2026-09-21T10:00:00Z", "cwd": "/fixture",
+                "requestId": format!("request-{index}"),
+                "message": {"id": format!("message-{index}"), "model": "claude-sonnet-4.6", "usage": {
+                    "cache_creation_input_tokens": 100_000,
+                    "cache_creation": {"ephemeral_5m_input_tokens": 100_000 - hourly, "ephemeral_1h_input_tokens": hourly}
+                }}
+            }).to_string()
+        }).collect::<Vec<_>>().join("\n");
+        fs::write(project.join("session.jsonl"), records).unwrap();
+        let mut rates = serde_json::json!({
+            "input_cost_per_token": 1e-5, "cache_creation_input_token_cost": 1.25e-5
+        });
+        if let Some(hourly) = hourly {
+            rates["cache_creation_input_token_cost_above_1hr"] = hourly.into();
+        }
+        let cache_dir = tmp.path().join(".tokenx/cache");
+        tokenx_engine::pricing::cache::save_cache(
+            &cache_dir,
+            "pricing-litellm.json",
+            &serde_json::json!({"claude-sonnet-4.6": rates}),
+        )
+        .unwrap();
+        let read = || {
+            let output = offline_cmd_with_home(tmp.path())
+                .args(["models", "--json", "--client", "claude", "--no-spinner"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+        };
+        for _ in 0..2 {
+            let document = read();
+            let rows = model_rows(&document);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["tokens"]["cacheWrite"], 200_000);
+            assert_eq!(rows[0]["tokens"]["total"], 200_000);
+            assert!(
+                (rows[0]["cost"].as_f64().unwrap() - (1.25 + hourly.unwrap_or(0.0) * 100_000.0))
+                    .abs()
+                    < 1e-12
+            );
+            let diagnostics = document["metadata"]["pricingDiagnostics"]
+                .as_array()
+                .unwrap();
+            assert_eq!(diagnostics.len(), usize::from(hourly.is_none()));
+            assert_eq!(
+                document["metadata"]["pricingStatus"],
+                if hourly.is_some() {
+                    "available"
+                } else {
+                    "availableWithWarnings"
+                }
+            );
+            if hourly.is_none() {
+                assert_eq!(diagnostics[0]["kind"], "cacheWrite1hUnavailable");
+                assert!(diagnostics[0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("1 usage records"));
+            }
+        }
+        let shards = fs::read_dir(cache_dir.join("shards"))
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let modified = fs::metadata(&path).unwrap().modified().unwrap();
+                (path, modified)
+            })
+            .collect::<Vec<_>>();
+        assert!(!shards.is_empty());
+        let new_hourly = hourly.unwrap_or(0.0) + 5e-6;
+        rates["cache_creation_input_token_cost_above_1hr"] = new_hourly.into();
+        tokenx_engine::pricing::cache::save_cache(
+            &cache_dir,
+            "pricing-litellm.json",
+            &serde_json::json!({"claude-sonnet-4.6": rates}),
+        )
+        .unwrap();
+        let repriced = read();
+        assert!(
+            (model_rows(&repriced)[0]["cost"].as_f64().unwrap() - (1.25 + new_hourly * 100_000.0))
+                .abs()
+                < 1e-12
+        );
+        assert!(repriced["metadata"]["pricingDiagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        for (path, modified) in shards {
+            assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), modified);
+        }
+    }
+}
+
+#[test]
+fn one_hour_cache_rates_are_visible_in_pricing_lookup_and_overrides() {
+    let tmp = create_empty_fixture_dir();
+    let rates = serde_json::json!({
+        "input_cost_per_token": 1e-5,
+        "cache_creation_input_token_cost_above_1hr": 2e-5,
+        "cache_creation_input_token_cost_above_1hr_above_200k_tokens": 4e-5
+    });
+    tokenx_engine::pricing::cache::save_cache(
+        &tmp.path().join(".tokenx/cache"),
+        "pricing-litellm.json",
+        &serde_json::json!({"claude-sonnet-4.6": rates}),
+    )
+    .unwrap();
+    let output = offline_cmd_with_home(tmp.path())
+        .args([
+            "pricing",
+            "lookup",
+            "claude-sonnet-4.6",
+            "--json",
+            "--no-spinner",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        document["pricing"]["cacheCreationInputTokenCostAbove1hr"],
+        2e-5
+    );
+    assert_eq!(
+        document["pricing"]["cacheCreationInputTokenCostAbove1hrAbove200kTokens"],
+        4e-5
+    );
+    offline_cmd_with_home(tmp.path())
+        .args(["pricing", "lookup", "claude-sonnet-4.6", "--no-spinner"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Cache Write (1h): $20.00"));
+    fs::write(
+        tmp.path().join(".tokenx/custom-pricing.json"),
+        serde_json::json!({"models": {"claude-sonnet-4.6": rates}}).to_string(),
+    )
+    .unwrap();
+    let output = offline_cmd_with_home(tmp.path())
+        .args(["pricing", "overrides", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        document["models"][0]["cacheCreationInputTokenCostPerMillionTokensAbove1hr"],
+        20.0
+    );
+    assert_eq!(
+        document["models"][0]["cacheCreationInputTokenCostPerMillionTokensAbove1hrAbove200kTokens"],
+        40.0
+    );
 }
 
 #[test]

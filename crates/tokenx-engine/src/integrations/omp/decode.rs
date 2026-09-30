@@ -328,6 +328,7 @@ fn token_breakdown(usage: &Usage) -> SessionParseResult<TokenBreakdown> {
             "normalized cache-read token count",
         )?,
         cache_write,
+        cache_write_1h: 0,
         reasoning,
     };
     let normalized_total = tokens.checked_total().ok_or_else(|| {

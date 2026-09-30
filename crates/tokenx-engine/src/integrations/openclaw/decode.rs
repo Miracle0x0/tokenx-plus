@@ -267,6 +267,7 @@ fn openclaw_token_breakdown(usage: &OpenClawUsage) -> Result<Option<TokenBreakdo
         output: usage.output.unwrap_or(0),
         cache_read: usage.cache_read.unwrap_or(0),
         cache_write: usage.cache_write.unwrap_or(0),
+        cache_write_1h: 0,
         reasoning: 0,
     };
     let total = tokens

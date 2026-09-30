@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokenx_engine::{AcquisitionConfig, ClientId, Generation};
 
 const CACHE_MAGIC: [u8; 8] = *b"TOKENXG\0";
-const CACHE_SCHEMA_VERSION: u32 = 6;
+const CACHE_SCHEMA_VERSION: u32 = 7;
 const CACHE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_GENERATION_BODY_BYTES: u64 = 256 * 1024 * 1024;
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
@@ -1058,6 +1058,30 @@ mod tests {
         assert_eq!(
             generation.pricing_status(),
             tokenx_engine::pricing::PricingStatus::AvailableWithWarnings
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn one_hour_cache_pricing_warning_survives_generation_cache_and_rebinding() {
+        use tokenx_engine::pricing::{PricingDiagnostic, PricingDiagnosticKind, PricingStatus};
+        let temp = tempfile::TempDir::new().unwrap();
+        let _guard = EnvGuard::set(temp.path());
+        let diagnostic = PricingDiagnostic::new(
+            PricingDiagnosticKind::CacheWrite1hUnavailable,
+            "claude-sonnet-4.6: one-hour cache writes have no valid rate",
+        );
+        let generation = generation(temp.path()).with_pricing_diagnostics(vec![diagnostic.clone()]);
+        save_generation_cache(&generation).unwrap();
+        let CacheResult::Fresh(loaded) = load_generation_cache(generation.acquisition_config())
+        else {
+            panic!("saved generation must be fresh");
+        };
+        let loaded = loaded.with_pricing_diagnostics(Vec::new());
+        assert_eq!(loaded.pricing_diagnostics(), [diagnostic]);
+        assert_eq!(
+            loaded.pricing_status(),
+            PricingStatus::AvailableWithWarnings
         );
     }
 

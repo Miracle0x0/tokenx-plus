@@ -115,6 +115,7 @@ pub fn parse_mux_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     &model_usage.cache_create,
                 )?,
                 output: bucket_tokens(path, &model_key, "output", &model_usage.output)?,
+                cache_write_1h: 0,
                 reasoning: bucket_tokens(path, &model_key, "reasoning", &model_usage.reasoning)?,
             })
         })();

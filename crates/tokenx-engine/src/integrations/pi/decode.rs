@@ -244,6 +244,7 @@ fn token_breakdown(usage: &Usage) -> SessionParseResult<TokenBreakdown> {
         output: raw_output - reasoning,
         cache_read,
         cache_write,
+        cache_write_1h: 0,
         reasoning,
     };
     if tokens.checked_total() != Some(reported_total) {

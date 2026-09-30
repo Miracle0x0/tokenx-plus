@@ -14,7 +14,8 @@ pub struct GenerationAccumulator {
     usage: UsageIndexBuilder,
     sessions: SessionUsageBuilder,
     error: Option<UsageAggregationError>,
-    pricing_failures: std::collections::BTreeMap<String, u64>,
+    pricing_failures:
+        std::collections::BTreeMap<String, (crate::pricing::PricingDiagnosticKind, u64)>,
 }
 
 pub(crate) enum RecordAggregationOutcome {
@@ -69,7 +70,13 @@ impl GenerationAccumulator {
         }
         if let Some(error) = &msg.pricing_error {
             let key = format!("{}: {error}", msg.model_id);
-            *self.pricing_failures.entry(key).or_default() += 1;
+            let kind = match error {
+                crate::pricing::PricingComputationError::MissingCacheWrite1hRate => {
+                    crate::pricing::PricingDiagnosticKind::CacheWrite1hUnavailable
+                }
+                _ => crate::pricing::PricingDiagnosticKind::ServiceTierUnavailable,
+            };
+            self.pricing_failures.entry(key).or_insert((kind, 0)).1 += 1;
         }
         RecordAggregationOutcome::Retained
     }
@@ -77,9 +84,9 @@ impl GenerationAccumulator {
     pub(crate) fn take_pricing_diagnostics(&mut self) -> crate::pricing::PricingDiagnostics {
         std::mem::take(&mut self.pricing_failures)
             .into_iter()
-            .map(|(error, count)| {
+            .map(|(error, (kind, count))| {
                 crate::pricing::PricingDiagnostic::new(
-                    crate::pricing::PricingDiagnosticKind::ServiceTierUnavailable,
+                    kind,
                     format!(
                         "{error}; {count} usage records retain tokens but have no cost estimate"
                     ),

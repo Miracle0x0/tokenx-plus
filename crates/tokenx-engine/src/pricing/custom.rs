@@ -59,6 +59,10 @@ struct CustomModelPricing {
     cache_creation_input_token_cost_per_million_tokens_above_200k_tokens: Option<f64>,
     cache_creation_input_token_cost: Option<f64>,
     cache_creation_input_token_cost_above_200k_tokens: Option<f64>,
+    cache_creation_input_token_cost_per_million_tokens_above_1hr: Option<f64>,
+    cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens: Option<f64>,
+    cache_creation_input_token_cost_above_1hr: Option<f64>,
+    cache_creation_input_token_cost_above_1hr_above_200k_tokens: Option<f64>,
     cache_read_input_token_cost_per_million_tokens: Option<f64>,
     cache_read_input_token_cost_per_million_tokens_above_200k_tokens: Option<f64>,
     cache_read_input_token_cost_per_million_tokens_above_272k_tokens: Option<f64>,
@@ -152,6 +156,18 @@ impl CustomModelPricing {
                 self.cache_creation_input_token_cost_above_200k_tokens,
                 "cache_creation_input_token_cost_per_million_tokens_above_200k_tokens",
                 "cache_creation_input_token_cost_above_200k_tokens",
+            )?,
+            cache_creation_input_token_cost_above_1hr: price_field(
+                self.cache_creation_input_token_cost_per_million_tokens_above_1hr,
+                self.cache_creation_input_token_cost_above_1hr,
+                "cache_creation_input_token_cost_per_million_tokens_above_1hr",
+                "cache_creation_input_token_cost_above_1hr",
+            )?,
+            cache_creation_input_token_cost_above_1hr_above_200k_tokens: price_field(
+                self.cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens,
+                self.cache_creation_input_token_cost_above_1hr_above_200k_tokens,
+                "cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens",
+                "cache_creation_input_token_cost_above_1hr_above_200k_tokens",
             )?,
             cache_read_input_token_cost: price_field(
                 self.cache_read_input_token_cost_per_million_tokens,
@@ -476,6 +492,38 @@ where
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn one_hour_rates_load_from_per_token_and_per_million_overrides() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("custom-pricing.json");
+        for (suffix, ordinary, hourly, long_hourly) in [
+            ("", 1.25e-5, 2e-5, 4e-5),
+            ("_per_million_tokens", 12.5, 20.0, 40.0),
+        ] {
+            let row = serde_json::json!({
+                "input_cost_per_token": 1e-5,
+                format!("cache_creation_input_token_cost{suffix}"): ordinary,
+                format!("cache_creation_input_token_cost{suffix}_above_1hr"): hourly,
+                format!("cache_creation_input_token_cost{suffix}_above_1hr_above_200k_tokens"): long_hourly
+            });
+            std::fs::write(
+                &path,
+                serde_json::json!({"models": {"claude-sonnet-4.6": row}}).to_string(),
+            )
+            .unwrap();
+            let loaded = super::CustomPricing::load_from_path(&path);
+            let pricing = loaded.lookup("claude-sonnet-4.6").unwrap();
+            assert_eq!(
+                pricing.cache_creation_input_token_cost_above_1hr,
+                Some(2e-5)
+            );
+            assert_eq!(
+                pricing.cache_creation_input_token_cost_above_1hr_above_200k_tokens,
+                Some(4e-5)
+            );
+        }
+    }
 
     fn pricing(input: f64, output: f64) -> ModelPricing {
         ModelPricing {

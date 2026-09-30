@@ -96,6 +96,31 @@ can serve a request at the standard tier; the inspected Codex token events do
 not record that response tier. Local costs remain catalog estimates, separate
 from invoices and [ChatGPT credit consumption](https://learn.chatgpt.com/docs/agent-configuration/speed).
 
+### Claude Code cache durations
+
+Claude Code records one-hour cache creation in
+`usage.cache_creation.ephemeral_1h_input_tokens`. Tokenx retains it as a subset
+of `cache_creation_input_tokens`: ordinary cache writes are the total minus
+the one-hour portion, and token totals count the combined write volume once.
+An absent split means zero observed one-hour writes. Duplicate streaming
+records merge each raw counter by maximum before bounding the one-hour subset
+by the final cache-write total.
+
+Ordinary writes use `cache_creation_input_token_cost`; one-hour writes use
+`cache_creation_input_token_cost_above_1hr`, including the optional
+`cache_creation_input_token_cost_above_1hr_above_200k_tokens` tier. The existing
+per-bucket tier calculation applies separately to each duration. Rates come
+from the selected catalog row, with no inferred multiplier or supplementation
+from another source. Anthropic publishes different rates for the two durations;
+see [prompt-cache pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing).
+
+An observed one-hour write without a valid one-hour rate retains its tokens
+but excludes that record's cost. The generation reports
+`cacheWrite1hUnavailable` and `availableWithWarnings` when catalogs are
+otherwise available. Explicit zero rates are valid. These diagnostics survive
+generation-cache reuse; repricing uses the duration evidence in cost-free input
+shards. See [ADR 0017](adr/0017-claude-code-cache-duration-pricing.md).
+
 ### DeepSeek V4 time-period pricing
 
 OpenRouter time-period prices use the usage record's request timestamp in UTC.
@@ -157,6 +182,10 @@ Create `custom-pricing.json` in the Tokenx config directory:
 Per-million-token fields are the recommended user-facing form. At least one of
 `input_cost_per_million_tokens` or `output_cost_per_million_tokens` must be
 present and positive. Cache-read and cache-creation prices are optional.
+One-hour cache creation accepts
+`cache_creation_input_token_cost_per_million_tokens_above_1hr` and
+`cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens`,
+or the corresponding per-token fields without `_per_million_tokens`.
 
 Overrides are exact-only and case-insensitive:
 
@@ -176,15 +205,16 @@ Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:
 - `pricing-openrouter.json`
 - `pricing-models-dev.json`
 
-Pricing cache schema 2 stores `version` and `data`; file modification time
+Pricing cache schema 3 stores `version` and `data`; file modification time
 determines the one-hour freshness window. Older formats are refreshed.
 Identical fetched data renews only the file timestamp; changed data replaces
 the cache atomically. Deleting these files forces a fetch on the next lookup
 or usage load that needs pricing.
 
 Input-record shards are cost-free: they retain token buckets, timestamps, and
-model/provider identity and observed service tier, but not derived prices. The
-Generation cache contains aggregated costs and is invalidated when the pricing
+model/provider identity, observed service tier, and cache-duration evidence,
+but not derived prices. The Generation cache contains aggregated costs and is
+invalidated when the pricing
 context, including source order, changes.
 
 Headless usage commands refresh missing or expired public catalogs before
@@ -215,6 +245,9 @@ prefixes, private aliases, or reasoning-tier suffixes. It is a pricing catalog
 query over the exact canonical model component, not a parser repair path. When
 the matched row carries time-period pricing, text output lists the UTC schedule
 and JSON output includes `pricing.timePeriodPrices`.
+One-hour cache-write rates appear in text output and JSON's
+`pricing.cacheCreationInputTokenCostAbove1hr`, with the optional long-context
+rate in `pricing.cacheCreationInputTokenCostAbove1hrAbove200kTokens`.
 
 ## Subscription usage is separate
 

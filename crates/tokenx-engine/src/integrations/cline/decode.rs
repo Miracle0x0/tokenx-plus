@@ -148,6 +148,7 @@ fn token_breakdown(metrics: &Map<String, Value>) -> Option<TokenBreakdown> {
         output,
         cache_read,
         cache_write,
+        cache_write_1h: 0,
         reasoning: 0,
     };
     tokens.checked_total().map(|_| tokens)

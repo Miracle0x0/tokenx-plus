@@ -208,6 +208,7 @@ impl CodexTotals {
             output: self.output,
             cache_read: self.cached,
             cache_write: self.cache_write,
+            cache_write_1h: 0,
             reasoning: self.reasoning,
         }
     }
@@ -1500,6 +1501,7 @@ mod tests {
                     output: 10,
                     cache_read: 40,
                     cache_write: 20,
+                    cache_write_1h: 0,
                     reasoning: 5
                 }
             );
