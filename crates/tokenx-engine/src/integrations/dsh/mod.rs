@@ -1,6 +1,6 @@
 pub(crate) mod decode;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -14,17 +14,16 @@ use crate::integrations::{
 };
 
 fn dsh_session_file(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some("session.jsonl" | "session.jsonl.zstd" | "session.v3.jsonl" | "session.v3.jsonl.zstd")
-    )
+    session_file_version(path).is_some()
 }
 
-fn is_v3_session_file(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some("session.v3.jsonl" | "session.v3.jsonl.zstd")
-    )
+fn session_file_version(path: &Path) -> Option<u8> {
+    match path.file_name()?.to_str()? {
+        "session.jsonl" | "session.jsonl.zstd" => Some(0),
+        "session.v3.jsonl" | "session.v3.jsonl.zstd" => Some(3),
+        "session.v4.jsonl" | "session.v4.jsonl.zstd" => Some(4),
+        _ => None,
+    }
 }
 
 const SOURCE: SourceSpec = SourceSpec::home(
@@ -56,18 +55,25 @@ impl IntegrationDriver for Driver {
             DecoderKind::plain(DecoderId::Dsh),
         )?;
         // Migration leaves the previous transcript beside the current generation.
-        // Select the v3 artifact before parsing, even when that artifact is damaged.
-        let v3_directories: HashSet<_> = units
-            .iter()
-            .filter(|unit| is_v3_session_file(&unit.path))
-            .filter_map(|unit| unit.path.parent().map(Path::to_path_buf))
-            .collect();
+        // Select the newest supported artifact before parsing, even when damaged.
+        let mut current_versions = HashMap::new();
+        for unit in &units {
+            let parent = unit
+                .path
+                .parent()
+                .expect("DSH input has a parent directory");
+            let version = session_file_version(&unit.path).expect("matched DSH session filename");
+            current_versions
+                .entry(parent.to_path_buf())
+                .and_modify(|current: &mut u8| *current = (*current).max(version))
+                .or_insert(version);
+        }
         units.retain(|unit| {
-            is_v3_session_file(&unit.path)
-                || !unit
-                    .path
-                    .parent()
-                    .is_some_and(|parent| v3_directories.contains(parent))
+            let parent = unit
+                .path
+                .parent()
+                .expect("DSH input has a parent directory");
+            session_file_version(&unit.path) == current_versions.get(parent).copied()
         });
         Ok(units)
     }
@@ -171,25 +177,38 @@ mod tests {
         assert!(dsh_session_file(Path::new("session.jsonl.zstd")));
         assert!(dsh_session_file(Path::new("session.v3.jsonl")));
         assert!(dsh_session_file(Path::new("session.v3.jsonl.zstd")));
+        assert!(dsh_session_file(Path::new("session.v4.jsonl")));
+        assert!(dsh_session_file(Path::new("session.v4.jsonl.zstd")));
         assert!(!dsh_session_file(Path::new("other.jsonl")));
         assert!(!dsh_session_file(Path::new("session.jsonl.zst")));
         assert!(!dsh_session_file(Path::new("old-session.jsonl.zstd")));
         assert!(!dsh_session_file(Path::new("session.v3.jsonl.zstd.tmp")));
+        assert!(!dsh_session_file(Path::new("session.v4.jsonl.zstd.tmp")));
+        assert!(!dsh_session_file(Path::new("session.v5.jsonl")));
     }
 
     #[test]
-    fn discovery_selects_v3_over_migration_sources_in_default_and_extra_roots() {
+    fn discovery_selects_latest_generation_in_default_and_extra_roots() {
         let home = tempfile::TempDir::new().unwrap();
         let extra = home.path().join("import");
         let default = home.path().join(".dsh/sessions");
         let mut expected = Vec::new();
         for root in [&default, &extra] {
-            for name in ["session.v3.jsonl", "session.v3.jsonl.zstd"] {
+            for name in [
+                "session.v3.jsonl",
+                "session.v3.jsonl.zstd",
+                "session.v4.jsonl",
+                "session.v4.jsonl.zstd",
+            ] {
                 let directory = root.join(name);
                 let current = directory.join(name);
                 write_file(&current, "");
                 write_file(&directory.join("session.jsonl"), "");
                 write_file(&directory.join("session.jsonl.zstd"), "");
+                if name.starts_with("session.v4.") {
+                    write_file(&directory.join("session.v3.jsonl"), "");
+                    write_file(&directory.join("session.v3.jsonl.zstd"), "");
+                }
                 expected.push(current);
             }
         }
@@ -205,6 +224,28 @@ mod tests {
             units.into_iter().map(|unit| unit.path).collect::<Vec<_>>(),
             expected
         );
+    }
+
+    #[test]
+    fn damaged_v4_does_not_revive_usage_from_migration_sources() {
+        let home = tempfile::TempDir::new().unwrap();
+        let directory = home.path().join(".dsh/sessions/workspace/session");
+        let current = directory.join("session.v4.jsonl.zstd");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(&current, b"\x28\xb5\x2f\xfdinvalid").unwrap();
+        let row = r#"{"type":"assistant/message","time":1786669450000,"data":{"message":{"source":{"model":"m"}},"usage":{"inputTokens":1000}}}"#;
+        for name in ["session.jsonl", "session.v3.jsonl"] {
+            write_file(&directory.join(name), row);
+        }
+
+        let settings = crate::scanner::ScannerSettings::default();
+        let units = DRIVER
+            .discover_inputs(&scan_context(home.path(), &settings))
+            .unwrap();
+
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].path, current);
+        assert!(decode::parse_dsh_file(&units[0].path).is_err());
     }
 
     #[test]

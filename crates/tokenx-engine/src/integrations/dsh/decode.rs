@@ -57,7 +57,7 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
     let mut session_id = None;
     let mut workspace_key = None;
     let mut seed_length = 0_i64;
-    let mut is_v3 = false;
+    let mut version = None;
     let mut request_provider = None;
     let mut request_model = None;
     let mut seen = HashSet::new();
@@ -101,17 +101,18 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
             "session" => {
                 session_id = non_empty_str(value.get("id")).map(str::to_string);
                 workspace_key = non_empty_str(value.get("cwd")).and_then(normalize_workspace_key);
-                is_v3 = value.get("version").and_then(Value::as_u64) == Some(3);
-                seed_length =
-                    if is_v3 && value.get("isSeeded").and_then(Value::as_bool) == Some(true) {
-                        inherited_seed_length(&decoded.bytes[..parse_len])?
-                    } else {
-                        value
-                            .get("seedLength")
-                            .and_then(Value::as_i64)
-                            .filter(|length| *length > 0)
-                            .unwrap_or(0)
-                    };
+                version = value.get("version").and_then(Value::as_u64);
+                seed_length = if matches!(version, Some(3 | 4))
+                    && value.get("isSeeded").and_then(Value::as_bool) == Some(true)
+                {
+                    inherited_seed_length(&decoded.bytes[..parse_len])?
+                } else {
+                    value
+                        .get("seedLength")
+                        .and_then(Value::as_i64)
+                        .filter(|length| *length > 0)
+                        .unwrap_or(0)
+                };
             }
             "request/header" => {
                 let config = value.pointer("/data/header/config");
@@ -246,9 +247,9 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     let label = workspace_label_from_key(&key);
                     message.set_workspace(Some(key), label);
                 }
-                // Within one v3 step, settlement usage replaces the preceding
+                // Within one v3/v4 step, settlement usage replaces the preceding
                 // sample. A retry-started event opens a separately billed attempt.
-                if let Some((turn, step)) = (is_v3 && !is_summary)
+                if let Some((turn, step)) = (matches!(version, Some(3 | 4)) && !is_summary)
                     .then(|| settlement_step(&value))
                     .flatten()
                 {
@@ -294,7 +295,7 @@ fn inherited_seed_length(bytes: &[u8]) -> SessionParseResult<i64> {
     }
     Err(SessionParseError::invalid(
         "read DSH seed boundary",
-        "seeded v3 session has no inherited end-seed marker",
+        "seeded session has no inherited end-seed marker",
     ))
 }
 
@@ -765,72 +766,84 @@ mod tests {
     }
 
     #[test]
-    fn v3_nested_forks_skip_the_last_inherited_prefix_but_keep_resumed_usage() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = write_zstd_session(
-            dir.path(),
-            "nested-child",
-            &[
-                r#"{"type":"session","version":3,"id":"nested-child","isSeeded":true}"#,
-                r#"{"type":"assistant/message","seq":0,"time":1786669450000,"data":{"turn":1,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":1000}}}"#,
-                r#"{"type":"session/end-seed","seq":1,"data":{"inherited":true}}"#,
-                r#"{"type":"assistant/message","seq":2,"time":1786669450001,"data":{"turn":1,"step":1,"message":{"source":{"model":"m"}},"usage":{"inputTokens":2000}}}"#,
-                r#"{"type":"session/end-seed","seq":3,"data":{"inherited":true}}"#,
-                r#"{"type":"assistant/message","seq":4,"time":1786669450002,"data":{"turn":2,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":10}}}"#,
-                r#"{"type":"session/end-seed","seq":5,"data":{}}"#,
-                r#"{"type":"assistant/message","seq":6,"time":1786669450003,"data":{"turn":3,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":20}}}"#,
-            ],
-        );
-        let scanned = parse_dsh_file(&path).unwrap();
-        assert_eq!(scanned.messages.len(), 2);
-        assert_eq!(scanned.messages[0].tokens.input, 10);
-        assert_eq!(scanned.messages[1].tokens.input, 20);
-        assert!(scanned.messages.iter().all(|message| message.is_turn_start));
+    fn v3_and_v4_nested_forks_skip_the_last_inherited_prefix_but_keep_resumed_usage() {
+        for version in [3, 4] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let path = write_zstd_session(
+                dir.path(),
+                "nested-child",
+                &[
+                    &format!(
+                        r#"{{"type":"session","version":{version},"id":"nested-child","isSeeded":true}}"#
+                    ),
+                    r#"{"type":"assistant/message","seq":0,"time":1786669450000,"data":{"turn":1,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":1000}}}"#,
+                    r#"{"type":"session/end-seed","seq":1,"data":{"inherited":true}}"#,
+                    r#"{"type":"assistant/message","seq":2,"time":1786669450001,"data":{"turn":1,"step":1,"message":{"source":{"model":"m"}},"usage":{"inputTokens":2000}}}"#,
+                    r#"{"type":"session/end-seed","seq":3,"data":{"inherited":true}}"#,
+                    r#"{"type":"assistant/message","seq":4,"time":1786669450002,"data":{"turn":2,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":10}}}"#,
+                    r#"{"type":"session/end-seed","seq":5,"data":{}}"#,
+                    r#"{"type":"assistant/message","seq":6,"time":1786669450003,"data":{"turn":3,"step":0,"message":{"source":{"model":"m"}},"usage":{"inputTokens":20}}}"#,
+                ],
+            );
+            let scanned = parse_dsh_file(&path).unwrap();
+            assert_eq!(scanned.messages.len(), 2);
+            assert_eq!(scanned.messages[0].tokens.input, 10);
+            assert_eq!(scanned.messages[1].tokens.input, 20);
+            assert!(scanned.messages.iter().all(|message| message.is_turn_start));
+        }
     }
 
     #[test]
-    fn v3_seeded_session_without_inherited_boundary_is_an_explicit_error() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = write_plain_session(
-            dir.path(),
-            "missing-boundary",
-            &[r#"{"type":"session","version":3,"id":"missing-boundary","isSeeded":true}"#],
-        );
-        let error = parse_dsh_file(&path).unwrap_err();
-        assert!(error.to_string().contains("no inherited end-seed marker"));
+    fn v3_and_v4_seeded_session_without_inherited_boundary_is_an_explicit_error() {
+        for version in [3, 4] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let path = write_plain_session(
+                dir.path(),
+                "missing-boundary",
+                &[&format!(
+                    r#"{{"type":"session","version":{version},"id":"missing-boundary","isSeeded":true}}"#
+                )],
+            );
+            let error = parse_dsh_file(&path).unwrap_err();
+            assert!(error.to_string().contains("no inherited end-seed marker"));
+        }
     }
 
     #[test]
-    fn v3_stream_usage_counts_retries_once_and_prefers_settled_message_usage() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = write_plain_session(
-            dir.path(),
-            "retry-session",
-            &[
-                r#"{"type":"session","version":3,"id":"retry-session","isSeeded":false}"#,
-                r#"{"type":"request/header","data":{"header":{"config":{"provider":"deepseek","model":"deepseek-flash"}}}}"#,
-                r#"{"type":"assistant/attempt","seq":0,"time":1786669450000,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":1}}},{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5,"reasoningTokens":2}}}]}}"#,
-                r#"{"type":"assistant/message","seq":1,"time":1786669450001,"data":{"turn":1,"step":0,"message":{"id":"first"},"usage":{"inputTokens":12,"outputTokens":6,"reasoningTokens":2},"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":999}}}]}}"#,
-                r#"{"type":"llm/retry-started","seq":2,"data":{"turn":1,"step":0}}"#,
-                r#"{"type":"assistant/attempt","seq":3,"time":1786669450002,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":20,"outputTokens":8}}}]}}"#,
-                r#"{"type":"llm/retry-started","seq":4,"data":{"turn":1,"step":0}}"#,
-                r#"{"type":"assistant/attempt","seq":5,"time":1786669450003,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"finish"}}]}}"#,
-                r#"{"type":"assistant/message","seq":6,"time":1786669450004,"data":{"turn":1,"step":0,"message":{"id":"last"},"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":30,"outputTokens":9,"cacheReadTokens":40}}}]}}"#,
-            ],
-        );
-        let scanned = parse_dsh_file(&path).unwrap();
-        assert_eq!(scanned.messages.len(), 3);
-        assert_eq!(scanned.messages[0].tokens.total(), 18);
-        assert_eq!(scanned.messages[1].tokens.total(), 28);
-        assert_eq!(scanned.messages[2].tokens.total(), 79);
-        assert!(scanned.messages[0].is_turn_start);
-        assert!(scanned.messages[1..]
-            .iter()
-            .all(|message| !message.is_turn_start));
-        assert!(scanned
-            .messages
-            .iter()
-            .all(|message| message.model_id.as_ref() == "deepseek-flash"));
+    fn v3_and_v4_stream_usage_counts_retries_once_and_prefers_settled_message_usage() {
+        for version in [3, 4] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let path = write_plain_session(
+                dir.path(),
+                "retry-session",
+                &[
+                    &format!(
+                        r#"{{"type":"session","version":{version},"id":"retry-session","isSeeded":false}}"#
+                    ),
+                    r#"{"type":"request/header","data":{"header":{"config":{"provider":"deepseek","model":"deepseek-flash"}}}}"#,
+                    r#"{"type":"assistant/attempt","seq":0,"time":1786669450000,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":1}}},{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5,"reasoningTokens":2}}}]}}"#,
+                    r#"{"type":"assistant/message","seq":1,"time":1786669450001,"data":{"turn":1,"step":0,"message":{"id":"first"},"usage":{"inputTokens":12,"outputTokens":6,"reasoningTokens":2},"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":999}}}]}}"#,
+                    r#"{"type":"llm/retry-started","seq":2,"data":{"turn":1,"step":0}}"#,
+                    r#"{"type":"assistant/attempt","seq":3,"time":1786669450002,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":20,"outputTokens":8}}}]}}"#,
+                    r#"{"type":"llm/retry-started","seq":4,"data":{"turn":1,"step":0}}"#,
+                    r#"{"type":"assistant/attempt","seq":5,"time":1786669450003,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"finish"}}]}}"#,
+                    r#"{"type":"assistant/message","seq":6,"time":1786669450004,"data":{"turn":1,"step":0,"message":{"id":"last"},"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":30,"outputTokens":9,"cacheReadTokens":40}}}]}}"#,
+                ],
+            );
+            let scanned = parse_dsh_file(&path).unwrap();
+            assert_eq!(scanned.messages.len(), 3);
+            assert_eq!(scanned.messages[0].tokens.total(), 18);
+            assert_eq!(scanned.messages[1].tokens.total(), 28);
+            assert_eq!(scanned.messages[2].tokens.total(), 79);
+            assert!(scanned.messages[0].is_turn_start);
+            assert!(scanned.messages[1..]
+                .iter()
+                .all(|message| !message.is_turn_start));
+            assert!(scanned
+                .messages
+                .iter()
+                .all(|message| message.model_id.as_ref() == "deepseek-flash"));
+        }
     }
 
     #[test]

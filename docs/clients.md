@@ -52,25 +52,26 @@ means recursive discovery under the stated root.
 | `cline` | Cline | `~/.cline/data/sessions/**/*.messages.json` | Reads the SDK v1 messages envelope and optional root manifest workspace metadata. |
 | `commandcode` | Command Code | `~/.commandcode/projects/**/*.jsonl` with optional same-stem `.meta.json` sidecars | Estimates transcript tokens. A non-empty session metadata model is authoritative; otherwise the record uses the explicit unpriced `commandcode-model-unknown` identity. The current global config never relabels historical sessions. |
 | `grok` | Grok | `~/.grok/sessions/**/updates.jsonl` with optional `summary.json` and `events.jsonl` siblings | Reads positive total-token deltas and optional session metadata. |
-| `dsh` | DeepSeek Harness | `$DSH_HOME/sessions/**` when `DSH_HOME` is non-empty, otherwise `~/.dsh/sessions/**`; `session.v3.jsonl[.zstd]` and `session.jsonl[.zstd]` | Reads assistant settlements, reported retry usage, and compaction summaries; selects v3 over its migration source, separates reasoning from inclusive output, and excludes inherited fork usage. |
+| `dsh` | DeepSeek Harness | `$DSH_HOME/sessions/**` when `DSH_HOME` is non-empty, otherwise `~/.dsh/sessions/**`; `session.v4.jsonl[.zstd]`, `session.v3.jsonl[.zstd]`, and `session.jsonl[.zstd]` | Reads assistant settlements, reported retry usage, and compaction summaries; selects the newest supported generation, separates reasoning from inclusive output, and excludes inherited fork usage. |
 
 ## DeepSeek Harness local token parsing
 
-Within one session directory, a v3 transcript supersedes the unversioned
-transcript retained by Harness migration. An unreadable v3 artifact is reported
-in Data Health; the superseded artifact cannot supply replacement usage.
+Within one session directory, a v4 transcript supersedes v3 and unversioned
+transcripts retained by Harness migration; v3 supersedes unversioned transcripts.
+An unreadable selected artifact is reported in Data Health; superseded artifacts
+cannot supply replacement usage.
 Plain JSONL and Zstandard framing are detected from the file contents.
 
 Assistant messages use `data.usage` when present. Otherwise, assistant messages
-and attempts use the last usage chunk in their embedded stream. V3 settlements
-for the same turn and step replace the preceding usage sample;
+and attempts use the last usage chunk in their embedded stream. V3 and v4
+settlements for the same turn and step replace the preceding usage sample;
 `llm/retry-started` separates independently billed attempts. Attempts without
 reported usage do not invent token counts. Reasoning tokens are separated from
 the inclusive output total. Model attribution uses the provider-served response
 model when present, then the message source model, then the request header.
 
-For v3 sessions with `isSeeded: true`, the last `session/end-seed` event carrying
-`data.inherited: true` marks the inherited prefix to exclude. Ordinary resume
+For v3 and v4 sessions with `isSeeded: true`, the last `session/end-seed` event
+carrying `data.inherited: true` marks the inherited prefix to exclude. Ordinary resume
 markers do not exclude earlier usage from the same session. A seeded session
 without its inherited boundary is an explicit input error. Unversioned
 transcripts retain their `seedLength` prefix rule.
