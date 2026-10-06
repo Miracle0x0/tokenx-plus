@@ -323,32 +323,32 @@ fn parse_wire_path(path: &Path) -> SessionParseResult<KimiWirePath> {
     if path.file_name().and_then(|name| name.to_str()) != Some("wire.jsonl") {
         return Err(invalid_path());
     }
-    let agent_dir = path.parent().ok_or_else(&invalid_path)?;
+    let agent_dir = path.parent().ok_or_else(invalid_path)?;
     let agent_id = agent_dir
         .file_name()
         .and_then(|name| name.to_str())
         .map(str::trim)
         .filter(|agent_id| !agent_id.is_empty())
-        .ok_or_else(&invalid_path)?;
-    let agents_dir = agent_dir.parent().ok_or_else(&invalid_path)?;
+        .ok_or_else(invalid_path)?;
+    let agents_dir = agent_dir.parent().ok_or_else(invalid_path)?;
     if agents_dir.file_name().and_then(|name| name.to_str()) != Some("agents") {
         return Err(invalid_path());
     }
-    let session_dir = agents_dir.parent().ok_or_else(&invalid_path)?;
+    let session_dir = agents_dir.parent().ok_or_else(invalid_path)?;
     let session_id = session_dir
         .file_name()
         .and_then(|name| name.to_str())
         .map(str::trim)
         .filter(|session_id| !session_id.is_empty())
-        .ok_or_else(&invalid_path)?;
+        .ok_or_else(invalid_path)?;
     let sessions_dir = session_dir
         .parent()
         .and_then(Path::parent)
-        .ok_or_else(&invalid_path)?;
+        .ok_or_else(invalid_path)?;
     if sessions_dir.file_name().and_then(|name| name.to_str()) != Some("sessions") {
         return Err(invalid_path());
     }
-    let home = sessions_dir.parent().ok_or_else(&invalid_path)?;
+    let home = sessions_dir.parent().ok_or_else(invalid_path)?;
 
     Ok(KimiWirePath {
         home: home.to_path_buf(),
