@@ -124,6 +124,8 @@ pub(crate) enum InputPlanningError {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum InputPipelineError {
+    #[error("failed to reconcile Claude usage: {0}")]
+    ClaudeReconciliation(#[source] std::io::Error),
     #[error(transparent)]
     Cancelled(#[from] crate::engine::AcquisitionCancelled),
     #[error(transparent)]
