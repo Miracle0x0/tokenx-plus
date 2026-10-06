@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -24,6 +25,15 @@ fn create_settings_dir_message_for_locale(path: &Path, locale: &str) -> String {
         path = path.display().to_string()
     )
     .into_owned()
+}
+
+fn settings_write_target(path: &Path) -> std::io::Result<PathBuf> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => fs::canonicalize(path),
+        Ok(_) => Ok(path.to_path_buf()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(error) => Err(error),
+    }
 }
 
 #[derive(Debug)]
@@ -344,8 +354,26 @@ impl Settings {
         let path = Self::writable_config_path(paths)?;
 
         let content = serde_json::to_string_pretty(self)?;
-
-        tokenx_engine::fs_atomic::write_atomic(&path, content.as_bytes())?;
+        let target = settings_write_target(&path).with_context(|| {
+            rust_i18n::t!(
+                "settings.error.resolve_target",
+                path = path.display().to_string()
+            )
+        })?;
+        tokenx_engine::fs_atomic::write_atomic_with(&target, |file| {
+            file.write_all(content.as_bytes())?;
+            if settings_write_target(&path)? != target {
+                return Err(std::io::Error::other(
+                    rust_i18n::t!(
+                        "settings.error.target_changed",
+                        path = path.display().to_string()
+                    )
+                    .into_owned(),
+                ));
+            }
+            Ok(())
+        })
+        .with_context(|| rust_i18n::t!("settings.error.save", path = path.display().to_string()))?;
         Ok(())
     }
 
@@ -408,6 +436,75 @@ mod tests {
 
         assert_eq!(loaded.color_palette, Settings::default().color_palette);
         assert!(loaded.default_clients.is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn settings_save_preserves_absolute_relative_and_chained_symlinks() {
+        for relative in [false, true] {
+            for chained in [false, true] {
+                let temp = tempfile::tempdir().unwrap();
+                let config = temp.path().join("config");
+                let tracked = temp.path().join("dotfiles/settings.json");
+                fs::create_dir_all(&config).unwrap();
+                fs::create_dir_all(tracked.parent().unwrap()).unwrap();
+                fs::write(&tracked, r#"{"colorPalette":"blue"}"#).unwrap();
+                let target = if relative {
+                    PathBuf::from("../dotfiles/settings.json")
+                } else {
+                    tracked.clone()
+                };
+                let path = config.join("settings.json");
+                let link = if chained {
+                    config.join("linked-settings.json")
+                } else {
+                    path.clone()
+                };
+                std::os::unix::fs::symlink(&target, &link).unwrap();
+                if chained {
+                    std::os::unix::fs::symlink("linked-settings.json", &path).unwrap();
+                }
+
+                let mut settings = Settings::load(&ProductPaths::at(&config)).unwrap();
+                settings.color_palette = ThemeName::Halloween;
+                settings.save(&ProductPaths::at(&config)).unwrap();
+
+                assert!(fs::symlink_metadata(&path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink());
+                assert_eq!(fs::read_link(&link).unwrap(), target);
+                assert_eq!(
+                    load_test_path(&tracked).unwrap().color_palette,
+                    ThemeName::Halloween
+                );
+                assert_eq!(fs::read(&path).unwrap(), fs::read(&tracked).unwrap());
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn settings_save_leaves_invalid_symlinks_intact() {
+        for directory_target in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("settings.json");
+            let target = temp.path().join("target");
+            if directory_target {
+                fs::create_dir(&target).unwrap();
+            }
+            std::os::unix::fs::symlink(&target, &path).unwrap();
+
+            assert!(Settings::default()
+                .save(&ProductPaths::at(temp.path()))
+                .is_err());
+            assert_eq!(fs::read_link(&path).unwrap(), target);
+            assert_eq!(target.exists(), directory_target);
+            assert_eq!(
+                fs::read_dir(temp.path()).unwrap().count(),
+                if directory_target { 2 } else { 1 }
+            );
+        }
     }
 
     #[test]

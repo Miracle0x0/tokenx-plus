@@ -59,7 +59,9 @@ cross-platform product root:
 
 CLI flags override matching config values for a single invocation. TUI settings
 changed interactively, including the language selected with `Shift+L`, are
-persisted for future invocations.
+persisted for future invocations. Saving through a symlinked `settings.json`
+atomically replaces its resolved target and preserves the link. An unresolved
+target or a target that changes during staging causes an explicit save error.
 
 Settings are strict typed input. Unknown top-level keys and unknown keys inside
 `subscription` are parse errors.
