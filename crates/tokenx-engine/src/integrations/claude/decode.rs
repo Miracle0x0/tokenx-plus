@@ -358,6 +358,12 @@ pub struct ClaudeCacheCreation {
 }
 
 impl ClaudeUsage {
+    fn reports_input_split(&self) -> bool {
+        self.input_tokens.is_some()
+            && (self.cache_read_input_tokens.is_some()
+                || self.cache_creation_input_tokens.is_some())
+    }
+
     fn cache_write_1h(&self) -> i64 {
         self.cache_creation
             .as_ref()
@@ -812,8 +818,8 @@ fn parse_claude_file_with_project_resolver(
     // Maps dedup_key to the index in `messages` of the first occurrence.
     // CC's streaming API writes the same messageId:requestId multiple times as the
     // response streams in; later entries often carry more complete token counts.
-    // We merge duplicates using per-field max to always keep the highest value seen
-    // for each token type, ensuring we capture the most complete record.
+    // Merge per-field maxima, except that explicitly split input supersedes
+    // a bare whole-prompt snapshot regardless of record order.
     let mut processed_hashes: HashMap<u64, usize> = HashMap::new();
     let mut buffer = Vec::with_capacity(4096);
     // Tracks whether the previous entry was a user message,
@@ -1168,8 +1174,8 @@ fn parse_claude_file_with_project_resolver(
                 let provider_hint = message.provider_id.clone().or(entry.provider_id.clone());
 
                 // Build dedup key for global deduplication (messageId:requestId composite).
-                // For streaming responses, merge using per-field max to capture the most
-                // complete token counts across all duplicate entries.
+                // Merge streaming counters under the input convention reported by
+                // each copy; explicit split input takes precedence over snapshots.
                 let pending_hash = match (&message.id, &entry.request_id) {
                     (Some(msg_id), Some(req_id)) => {
                         let hash =
@@ -1287,6 +1293,7 @@ fn parse_claude_file_with_project_resolver(
                     0.0,
                     dedup_key,
                 );
+                message.claude_input_is_split = usage.reports_input_split();
                 message.is_main_session = is_main_session;
                 message.agent = sidechain_agent
                     .as_deref()
@@ -1661,9 +1668,13 @@ fn parse_claude_entry_timestamp_checked(
 }
 
 fn merge_claude_duplicate(existing: &mut UsageRecord, usage: &ClaudeUsage, parsed_timestamp: i64) {
-    // Per-field max merge: each token field is updated independently.
+    super::merge::merge_input(
+        &mut existing.tokens.input,
+        &mut existing.claude_input_is_split,
+        usage.input_tokens.unwrap_or(0),
+        usage.reports_input_split(),
+    );
     let t = &mut existing.tokens;
-    t.input = t.input.max(usage.input_tokens.unwrap_or(0));
     t.output = t.output.max(usage.output_tokens.unwrap_or(0));
     t.cache_read = t.cache_read.max(usage.cache_read_input_tokens.unwrap_or(0));
     t.cache_write = t
@@ -2645,6 +2656,93 @@ mod tests {
         let rejection = scanned.rejections.entries().next().unwrap();
         assert_eq!(rejection.key, "malformed-record");
         assert!(scanned.interrupted.is_none());
+    }
+
+    #[test]
+    fn duplicate_input_prefers_explicit_cache_split_in_either_order() {
+        let cases = [
+            (
+                serde_json::json!({"input_tokens": 42494}),
+                serde_json::json!({"input_tokens": 265, "cache_read_input_tokens": 42000, "output_tokens": 120}),
+                265,
+                true,
+            ),
+            (
+                serde_json::json!({"input_tokens": 42494}),
+                serde_json::json!({"input_tokens": 0, "cache_read_input_tokens": 42000}),
+                0,
+                true,
+            ),
+            (
+                serde_json::json!({"input_tokens": 100}),
+                serde_json::json!({"input_tokens": 30, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}),
+                30,
+                true,
+            ),
+            (
+                serde_json::json!({"input_tokens": 100}),
+                serde_json::json!({"cache_read_input_tokens": 42000}),
+                100,
+                false,
+            ),
+            (
+                serde_json::json!({"input_tokens": 100, "cache_read_input_tokens": 0}),
+                serde_json::json!({"input_tokens": 30, "cache_read_input_tokens": 200}),
+                100,
+                true,
+            ),
+            (
+                serde_json::json!({"input_tokens": 100}),
+                serde_json::json!({"input_tokens": 30}),
+                100,
+                false,
+            ),
+        ];
+        for (left, right, expected, is_split) in cases {
+            for usages in [[&left, &right], [&right, &left]] {
+                let content = usages
+                    .map(|usage| {
+                        serde_json::json!({
+                            "type": "assistant", "timestamp": "2026-09-21T10:00:00Z",
+                            "requestId": "request", "message": {
+                                "id": "message", "model": "claude-sonnet-4.6", "usage": usage
+                            }
+                        })
+                        .to_string()
+                    })
+                    .join("\n");
+                let file = create_test_file(&content);
+                let messages = parse_claude_file(file.path()).unwrap();
+                assert_eq!(messages.len(), 1, "{content}");
+                assert_eq!(messages[0].tokens.input, expected, "{content}");
+                assert_eq!(messages[0].claude_input_is_split, is_split, "{content}");
+            }
+        }
+    }
+
+    #[test]
+    fn missing_input_does_not_claim_split_authority_over_later_snapshots() {
+        let content = [
+            serde_json::json!({"input_tokens": 10}),
+            serde_json::json!({"cache_read_input_tokens": 200}),
+            serde_json::json!({"input_tokens": 100}),
+            serde_json::json!({"input_tokens": 0, "cache_read_input_tokens": 200}),
+            serde_json::json!({"input_tokens": 300}),
+        ]
+        .map(|usage| {
+            serde_json::json!({
+                "type": "assistant", "timestamp": "2026-09-21T10:00:00Z",
+                "message": {"id": "message", "model": "claude-sonnet-4.6", "usage": usage}
+            })
+            .to_string()
+        })
+        .join("\n");
+        let file = create_test_file(&content);
+        let messages = parse_claude_file(file.path()).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 0);
+        assert_eq!(messages[0].tokens.cache_read, 200);
+        assert!(messages[0].claude_input_is_split);
     }
 
     #[test]

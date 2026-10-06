@@ -40,6 +40,10 @@ pub struct UsageRecord {
     pub workspace_label: Option<std::sync::Arc<str>>,
     pub timestamp: i64,
     pub tokens: TokenBreakdown,
+    /// Claude input was explicitly reported alongside cache counters, including
+    /// zero counters. Retained across shards for cross-input reconciliation.
+    #[serde(default)]
+    pub(crate) claude_input_is_split: bool,
     pub cost: f64,
     /// Derived pricing failure; never persisted in source-record shards.
     #[serde(skip)]
@@ -352,6 +356,7 @@ impl UsageRecord {
             tokens,
             cost,
             pricing_error: None,
+            claude_input_is_split: false,
             message_count: default_message_count(),
             agent: agent.as_deref().map(intern::intern),
             agent_instance: None,

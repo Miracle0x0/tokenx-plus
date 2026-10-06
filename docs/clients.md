@@ -25,7 +25,7 @@ means recursive discovery under the stated root.
 | ID | Display name | Current local inputs | Input semantics |
 | --- | --- | --- | --- |
 | `opencode` | OpenCode | `~/.local/share/opencode/opencode.db` and `opencode-<channel>.db`; direct files from `scanner.opencodeDbPaths` | Reads SQLite with committed WAL state, joins messages to sessions, validates assistant token payloads, and deduplicates across databases. |
-| `claude` | Claude | `~/.claude/projects/**/*.jsonl`; `~/.claude/transcripts/**/*.jsonl` | Reads Claude Code assistant usage and resolves project/workspace metadata from the provider files. |
+| `claude` | Claude | `~/.claude/projects/**/*.jsonl`; `~/.claude/transcripts/**/*.jsonl` | Reads Claude Code assistant usage, reconciles repeated message/request IDs across files before pricing, and resolves project/workspace metadata. Explicit cache-split input takes precedence over bare prompt snapshots. |
 | `codex` | Codex | `~/.codex/sessions/**/*.jsonl`; `~/.codex/archived_sessions/**/*.jsonl` | Reads interactive and exec session events, separates inclusive input into ordinary input, cache read, and cache write, and preserves append-aware parsing and stable cross-file deduplication. See [Codex token usage](facts/codex.md). |
 | `gemini` | Gemini CLI | `~/.gemini/tmp/<named-project>/chats/session-*.json` and `session-*.jsonl` | Requires `.project_root` in each named project directory and uses it as workspace identity. |
 | `amp` | Amp | `~/.local/share/amp/threads/**/T-*.json` | Reads token-bearing events from each thread usage ledger. |

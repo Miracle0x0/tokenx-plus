@@ -1,6 +1,6 @@
 pub(crate) mod decode;
+mod merge;
 
-use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -117,8 +117,12 @@ impl IntegrationDriver for Driver {
         ctx: &mut FoldContext<'_>,
         sink: &mut BoundUsageSink<'_>,
     ) -> Result<(), crate::integrations::InputPipelineError> {
-        let mut seen_keys = HashSet::new();
-        fold_claude_units(parsed, ctx, sink, &mut seen_keys)
+        if parsed.is_empty() {
+            return Ok(());
+        }
+        let mut fold = ClaudeFold::new()?;
+        fold.consume(parsed, ctx)?;
+        fold.finish(ctx, sink)
     }
 
     fn fold_batches(
@@ -127,11 +131,15 @@ impl IntegrationDriver for Driver {
         ctx: &mut FoldContext<'_>,
         sink: &mut BoundUsageSink<'_>,
     ) -> Result<(), crate::integrations::InputPipelineError> {
-        let mut seen_keys = HashSet::new();
+        let Some(parsed) = batches.next(ctx)? else {
+            return Ok(());
+        };
+        let mut fold = ClaudeFold::new()?;
+        fold.consume(parsed, ctx)?;
         while let Some(parsed) = batches.next(ctx)? {
-            fold_claude_units(parsed, ctx, sink, &mut seen_keys)?;
+            fold.consume(parsed, ctx)?;
         }
-        Ok(())
+        fold.finish(ctx, sink)
     }
 }
 
@@ -218,52 +226,115 @@ fn resolve_flat_parent_dependency(path: &std::path::Path) -> FlatParentResolutio
     FlatParentResolution::Unresolved
 }
 
-fn fold_claude_units(
-    parsed: Vec<ParsedUnit>,
-    ctx: &mut FoldContext<'_>,
-    sink: &mut BoundUsageSink<'_>,
-    seen_keys: &mut HashSet<u64>,
-) -> Result<(), crate::integrations::InputPipelineError> {
-    for parsed_unit in parsed {
-        let pipeline_cache::ResolvedUnit {
-            unit,
-            mut messages,
-            cache_write,
-            invalidate_cache,
-            status,
-            mut rejections,
-        } = pipeline_cache::resolve_unit(parsed_unit, ctx)?;
-        let path = unit.path.clone();
-        rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
-        let cache_write =
-            cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
-        let cache_write_outcome = pipeline_cache::write_cache(cache_write, ctx, &messages);
+struct ClaudeFold {
+    merged: merge::ClaudeMerge,
+    health: Vec<(
+        PathBuf,
+        crate::input_health::InputStatus,
+        crate::input_health::RejectionSummary,
+    )>,
+}
+
+impl ClaudeFold {
+    fn new() -> Result<Self, crate::integrations::InputPipelineError> {
+        Ok(Self {
+            merged: merge::ClaudeMerge::new()
+                .map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?,
+            health: Vec::new(),
+        })
+    }
+
+    fn consume(
+        &mut self,
+        parsed: Vec<ParsedUnit>,
+        ctx: &mut FoldContext<'_>,
+    ) -> Result<(), crate::integrations::InputPipelineError> {
+        for parsed_unit in parsed {
+            let pipeline_cache::ResolvedUnit {
+                unit,
+                mut messages,
+                cache_write,
+                invalidate_cache,
+                status,
+                mut rejections,
+            } = pipeline_cache::resolve_unit(parsed_unit, ctx)?;
+            let path = unit.path.clone();
+            rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+            let cache_write =
+                cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
+            let cache_write_outcome = pipeline_cache::write_cache(cache_write, ctx, &messages);
+            for message in messages {
+                ctx.cancellation()
+                    .check(crate::engine::AcquisitionPhase::Folding)?;
+                self.merged
+                    .push(self.health.len(), message)
+                    .map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?;
+            }
+            self.health.push((unit.path.clone(), status, rejections));
+
+            if cache_write_outcome == pipeline_cache::CacheWriteOutcome::NotPlanned
+                && invalidate_cache
+            {
+                ctx.input_cache.remove(&path, unit.decoder.version());
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(
+        mut self,
+        ctx: &mut FoldContext<'_>,
+        sink: &mut BoundUsageSink<'_>,
+    ) -> Result<(), crate::integrations::InputPipelineError> {
+        let mut messages = Vec::new();
+        let mut input_index = 0;
+        for entry in self
+            .merged
+            .into_records()
+            .map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?
+        {
+            ctx.cancellation()
+                .check(crate::engine::AcquisitionPhase::Folding)?;
+            let (next_input, message) =
+                entry.map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?;
+            if input_index != next_input {
+                Self::emit(&mut messages, &mut self.health[input_index].2, ctx, sink);
+                input_index = next_input;
+            }
+            messages.push(message);
+        }
+        if !messages.is_empty() {
+            Self::emit(&mut messages, &mut self.health[input_index].2, ctx, sink);
+        }
+        for (path, status, rejections) in self.health {
+            ctx.record_health(path, status, rejections);
+        }
+        Ok(())
+    }
+
+    fn emit(
+        messages: &mut Vec<crate::records::UsageRecord>,
+        rejections: &mut crate::input_health::RejectionSummary,
+        ctx: &FoldContext<'_>,
+        sink: &mut BoundUsageSink<'_>,
+    ) {
+        // Maxima from valid records may together overflow; revalidate before
+        // pricing. Shards retain each input's unmerged, cost-free observations.
+        rejections.merge(&crate::retain_source_eligible_messages(messages));
         rejections.merge(&crate::price_source_eligible_messages(
-            &mut messages,
+            messages,
             ctx.pricing,
             &ctx.model_mappings,
         ));
-        rejections.merge(&pipeline_cache::emit_messages(
-            messages
-                .into_iter()
-                .filter(|message| crate::should_keep_deduped_message(seen_keys, message)),
-            sink,
-        ));
-        ctx.record_health(unit.path.clone(), status, rejections);
-
-        if cache_write_outcome == pipeline_cache::CacheWriteOutcome::NotPlanned && invalidate_cache
-        {
-            ctx.input_cache.remove(&path, unit.decoder.version());
-        }
+        rejections.merge(&pipeline_cache::emit_messages(messages.drain(..), sink));
     }
-    Ok(())
 }
 
 pub(crate) static DRIVER: Driver = Driver;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
     use std::path::{Path, PathBuf};
 
     use super::*;
@@ -347,6 +418,27 @@ mod tests {
         cache: &mut input_record_cache::InputRecordShardStore,
     ) -> (Vec<crate::AttributedUsageRecord>, InputHealth) {
         scan_execution_and_fold(crate::integrations::test_execute(unit), cache)
+    }
+
+    fn fold_prepared(
+        units: Vec<crate::integrations::PreparedInput>,
+        cache: &mut input_record_cache::InputRecordShardStore,
+        pricing: Option<&crate::pricing::PricingService>,
+    ) -> (
+        Vec<crate::AttributedUsageRecord>,
+        crate::input_health::DataHealth,
+    ) {
+        let mut batches = ParsedBatchInput::new(binding(), units);
+        let mut output = Vec::new();
+        let mut ctx = FoldContext::new(binding(), cache, pricing);
+        DRIVER
+            .fold_batches(
+                &mut batches,
+                &mut ctx,
+                &mut BoundUsageSink::new(binding(), &mut output),
+            )
+            .unwrap();
+        (output, ctx.take_health())
     }
 
     fn scan_execution_and_fold(
@@ -595,6 +687,137 @@ mod tests {
         expected.sort_unstable();
 
         assert_eq!(digest_paths, expected);
+    }
+
+    #[test]
+    fn claude_cross_file_split_survives_batches_cache_hits_and_repricing() {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            for reverse in [false, true] {
+                for input in [0, 265] {
+                    let home = tempfile::tempdir().unwrap();
+                    let cache_dir = tempfile::tempdir().unwrap();
+                    let make = |usage| serde_json::json!({
+                        "type": "assistant", "cwd": "/project", "sessionId": "session",
+                        "timestamp": "2026-09-21T10:00:00Z", "requestId": "request",
+                        "message": {"id": "message", "model": "claude-sonnet-4.6", "usage": usage}
+                    }).to_string();
+                    let snapshot = make(serde_json::json!({"input_tokens": 42494, "output_tokens": 150}));
+                    let split = make(serde_json::json!({"input_tokens": input, "cache_read_input_tokens": 42000, "output_tokens": 120}));
+                    let paths = [home.path().join("a.jsonl"), home.path().join("b.jsonl")];
+                    let contents = if reverse { [&split, &snapshot] } else { [&snapshot, &split] };
+                    for (path, content) in paths.iter().zip(contents) { write_file(path, content); }
+                    let units = paths.iter().map(|path| {
+                        crate::integrations::test_prepare(input_unit(path.clone(), home.path().to_path_buf()))
+                    }).collect::<Vec<_>>();
+                    let run = |cache: &mut input_record_cache::InputRecordShardStore, rate| {
+                        let pricing = crate::pricing::PricingService::new(
+                            std::collections::HashMap::from([("claude-sonnet-4.6".to_string(), crate::pricing::ModelPricing {
+                                input_cost_per_token: Some(rate),
+                                output_cost_per_token: Some(2.0 * rate),
+                                cache_read_input_token_cost: Some(rate / 10.0),
+                                ..Default::default()
+                            })]), std::collections::HashMap::new(),
+                        );
+                        let (output, health) = fold_prepared(units.clone(), cache, Some(&pricing));
+                        assert_eq!(health.clean_inputs(), 2);
+                        output
+                    };
+                    let mut cache = input_record_cache::InputRecordShardStore::with_cache_dir(cache_dir.path());
+                    let cold = run(&mut cache, 0.001);
+                    assert_eq!(cold.len(), 1);
+                    assert_eq!(cold[0].tokens.input, input);
+                    assert_eq!(cold[0].tokens.cache_read, 42000);
+                    assert_eq!(cold[0].tokens.output, 150);
+                    assert!(cold[0].claude_input_is_split);
+                    let expected_cost = input as f64 * 0.001 + 150.0 * 0.002 + 42000.0 * 0.0001;
+                    assert!((cold[0].cost - expected_cost).abs() < 1e-9);
+                    cache.save_if_dirty().unwrap();
+
+                    let mut cache = input_record_cache::InputRecordShardStore::with_cache_dir(cache_dir.path());
+                    for unit in &units {
+                        assert!(matches!(DRIVER.plan_cache_hit(unit.clone(), &cache).unwrap(), crate::integrations::CacheHitPlan::Hit(_)));
+                    }
+                    assert_eq!(run(&mut cache, 0.001), cold);
+                    assert!((run(&mut cache, 0.002)[0].cost - expected_cost * 2.0).abs() < 1e-9);
+
+                    // A changed second input combines a current parse with a warm shard.
+                    write_file(&paths[1], &format!("{}\n", contents[1]));
+                    let changed = crate::integrations::test_prepare(input_unit(paths[1].clone(), home.path().to_path_buf()));
+                    let first = match DRIVER.plan_cache_hit(units[0].clone(), &cache).unwrap() {
+                        crate::integrations::CacheHitPlan::Hit(parsed) => parsed,
+                        _ => panic!("first input must remain a cache hit"),
+                    };
+                    let mut second = DRIVER.parse_inputs(vec![changed.into_lookup_miss()], &ParseContext::uncancelled(None));
+                    let mixed = fold_parsed(vec![first, second.remove(0)], &mut cache);
+                    assert_eq!(mixed.len(), 1);
+                    assert_eq!(mixed[0].tokens, cold[0].tokens);
+                    assert!(mixed[0].claude_input_is_split);
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn claude_merged_overflow_rejects_only_its_owner_on_cold_and_warm_scans() {
+        let home = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let line = |id, input, output| {
+            serde_json::json!({
+                "type": "assistant", "cwd": "/project", "timestamp": "2026-09-21T10:00:00Z",
+                "message": {"id": id, "model": "claude-sonnet-4.6", "usage": {
+                    "input_tokens": input, "output_tokens": output
+                }}
+            })
+            .to_string()
+        };
+        let paths = [
+            home.path().join("first.jsonl"),
+            home.path().join("second.jsonl"),
+        ];
+        write_file(&paths[0], &line("overflow", i64::MAX - 20, 1));
+        write_file(
+            &paths[1],
+            &[line("overflow", 1, 30), line("independent", 10, 5)].join("\n"),
+        );
+        let units: Vec<_> = paths
+            .iter()
+            .map(|path| {
+                crate::integrations::test_prepare(input_unit(
+                    path.clone(),
+                    home.path().to_path_buf(),
+                ))
+            })
+            .collect();
+
+        for warm in [false, true] {
+            let mut cache =
+                input_record_cache::InputRecordShardStore::with_cache_dir(cache_dir.path());
+            if warm {
+                for unit in &units {
+                    assert!(matches!(
+                        DRIVER.plan_cache_hit(unit.clone(), &cache).unwrap(),
+                        crate::integrations::CacheHitPlan::Hit(_)
+                    ));
+                }
+            }
+            let (records, health) = fold_prepared(units.clone(), &mut cache, None);
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].tokens.total(), 15);
+            assert_eq!(health.clean_inputs(), 1);
+            assert_eq!(health.degraded_inputs(), 1);
+            assert_eq!(health.inputs().len(), 1);
+            assert_eq!(health.inputs()[0].path, paths[0]);
+            assert_eq!(health.inputs()[0].rejections.total(), 1);
+            assert_eq!(
+                health.inputs()[0].rejections.entries().next().unwrap().key,
+                "invalid-usage-record"
+            );
+            cache.save_if_dirty().unwrap();
+        }
     }
 
     #[test]
