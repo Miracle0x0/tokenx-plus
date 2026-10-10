@@ -833,6 +833,7 @@ fn parse_claude_file_with_project_resolver(
     let mut sidechain_agent_instance: Option<String> = None;
     let mut sidechain_detected = false;
     let mut is_main_session = true;
+    let mut last_cost_state = None;
 
     for (line_index, line) in reader.lines().enumerate() {
         if cancellation.is_some_and(crate::engine::AcquisitionCancellation::is_cancelled) {
@@ -868,6 +869,12 @@ fn parse_claude_file_with_project_resolver(
         let entry = match simd_json::from_slice::<ClaudeEntry>(&mut buffer) {
             Ok(entry) => entry,
             Err(source) => {
+                if super::cost_state::is_snapshot(trimmed) {
+                    // A malformed snapshot belongs to its own decoder. It must
+                    // replace the previous snapshot and not stop later usage.
+                    last_cost_state = Some(line);
+                    continue;
+                }
                 let error = SessionParseError::at_path(
                     path,
                     "decode Claude session line",
@@ -900,6 +907,12 @@ fn parse_claude_file_with_project_resolver(
                     RecordRejectionReason::MalformedRecord,
                     &error,
                 );
+                continue;
+            }
+            if entry.entry_type == "cost-state" {
+                // Claude restores the last complete cost-state object, rather
+                // than summing snapshots or retaining removed model entries.
+                last_cost_state = Some(line);
                 continue;
             }
             project_candidates.record(entry.project_path.as_deref(), entry.cwd.as_deref());
@@ -1294,6 +1307,11 @@ fn parse_claude_file_with_project_resolver(
                     dedup_key,
                 );
                 message.claude_input_is_split = usage.reports_input_split();
+                message.claude_session_id = entry
+                    .session_id
+                    .as_deref()
+                    .filter(|id| !id.trim().is_empty())
+                    .map(crate::records::intern::intern);
                 message.is_main_session = is_main_session;
                 message.agent = sidechain_agent
                     .as_deref()
@@ -1325,6 +1343,10 @@ fn parse_claude_file_with_project_resolver(
             .min(message.tokens.cache_write);
     }
     messages.retain(|message| crate::has_positive_tokens(&message.tokens));
+
+    if let Some(line) = last_cost_state {
+        super::cost_state::append_records(&line, &mut messages, &mut rejections);
+    }
 
     let project_dependency = apply_resolved_project_workspace(
         project_resolver,
@@ -1825,6 +1847,12 @@ fn extract_claude_tool_result_message(
         }),
     );
     message.message_count = 0;
+    message.claude_session_id = context
+        .entry
+        .session_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .map(crate::records::intern::intern);
     message.agent = context
         .sidechain_agent
         .as_deref()

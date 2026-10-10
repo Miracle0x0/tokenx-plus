@@ -208,7 +208,13 @@ mod tests {
 
     #[test]
     fn claude_version_spellings_preserve_family_and_version() {
-        for (family, major) in [("opus", 5), ("sonnet", 4), ("haiku", 4), ("fable", 5)] {
+        for (family, major) in [
+            ("opus", 5),
+            ("sonnet", 4),
+            ("haiku", 4),
+            ("haiku", 5),
+            ("fable", 5),
+        ] {
             for minor in 1..=9 {
                 let expected = format!("claude-{family}-{major}.{minor}");
                 for observed in [

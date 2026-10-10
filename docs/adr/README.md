@@ -22,6 +22,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0016](0016-buffered-and-compressed-cache-io.md) | Buffered and compressed cache I/O | Accepted |
 | [0017](0017-claude-code-cache-duration-pricing.md) | Claude Code cache-duration pricing | Accepted |
 | [0018](0018-claude-input-reconciliation.md) | Claude input reconciliation before pricing | Accepted |
+| [0019](0019-claude-cost-state-usage.md) | Claude cost-state usage reconciliation | Accepted |
 
 ## Conventions
 
