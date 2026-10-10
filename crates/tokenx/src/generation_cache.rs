@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokenx_engine::{AcquisitionConfig, ClientId, Generation};
 
 const CACHE_MAGIC: [u8; 8] = *b"TOKENXG\0";
-const CACHE_SCHEMA_VERSION: u32 = 9;
+const CACHE_SCHEMA_VERSION: u32 = 10;
 const CACHE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_GENERATION_BODY_BYTES: u64 = 256 * 1024 * 1024;
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
@@ -1334,12 +1334,15 @@ mod tests {
             .contains("limit"));
         assert!(decode_generation(&compressed_fixture(b"invalid compressed data", 32)).is_err());
         let mut bytes = compressed_fixture(&compressed, 4096);
-        bytes[8..12].copy_from_slice(&5_u32.to_le_bytes());
-        resign_cache_header(&mut bytes);
-        assert!(decode_generation(&bytes)
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported"));
+        // Schema 9 can retain model identities with Claude's [1m] suffix.
+        for version in [5_u32, 9] {
+            bytes[8..12].copy_from_slice(&version.to_le_bytes());
+            resign_cache_header(&mut bytes);
+            assert!(decode_generation(&bytes)
+                .unwrap_err()
+                .to_string()
+                .contains(&format!("unsupported generation cache schema {version}")));
+        }
     }
 
     #[test]

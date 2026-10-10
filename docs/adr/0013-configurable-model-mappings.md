@@ -29,9 +29,10 @@ effective list.
 Each rule sees the raw observation, the terminal component after route/custom
 prefix cleanup, the syntax-normalized spelling, and a human display label
 converted to hyphen-separated words. Existing syntax rules for
-dates, free-channel tags, reasoning tiers, and version spelling remain engine
-mechanisms. Explicit user self-maps can preserve a source spelling. A target is
-final: there is no mapping chain and no second normalization in pricing.
+dates, free-channel tags, reasoning tiers, version spelling, and Claude's `[1m]`
+context-window suffix remain engine mechanisms. Explicit user self-maps can
+preserve a source spelling. A target is final: there is no mapping chain and no
+second normalization in pricing.
 
 The mapped identity is authoritative for aggregation, display, sessions, model
 ranking, and exact pricing lookup. Standalone pricing lookup uses the same

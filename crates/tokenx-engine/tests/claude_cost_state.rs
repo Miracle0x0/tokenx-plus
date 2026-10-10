@@ -35,17 +35,22 @@ fn snapshot(models: Value) -> Value {
 
 fn acquire(home: &Path, cache: &Path, rate: f64, mappings: ModelMappings) -> Generation {
     let service = PricingService::new(
-        HashMap::from([(
-            "claude-haiku-5.5".into(),
-            ModelPricing {
-                input_cost_per_token: Some(rate),
-                output_cost_per_token: Some(2.0 * rate),
-                cache_read_input_token_cost: Some(0.1 * rate),
-                cache_creation_input_token_cost: Some(1.25 * rate),
-                cache_creation_input_token_cost_above_1hr: Some(2.0 * rate),
-                ..Default::default()
-            },
-        )]),
+        ["claude-haiku-5.5", "claude-opus-5"]
+            .into_iter()
+            .map(|model| {
+                (
+                    model.into(),
+                    ModelPricing {
+                        input_cost_per_token: Some(rate),
+                        output_cost_per_token: Some(2.0 * rate),
+                        cache_read_input_token_cost: Some(0.1 * rate),
+                        cache_creation_input_token_cost: Some(1.25 * rate),
+                        cache_creation_input_token_cost_above_1hr: Some(2.0 * rate),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect(),
         HashMap::new(),
     );
     let pricing = Arc::new(ResolvedPricingSnapshot::explicit(
@@ -187,6 +192,53 @@ fn cost_state_reconciles_source_models_before_user_mappings() {
     );
     assert_eq!(models(&merged).models.len(), 1);
     assert_eq!(models(&merged).total_tokens, projected.total_tokens);
+}
+
+#[test]
+fn opus_context_suffix_shares_identity_pricing_and_snapshot_totals() {
+    let mut rows: Vec<_> = [
+        ("base", "claude-opus-5", 40),
+        ("context", "claude-opus-5[1m]", 60),
+    ]
+    .into_iter()
+    .map(|(id, model, input)| {
+        json!({"type": "assistant", "sessionId": "session",
+        "timestamp": "2026-10-09T10:00:00Z",
+        "message": {"id": id, "model": model, "usage": {
+            "input_tokens": input, "output_tokens": 10
+        }}})
+    })
+    .collect();
+    rows.push(snapshot(
+        json!({"claude-opus-5[1m]": model_usage(300, 60, 0, 0)}),
+    ));
+    let home = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    write(
+        &home.path().join(".claude/transcripts/session.jsonl"),
+        &rows,
+    );
+
+    // Cold acquisition, cached input shards, and repricing use one identity.
+    for rate in [1.0, 1.0, 2.0] {
+        let generation = acquire(home.path(), cache.path(), rate, ModelMappings::default());
+        let projected = models(&generation);
+        assert_eq!(generation.health().rejected_records(), 0);
+        assert_eq!(projected.models.len(), 1);
+        assert_eq!(projected.models[0].model_id.as_ref(), "claude-opus-5");
+        assert_eq!(projected.models[0].display_name.as_ref(), "claude-opus-5");
+        assert_eq!(projected.models[0].tokens.input, 300);
+        assert_eq!(projected.models[0].tokens.output, 60);
+        assert_eq!(projected.total_tokens, 360);
+        assert_eq!(projected.total_cost, 420.0 * rate);
+        assert_eq!(generation.sessions().len(), 1);
+        let session = &generation.sessions()[0];
+        assert_eq!(session.models.len(), 1);
+        assert!(session.models.contains("claude-opus-5"));
+        assert_eq!(session.tokens.total(), 360);
+        assert_eq!(session.cost, 420.0 * rate);
+        assert_eq!(session.message_count, 2);
+    }
 }
 
 #[test]

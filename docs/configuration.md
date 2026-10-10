@@ -129,10 +129,11 @@ specific exceptions before broader wildcards. Each rule is compared against the
 raw observation, its terminal model component without a route or `custom:`
 prefix, the spelling produced by existing syntax cleanup, and the hyphenated form of a
 human-readable label. Syntax cleanup
-includes release dates, free-channel tags, recognized reasoning tiers, and
-Claude version spelling. It still applies to unmatched names when
-`include_defaults = false`; an explicit self-map can preserve a particular
-spelling, for example `pattern = "gpt-5.6"` and `model = "gpt-5.6"`.
+includes release dates, free-channel tags, recognized reasoning tiers, Claude
+version spelling, and Claude's `[1m]` context-window suffix. It still applies to
+unmatched names when `include_defaults = false`; an explicit self-map can
+preserve a particular spelling, for example `pattern = "gpt-5.6"` and
+`model = "gpt-5.6"`.
 
 A matched target is used verbatim, without recursively applying another rule
 or normalizing it again. The mapped identity is shared by Models, TUI views,

@@ -163,6 +163,12 @@ pub(crate) fn normalized_human_display_model_slug(model: &str) -> Option<String>
 fn strip_global_suffixes_to_stable(mut model: Cow<'_, str>) -> Cow<'_, str> {
     loop {
         let strip = strip_release_suffix(&model)
+            .or_else(|| {
+                // Claude's context-window marker is not part of model identity.
+                model
+                    .strip_suffix("[1m]")
+                    .filter(|base| is_claude_observed_candidate(base))
+            })
             .map(|base| GlobalSuffixStrip::Truncate(base.len()))
             .or_else(|| strip_free_channel_tag(&model));
         let Some(strip) = strip else {
@@ -220,7 +226,9 @@ fn stripped_free_channel_tag(model: &str, strip: GlobalSuffixStrip) -> String {
 }
 
 fn is_claude_observed_candidate(model: &str) -> bool {
-    model.contains("claude") || CLAUDE_FAMILIES.iter().any(|family| model.contains(family))
+    model
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|part| part == "claude" || CLAUDE_FAMILIES.contains(&part))
 }
 
 fn canonical_model_segment(model: &str) -> &str {
@@ -549,6 +557,31 @@ mod tests {
             canonicalize_model_id("claude-sonnet-5-preview"),
             "claude-sonnet-5-preview"
         );
+    }
+
+    #[test]
+    fn canonicalizes_claude_context_window_suffixes() {
+        for (raw, expected) in [
+            ("claude-opus-5[1m]", "claude-opus-5"),
+            ("anthropic/Claude-Opus-5[1M]", "claude-opus-5"),
+            ("custom:claude-opus-5[1m]", "claude-opus-5"),
+            ("Claude Opus 5 [1m]", "claude-opus-5"),
+            ("claude-opus-5-preview[1m]", "claude-opus-5"),
+            ("claude-opus-5-thinking[1m]", "claude-opus-5"),
+            ("claude-opus-5-20260801[1m]:free", "claude-opus-5"),
+            ("claude-opus-5[1m]-20260801", "claude-opus-5"),
+            ("claude-opus-5.1[1m]", "claude-opus-5.1"),
+            ("claude-opus-5-5[1m]", "claude-opus-5.5"),
+            ("claude-sonnet-4[1m]", "claude-sonnet-4"),
+            ("claude-haiku-5[1m]", "claude-haiku-5"),
+            ("claude-fable-5[1m]", "claude-fable-5"),
+            ("private-model[1m]", "private-model[1m]"),
+            ("octopus-7[1m]", "octopus-7[1m]"),
+            ("sonneteer-4[1m]", "sonneteer-4[1m]"),
+            ("claude-opus-5[unknown]", "claude-opus-5[unknown]"),
+        ] {
+            assert_eq!(canonicalize_model_id(raw), expected, "{raw}");
+        }
     }
 
     #[test]

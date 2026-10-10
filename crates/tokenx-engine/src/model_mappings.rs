@@ -281,6 +281,33 @@ mod tests {
     }
 
     #[test]
+    fn claude_context_suffix_cleanup_respects_user_mapping_priority() {
+        let syntax_only = ModelMappings::from_toml("include_defaults = false").unwrap();
+        assert_eq!(
+            syntax_only.canonicalize("claude-opus-5[1m]"),
+            "claude-opus-5"
+        );
+
+        let mappings = ModelMappings::from_toml(
+            r#"
+            [[rules]]
+            pattern = 'claude-opus-5[1m]'
+            model = 'claude-opus-5[1m]'
+            [[rules]]
+            pattern = 'claude-opus-5'
+            model = 'custom-opus'
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            mappings.canonicalize("claude-opus-5[1m]"),
+            "claude-opus-5[1m]"
+        );
+        assert_eq!(mappings.canonicalize("claude-opus-5"), "custom-opus");
+        assert_eq!(mappings.canonicalize("opus-5[1m]"), "custom-opus");
+    }
+
+    #[test]
     fn wildcard_is_anchored_and_other_metacharacters_are_literal() {
         assert!(wildcard_matches("*seek*v4.1-*", "DeepSeek-v4.1-flash"));
         assert!(wildcard_matches("deepseek-*", "deepseek-"));
