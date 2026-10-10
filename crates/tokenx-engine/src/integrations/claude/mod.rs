@@ -1,3 +1,4 @@
+mod cost_state;
 pub(crate) mod decode;
 mod merge;
 
@@ -228,6 +229,7 @@ fn resolve_flat_parent_dependency(path: &std::path::Path) -> FlatParentResolutio
 
 struct ClaudeFold {
     merged: merge::ClaudeMerge,
+    cost_states: cost_state::CostStateReconciliation,
     health: Vec<(
         PathBuf,
         crate::input_health::InputStatus,
@@ -240,6 +242,7 @@ impl ClaudeFold {
         Ok(Self {
             merged: merge::ClaudeMerge::new()
                 .map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?,
+            cost_states: cost_state::CostStateReconciliation::default(),
             health: Vec::new(),
         })
     }
@@ -266,6 +269,10 @@ impl ClaudeFold {
             for message in messages {
                 ctx.cancellation()
                     .check(crate::engine::AcquisitionPhase::Folding)?;
+                if message.claude_is_cost_snapshot {
+                    self.cost_states.push(self.health.len(), message);
+                    continue;
+                }
                 self.merged
                     .push(self.health.len(), message)
                     .map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?;
@@ -288,6 +295,8 @@ impl ClaudeFold {
     ) -> Result<(), crate::integrations::InputPipelineError> {
         let mut messages = Vec::new();
         let mut input_index = 0;
+        self.cost_states
+            .validate(|owner, reason| self.health[owner].2.record(reason));
         for entry in self
             .merged
             .into_records()
@@ -297,6 +306,12 @@ impl ClaudeFold {
                 .check(crate::engine::AcquisitionPhase::Folding)?;
             let (next_input, message) =
                 entry.map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?;
+            if matches!(
+                crate::record_finalization(&message),
+                crate::RecordFinalization::Accept
+            ) {
+                self.cost_states.subtract_transcript(&message);
+            }
             if input_index != next_input {
                 Self::emit(&mut messages, &mut self.health[input_index].2, ctx, sink);
                 input_index = next_input;
@@ -305,6 +320,12 @@ impl ClaudeFold {
         }
         if !messages.is_empty() {
             Self::emit(&mut messages, &mut self.health[input_index].2, ctx, sink);
+        }
+        for (owner, message) in self.cost_states.into_records() {
+            ctx.cancellation()
+                .check(crate::engine::AcquisitionPhase::Folding)?;
+            messages.push(message);
+            Self::emit(&mut messages, &mut self.health[owner].2, ctx, sink);
         }
         for (path, status, rejections) in self.health {
             ctx.record_health(path, status, rejections);
@@ -759,6 +780,75 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn claude_cost_state_counts_background_haiku_without_recounting_transcripts() {
+        let home = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let path = home.path().join("session.jsonl");
+        let assistant = |model, id, input, output| {
+            serde_json::json!({
+                "type": "assistant", "cwd": "/project", "sessionId": "session",
+                "timestamp": "2026-10-09T10:00:00Z",
+                "message": {"id": id, "model": model, "usage": {
+                    "input_tokens": input, "output_tokens": output
+                }}
+            })
+            .to_string()
+        };
+        let snapshot = |input| {
+            serde_json::json!({
+            "type": "cost-state", "sessionId": "session", "startTime": 1791532800000_i64,
+            "modelUsage": {
+                "claude-haiku-5-5": {"inputTokens": input, "outputTokens": 17,
+                    "thinkingTokens": 10, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+                "claude-opus-5-5[1m]": {"inputTokens": 100, "outputTokens": 20,
+                    "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
+            }
+        }).to_string()
+        };
+        write_file(
+            &path,
+            &[
+                assistant("claude-haiku-4-5-20251001", "old-haiku", 10, 5),
+                assistant("claude-opus-5-5", "opus", 100, 20),
+                assistant("claude-opus-5-5", "opus", 100, 20),
+                snapshot(2000),
+                snapshot(1211),
+                snapshot(1211),
+            ]
+            .join("\n"),
+        );
+        let unit = crate::integrations::test_prepare(input_unit(path, home.path().to_owned()));
+        let mut cold = None;
+        for _ in 0..2 {
+            let mut cache =
+                input_record_cache::InputRecordShardStore::with_cache_dir(cache_dir.path());
+            let (records, health) = fold_prepared(vec![unit.clone()], &mut cache, None);
+            assert_eq!(health.rejected_records(), 0);
+            assert_eq!(records.len(), 3);
+            let haiku = records
+                .iter()
+                .find(|r| r.model_id.as_ref() == "claude-haiku-5.5")
+                .unwrap();
+            assert_eq!(haiku.raw_model_id.as_ref(), "claude-haiku-5-5");
+            assert_eq!(haiku.tokens.input, 1211);
+            assert_eq!(haiku.tokens.output, 17);
+            assert_eq!(haiku.tokens.reasoning, 0);
+            assert_eq!(haiku.message_count, 0);
+            assert!(!haiku.is_turn_start);
+            assert_eq!(haiku.timestamp, 1791532800000);
+            assert!(records
+                .iter()
+                .any(|r| r.model_id.as_ref() == "claude-haiku-4.5"));
+            assert_eq!(records.iter().map(|r| r.tokens.total()).sum::<i64>(), 1363);
+            if let Some(expected) = &cold {
+                assert_eq!(&records, expected);
+            }
+            cold = Some(records);
+            cache.save_if_dirty().unwrap();
+        }
     }
 
     #[test]

@@ -44,6 +44,12 @@ pub struct UsageRecord {
     /// zero counters. Retained across shards for cross-input reconciliation.
     #[serde(default)]
     pub(crate) claude_input_is_split: bool,
+    /// Cumulative Claude cost-state model total, reconciled before pricing.
+    pub(crate) claude_is_cost_snapshot: bool,
+    /// Native Claude session identity for cost reconciliation, independent of
+    /// the legacy filename-based session grouping key.
+    #[serde(deserialize_with = "intern::de_intern_opt")]
+    pub(crate) claude_session_id: Option<std::sync::Arc<str>>,
     pub cost: f64,
     /// Derived pricing failure; never persisted in source-record shards.
     #[serde(skip)]
@@ -357,6 +363,8 @@ impl UsageRecord {
             cost,
             pricing_error: None,
             claude_input_is_split: false,
+            claude_is_cost_snapshot: false,
+            claude_session_id: None,
             message_count: default_message_count(),
             agent: agent.as_deref().map(intern::intern),
             agent_instance: None,
