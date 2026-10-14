@@ -219,11 +219,68 @@ test_accepts_release_only_version_push() {
 
   run_check "${work}" push "${release_sha}" "${base_sha}" "" "${output_file}" >"${TMP_DIR}/valid-output.txt"
 
-  grep -q '^should_publish=true$' "${output_file}"
+  grep -q '^should_release=true$' "${output_file}"
   grep -q '^version=1.2.4$' "${output_file}"
   grep -q '^base_version=1.2.3$' "${output_file}"
   grep -q "^release_commit=${release_sha}$" "${output_file}"
   grep -q '^recovery=false$' "${output_file}"
+}
+
+test_accepts_code_commits_followed_by_version_commit_in_one_push() {
+  local origin work base_sha release_sha output_file
+  origin="$(create_origin combined-push)"
+  work="${TMP_DIR}/combined-push-work"
+  clone_main "${origin}" "${work}"
+  base_sha="$(git -C "${work}" rev-parse HEAD)"
+  (
+    cd "${work}"
+    echo "new implementation" > README.md
+    git add README.md
+    git commit -qm "feat: update implementation"
+    echo "new CI" >> README.md
+    git add README.md
+    git commit -qm "ci: update release pipeline"
+  )
+  commit_release "${work}" 1.2.4
+  release_sha="$(git -C "${work}" rev-parse HEAD)"
+  output_file="${TMP_DIR}/combined-push-output.txt"
+  run_check "${work}" push "${release_sha}" "${base_sha}" "" "${output_file}"
+  grep -q '^should_release=true$' "${output_file}"
+
+  (
+    cd "${work}"
+    echo "later code" >> README.md
+    git add README.md
+    git commit -qm "fix: unrelated change after version bump"
+    git push -q origin main
+  )
+  release_sha="$(git -C "${work}" rev-parse HEAD)"
+  if run_check "${work}" push "${release_sha}" "${base_sha}" "" "${output_file}" >"${TMP_DIR}/not-version-head.txt" 2>&1; then
+    echo "Expected a non-version head commit to fail" >&2
+    return 1
+  fi
+  grep -q 'did not introduce version' "${TMP_DIR}/not-version-head.txt"
+}
+
+test_rejects_malformed_base_version_manifest() {
+  local origin work base_sha release_sha
+  origin="$(create_origin malformed-base)"
+  work="${TMP_DIR}/malformed-base-work"
+  clone_main "${origin}" "${work}"
+  (
+    cd "${work}"
+    printf '[invalid TOML' > Cargo.toml
+    git add Cargo.toml
+    git commit -qm "test: malformed Cargo manifest"
+  )
+  base_sha="$(git -C "${work}" rev-parse HEAD)"
+  commit_release "${work}" 1.2.4
+  release_sha="$(git -C "${work}" rev-parse HEAD)"
+  if run_check "${work}" push "${release_sha}" "${base_sha}" "" "${TMP_DIR}/malformed-base-github-output.txt" >"${TMP_DIR}/malformed-base-log.txt" 2>&1; then
+    echo "Expected malformed authoritative version data to fail" >&2
+    return 1
+  fi
+  grep -q 'TOMLDecodeError' "${TMP_DIR}/malformed-base-log.txt"
 }
 
 test_skips_push_without_version_change() {
@@ -247,7 +304,7 @@ test_skips_push_without_version_change() {
 
   run_check "${work}" push "${head_sha}" "${base_sha}" "" "${output_file}" >"${TMP_DIR}/no-version-output.txt"
 
-  grep -q '^should_publish=false$' "${output_file}"
+  grep -q '^should_release=false$' "${output_file}"
   grep -q "publishing is skipped" "${TMP_DIR}/no-version-output.txt"
 }
 
@@ -359,7 +416,7 @@ test_bootstrap_pr_is_validated_without_automatic_publish() {
   grep -q "Release pull request OK: introducing Tokenx 0.1.0" "${TMP_DIR}/bootstrap-pr-log.txt"
 
   run_check "${work}" push "${release_sha}" "${base_sha}" "" "${output_file}" >"${TMP_DIR}/bootstrap-push-log.txt"
-  grep -q '^should_publish=false$' "${output_file}"
+  grep -q '^should_release=false$' "${output_file}"
   grep -q '^version=0.1.0$' "${output_file}"
   grep -q '^base_version=$' "${output_file}"
   grep -q "^release_commit=${release_sha}$" "${output_file}"
@@ -387,7 +444,7 @@ test_initial_branch_push_is_validated_without_automatic_publish() {
   output_file="${TMP_DIR}/initial-push-github-output.txt"
 
   run_check "${work}" push "${release_sha}" "0000000000000000000000000000000000000000" "" "${output_file}" >"${TMP_DIR}/initial-push-log.txt"
-  grep -q '^should_publish=false$' "${output_file}"
+  grep -q '^should_release=false$' "${output_file}"
   grep -q '^version=0.0.0$' "${output_file}"
   grep -q '^base_version=$' "${output_file}"
   grep -q "^release_commit=${release_sha}$" "${output_file}"
@@ -440,7 +497,7 @@ test_recovery_accepts_exact_ancestor_release_commit() {
 
   run_check "${work}" workflow_dispatch "${release_sha}" "" 1.2.4 "${output_file}" >"${TMP_DIR}/recovery-output.txt"
 
-  grep -q '^should_publish=true$' "${output_file}"
+  grep -q '^should_release=true$' "${output_file}"
   grep -q '^recovery=true$' "${output_file}"
   grep -q "recovery=true" "${TMP_DIR}/recovery-output.txt"
 }
@@ -470,6 +527,8 @@ test_recovery_rejects_later_commit_with_same_version() {
 }
 
 test_accepts_release_only_version_push
+test_accepts_code_commits_followed_by_version_commit_in_one_push
+test_rejects_malformed_base_version_manifest
 test_skips_push_without_version_change
 test_rejects_version_push_with_non_release_files
 test_rejects_metadata_change_inside_release_manifest

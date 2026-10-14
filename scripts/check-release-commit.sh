@@ -30,10 +30,7 @@ release_manifest_paths() {
 
 manifest_version_at() {
   local commit="$1"
-  local manifest="packages/tokenx/package.json"
-
-  git cat-file -e "${commit}:${manifest}" 2>/dev/null || return 1
-  git show "${commit}:${manifest}" | jq -er '.version'
+  python3 scripts/release-manifests.py version --commit "${commit}"
 }
 
 is_null_commit() {
@@ -160,7 +157,7 @@ release_sha="$(git rev-parse HEAD)"
 [[ "${release_sha}" == "$(git rev-parse "${EXPECTED_RELEASE_SHA}^{commit}")" ]] ||
   fail "Checked-out commit ${release_sha} does not match expected release commit ${EXPECTED_RELEASE_SHA}"
 
-current_version="$(jq -er '.version' packages/tokenx/package.json)"
+current_version="$(python3 scripts/release-manifests.py version)"
 
 if [[ "${RELEASE_EVENT_NAME}" == "pull_request" ]]; then
   [[ -n "${RELEASE_BEFORE_SHA}" ]] || fail "RELEASE_BEFORE_SHA is required for release pull requests"
@@ -168,11 +165,12 @@ if [[ "${RELEASE_EVENT_NAME}" == "pull_request" ]]; then
     fail "Pull request base is not a commit: ${RELEASE_BEFORE_SHA}"
   git merge-base --is-ancestor "${RELEASE_BEFORE_SHA}" "${release_sha}" ||
     fail "Pull request base ${RELEASE_BEFORE_SHA} is not an ancestor of ${release_sha}"
-  if ! base_version="$(manifest_version_at "${RELEASE_BEFORE_SHA}")"; then
+  if ! git cat-file -e "${RELEASE_BEFORE_SHA}:Cargo.toml" 2>/dev/null; then
     bash scripts/check-version-coherence.sh --expect-version "${current_version}"
     echo "Release pull request OK: introducing Tokenx ${current_version}"
     exit 0
   fi
+  base_version="$(manifest_version_at "${RELEASE_BEFORE_SHA}")"
   if [[ "${current_version}" != "${base_version}" ]]; then
     assert_version_increased "${base_version}" "${current_version}"
     assert_release_only_diff \
@@ -196,7 +194,7 @@ case "${RELEASE_EVENT_NAME}" in
     [[ -n "${RELEASE_BEFORE_SHA}" ]] || fail "RELEASE_BEFORE_SHA is required for push releases"
     if is_null_commit "${RELEASE_BEFORE_SHA}"; then
       bash scripts/check-version-coherence.sh --expect-version "${current_version}"
-      write_output should_publish false
+      write_output should_release false
       write_output version "${current_version}"
       write_output base_version ""
       write_output release_commit "${release_sha}"
@@ -208,9 +206,9 @@ case "${RELEASE_EVENT_NAME}" in
       fail "Push base is not a commit: ${RELEASE_BEFORE_SHA}"
     git merge-base --is-ancestor "${RELEASE_BEFORE_SHA}" "${release_sha}" ||
       fail "Push base ${RELEASE_BEFORE_SHA} is not an ancestor of ${release_sha}"
-    if ! base_version="$(manifest_version_at "${RELEASE_BEFORE_SHA}")"; then
+    if ! git cat-file -e "${RELEASE_BEFORE_SHA}:Cargo.toml" 2>/dev/null; then
       bash scripts/check-version-coherence.sh --expect-version "${current_version}"
-      write_output should_publish false
+      write_output should_release false
       write_output version "${current_version}"
       write_output base_version ""
       write_output release_commit "${release_sha}"
@@ -218,9 +216,10 @@ case "${RELEASE_EVENT_NAME}" in
       echo "Tokenx ${current_version} release manifests were introduced in ${release_sha}; automatic publishing is skipped"
       exit 0
     fi
+    base_version="$(manifest_version_at "${RELEASE_BEFORE_SHA}")"
 
     if [[ "${current_version}" == "${base_version}" ]]; then
-      write_output should_publish false
+      write_output should_release false
       write_output version "${current_version}"
       write_output base_version "${base_version}"
       write_output release_commit "${release_sha}"
@@ -229,12 +228,16 @@ case "${RELEASE_EVENT_NAME}" in
       exit 0
     fi
 
-    commit_count="$(git rev-list --count "${RELEASE_BEFORE_SHA}..${release_sha}")"
-    [[ "${commit_count}" == "1" ]] ||
-      fail "A release push must contain exactly one version-bump commit, found ${commit_count} commits"
+    assert_version_increased "${base_version}" "${current_version}"
+    # A push may carry preceding code/CI commits. Only its final commit must
+    # introduce the release version and contain the exact version-only diff.
+    base_sha="$(git rev-parse "${release_sha}^")"
+    base_version="$(manifest_version_at "${base_sha}")"
+    [[ "${base_version}" != "${current_version}" ]] ||
+      fail "Release commit ${release_sha} did not introduce version ${current_version}"
     assert_version_increased "${base_version}" "${current_version}"
     assert_release_only_diff \
-      "${RELEASE_BEFORE_SHA}" \
+      "${base_sha}" \
       "${release_sha}" \
       "${base_version}" \
       "${current_version}"
@@ -268,7 +271,7 @@ esac
 bash scripts/check-version-coherence.sh --expect-version "${current_version}"
 verify_tag_state "${current_version}" "${release_sha}" "${recovery}"
 
-write_output should_publish true
+write_output should_release true
 write_output version "${current_version}"
 write_output base_version "${base_version}"
 write_output release_commit "${release_sha}"

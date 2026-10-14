@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - packages/tokenx/package.json
+      - Cargo.toml
   workflow_dispatch:
     inputs:
       version:
@@ -36,7 +36,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      should_release: ${{ steps.release.outputs.should_publish }}
+      should_release: ${{ steps.release.outputs.should_release }}
       version: ${{ steps.release.outputs.version }}
       release_commit: ${{ steps.release.outputs.release_commit }}
 
@@ -155,11 +155,17 @@ jobs:
             --json \
             --no-spinner >/dev/null
 
-      - name: Upload native binary artifact
+      - name: Package release assets
+        shell: bash
+        env:
+          BUILD_TARGET: ${{ matrix.settings.target }}
+        run: python3 scripts/package-release.py --target "$BUILD_TARGET"
+
+      - name: Upload release assets
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.settings.artifact_name }}
-          path: target/${{ matrix.settings.target }}/release/${{ matrix.settings.bin_name }}
+          path: dist/*
           if-no-files-found: error
 
   finalize:
@@ -178,6 +184,17 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Download release assets
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: tokenx-binary-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release checksums
+        working-directory: dist
+        run: sha256sum --check *.sha256
 
       - name: Revalidate release commit after builds
         env:
@@ -212,8 +229,10 @@ jobs:
             gh release edit "v$NEW_VERSION" \
               --repo "$GITHUB_REPOSITORY" \
               --title "v$NEW_VERSION"
+            gh release upload "v$NEW_VERSION" dist/* \
+              --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "v$NEW_VERSION" \
+            gh release create "v$NEW_VERSION" dist/* \
               --repo "$GITHUB_REPOSITORY" \
               --title "v$NEW_VERSION" \
               --target "$RELEASE_COMMIT" \

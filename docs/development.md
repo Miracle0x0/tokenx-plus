@@ -79,7 +79,7 @@ uvx zizmor --pedantic --no-online-audits --min-severity medium .github
 
 ## Package licenses
 
-Native npm tarballs include the license and copyright notices for Rust crates distributed inside the compiled binary. The repository tracks one canonical `THIRD_PARTY_LICENSES.html` at its root; `scripts/publish-npm-package.sh` copies it into each native package staging directory immediately before validation and publication. Platform package copies are generated staging files and must not be tracked.
+GitHub Release archives include `LICENSE`, `NOTICE`, and the license and copyright notices for Rust crates distributed inside the compiled binary. The repository tracks one canonical `THIRD_PARTY_LICENSES.html` at its root; `scripts/package-release.py` includes it in every native archive. The retained npm launcher workspace uses `scripts/stage-npm-package-files.sh` for local package validation; generated platform copies must not be tracked.
 
 Install the pinned generator and refresh the canonical report after dependency changes:
 

@@ -14,7 +14,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 if [[ -z "${EXPECTED_VERSION}" ]]; then
-  EXPECTED_VERSION="$(jq -er '.version' packages/tokenx/package.json)"
+  EXPECTED_VERSION="$(python3 scripts/release-manifests.py version)"
 fi
 
 python3 scripts/release-manifests.py check --version "${EXPECTED_VERSION}"

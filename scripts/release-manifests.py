@@ -9,6 +9,7 @@ import json
 import pathlib
 import re
 import subprocess
+import tomllib
 from collections.abc import Callable
 
 ROOT = pathlib.Path.cwd()
@@ -257,11 +258,6 @@ def check_version(version: str) -> None:
     platforms = platform_manifests(launcher)
     errors: list[str] = []
 
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        fail("Python tomllib is required (Python 3.11+)")
-
     cargo_data = tomllib.loads(load_working(pathlib.Path("Cargo.toml")))
     workspace_version = cargo_data.get("workspace", {}).get("package", {}).get("version")
     if workspace_version != version:
@@ -322,6 +318,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("paths")
+    version_parser = subparsers.add_parser("version")
+    version_parser.add_argument("--commit")
 
     check_parser = subparsers.add_parser("check")
     check_parser.add_argument("--version", required=True)
@@ -337,6 +335,11 @@ def main() -> None:
     verify_parser.add_argument("--new", required=True)
 
     args = parser.parse_args()
+    if args.command == "version":
+        path = pathlib.Path("Cargo.toml")
+        text = git_show(args.commit, path) if args.commit else load_working(path)
+        print(tomllib.loads(text)["workspace"]["package"]["version"])
+        return
     if args.command == "paths":
         launcher = read_json(load_working(LAUNCHER_PATH), LAUNCHER_PATH.as_posix())
         for path in release_paths_from_launcher(launcher):

@@ -8,19 +8,15 @@ Tokenx 从本地 AI 编码客户端读取带 token 信息的记录，并通过�
 
 ## 安装
 
-```bash
-npm install --global @juya-ai/tokenx
-tokenx
-```
+从 [GitHub Releases](https://github.com/Miracle0x0/tokenx-plus/releases/latest) 下载对应平台的压缩包，解压后将 `tokenx`（Windows 为 `tokenx.exe`）放入 `PATH`。预构建产物支持 Apple 芯片 Mac、使用 glibc 的 Linux x64，以及 Windows x64。
 
-npm 预构建包支持 Apple 芯片 Mac、使用 glibc 的 Linux x64，以及 Windows x64。其他目标可使用 Bun 和稳定 Rust 工具链从源码构建：
+其他目标可使用稳定 Rust 工具链从源码构建：
 
 ```bash
-git clone https://github.com/makoMakoGo/tokenx.git
-cd tokenx
-bun install --frozen-lockfile
-bun run build
-bun run cli
+git clone https://github.com/Miracle0x0/tokenx-plus.git
+cd tokenx-plus
+cargo build --locked --release -p tokenx
+./target/release/tokenx
 ```
 
 ## 使用
@@ -47,7 +43,7 @@ tokenx pricing overrides --json
 tokenx config init-model-mappings --no-spinner
 ```
 
-从源码运行时，把 `tokenx` 替换为 `bun run cli --`。
+从源码运行时，把 `tokenx` 替换为 `./target/release/tokenx`（Windows：`target\release\tokenx.exe`）。
 
 ## 行为边界
 
