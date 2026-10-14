@@ -2,7 +2,7 @@
 
 ## Localization (rust-i18n)
 
-User-facing strings in this crate are localized with `rust-i18n` (v3). The
+User-facing strings in this crate are localized with `rust-i18n` (v4). The
 engine crate (`tokenx-engine`) stays English.
 
 - Locale files live in `crates/tokenx/locales/`, one file per locale for each
