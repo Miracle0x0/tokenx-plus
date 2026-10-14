@@ -23,8 +23,25 @@ pub(crate) struct Driver;
 
 const SOURCE: SourceSpec = SourceSpec::home(
     ".codex/sessions",
-    crate::integrations::SourceMatcher::new(crate::integrations::source_matchers::jsonl),
+    crate::integrations::SourceMatcher::new(codex_session_file),
 );
+
+fn codex_session_file(path: &Path) -> bool {
+    crate::integrations::source_matchers::jsonl(path) || is_codex_archive(path)
+}
+
+fn is_codex_archive(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().ends_with(".jsonl.zst"))
+}
+
+fn codex_decoder(path: &Path) -> DecoderKind {
+    if is_codex_archive(path) {
+        DecoderKind::CodexArchive
+    } else {
+        DecoderKind::codex()
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct CodexAppendInput {
@@ -48,12 +65,15 @@ impl IntegrationDriver for Driver {
         ];
         roots.extend(source_discovery::extra_roots_for_client(client, ctx)?);
 
-        let units = source_discovery::input_units_from_paths_preserving_order(
+        let mut units = source_discovery::input_units_from_paths_preserving_order(
             client,
             source_discovery::scan_roots(ctx, roots, SOURCE.matcher())?,
             FingerprintPolicy::PlainFile,
             DecoderKind::codex(),
         )?;
+        for unit in &mut units {
+            unit.decoder = codex_decoder(&unit.path);
+        }
         Ok(units)
     }
 
@@ -65,6 +85,11 @@ impl IntegrationDriver for Driver {
         units
             .into_par_iter()
             .map(|unit| {
+                if unit.decoder == DecoderKind::CodexArchive {
+                    return pipeline_cache::load_or_scan_unit_including_empty(unit, ctx, |path| {
+                        decode::parse_codex_archive(path, Some(ctx.cancellation()))
+                    });
+                }
                 let unit_identity = unit.clone();
                 match load_or_parse_codex_unit(unit, Some(ctx.cancellation())) {
                     Ok(parsed) => parsed,
@@ -82,7 +107,11 @@ impl IntegrationDriver for Driver {
         unit: crate::integrations::PreparedInput,
         input_cache: &input_record_cache::InputRecordShardStore,
     ) -> Result<CacheHitPlan, InputPlanningError> {
-        plan_exact_codex_cache_hit(unit, input_cache)
+        if unit.decoder == DecoderKind::CodexArchive {
+            pipeline_cache::plan_cache_hit(unit, input_cache)
+        } else {
+            plan_exact_codex_cache_hit(unit, input_cache)
+        }
     }
 
     fn fold(
@@ -159,6 +188,13 @@ fn fold_codex_units(
     seen: &mut HashSet<u64>,
 ) -> Result<(), InputPipelineError> {
     for parsed in parsed {
+        if parsed.unit.decoder == DecoderKind::CodexArchive {
+            pipeline_cache::fold_units_with_filter(vec![parsed], ctx, sink, |_, mut messages| {
+                messages.retain(|message| crate::should_keep_deduped_message(seen, message));
+                messages
+            })?;
+            continue;
+        }
         let ParsedUnit {
             unit,
             messages: payload,
@@ -724,6 +760,8 @@ pub(crate) static DRIVER: Driver = Driver;
 
 #[cfg(test)]
 mod tests {
+    mod archives;
+
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::io::Write;
@@ -810,7 +848,7 @@ mod tests {
     }
 
     fn codex_unit(path: &Path) -> DiscoveredInput {
-        DiscoveredInput::plain_file(path.to_path_buf(), DecoderKind::codex())
+        DiscoveredInput::plain_file(path.to_path_buf(), codex_decoder(path))
     }
 
     fn prepared_codex_unit(path: &Path) -> crate::integrations::PreparedInput {

@@ -1,6 +1,31 @@
 # Codex local token-usage facts
 
-Last verified: 2026-09-19
+Last verified: 2026-10-14
+
+## Session storage
+
+Codex stores plain `.jsonl` and Zstandard-compressed `.jsonl.zst` rollouts
+under `~/.codex/sessions/` and `~/.codex/archived_sessions/`. Read-only local
+inspection on 2026-10-14 verified that compressed histories retain JSONL
+`event_msg/token_count` records. The same formats are accepted in configured
+`scanner.extraScanPaths.codex` roots.
+
+Tokenx streams decompressed lines through the existing Codex event parser.
+Both suffixes resolve to the same logical session name, and content-derived
+usage keys deduplicate copies across scan roots. Compression does not change
+token accounting, fork-history exclusion, model identity, or service tiers.
+
+Archives use whole-file record shards, including successfully parsed empty
+histories. An unchanged archive's metadata stamp permits reuse without reading
+or decompressing the source. A new, changed, or uncached archive is decoded
+from the beginning; plain JSONL retains verified append parsing. Archive
+fingerprints and input-footprint accounting describe physical compressed files,
+and archive shards do not carry append offsets. Decoder-source changes
+invalidate the corresponding cached records automatically.
+
+Unreadable or undecodable archives produce an explicit input diagnostic.
+Interrupted decoding retains confirmed records, marks the input incomplete,
+and never caches that partial result, following ADR 0001.
 
 ## Service-tier source fields
 

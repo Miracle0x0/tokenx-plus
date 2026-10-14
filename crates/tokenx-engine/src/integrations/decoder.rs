@@ -32,6 +32,7 @@ pub(crate) enum DecoderKind {
         workspace_scope: CopilotWorkspaceScope,
     },
     Codex,
+    CodexArchive,
 }
 
 impl DecoderKind {
@@ -105,6 +106,9 @@ impl DecoderKind {
                     CopilotWorkspaceScope::ExplicitRoot => DecoderVariant::CopilotExplicitRoot,
                 }),
             Self::Codex => DecoderVersion::current(DecoderId::Codex),
+            Self::CodexArchive => {
+                DecoderVersion::current(DecoderId::Codex).with_variant(DecoderVariant::CodexArchive)
+            }
         }
     }
 
@@ -135,6 +139,7 @@ impl DecoderKind {
                 }),
             ),
             Self::Codex => ("codex", None),
+            Self::CodexArchive => ("codex", Some("zstd")),
         }
     }
 }

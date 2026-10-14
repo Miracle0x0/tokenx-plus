@@ -21,6 +21,7 @@ pub(crate) enum DecoderVariant {
     CodeBuddyHost,
     CopilotBuiltIn,
     CopilotExplicitRoot,
+    CodexArchive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
