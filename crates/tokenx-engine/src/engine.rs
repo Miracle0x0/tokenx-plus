@@ -176,7 +176,7 @@ impl AcquisitionEngine {
                 self.config.universe().clone(),
                 self.config.date_range().clone(),
                 self.config.scanner(),
-                self.config.dsh_home(),
+                self.config.client_roots(),
                 self.input_cache_dir.clone(),
                 cancellation,
             )

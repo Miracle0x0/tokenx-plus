@@ -19,7 +19,7 @@ pub(crate) fn run_input_record_cache_prune(
 pub(crate) fn run_warm_generation_cache(
     startup: crate::cli::ResolvedStartupSnapshot,
 ) -> Result<()> {
-    use crate::acquisition::{acquisition_engine_with_dsh_home, build_generation};
+    use crate::acquisition::{acquisition_engine_with_client_roots, build_generation};
     use crate::generation_cache::save_generation_cache;
 
     let crate::cli::StartupSnapshot {
@@ -31,11 +31,11 @@ pub(crate) fn run_warm_generation_cache(
     } = startup;
     let crate::cli::ResolvedInputScope {
         home,
-        dsh_home,
+        client_roots,
         universe,
         restricted: _,
     } = input;
-    let acquisition = acquisition_engine_with_dsh_home(
+    let acquisition = acquisition_engine_with_client_roots(
         paths.cache_dir(),
         home,
         universe,
@@ -43,7 +43,7 @@ pub(crate) fn run_warm_generation_cache(
         settings.scanner,
         calendar,
         pricing,
-        dsh_home,
+        client_roots,
         settings.model_mappings.clone(),
     )?;
     let prepared = acquisition.prepare()?;

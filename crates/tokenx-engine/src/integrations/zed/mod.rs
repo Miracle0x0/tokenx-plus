@@ -122,7 +122,7 @@ mod tests {
         DiscoveryContext {
             client: ClientId::Zed,
             home_dir,
-            dsh_home: None,
+            root_override: None,
             scanner_settings: settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         }

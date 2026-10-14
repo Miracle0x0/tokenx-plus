@@ -153,12 +153,13 @@ fields, and blank patterns or targets are explicit configuration errors.
 | Variable | Meaning |
 | --- | --- |
 | `TOKENX_CONFIG_DIR` | Overrides the general config/cache root used by Tokenx. The value must be absolute. Surrounding whitespace is trimmed; empty and whitespace-only values are treated as unset. |
+| `XDG_DATA_HOME` | Selects OpenCode's data root as `<value>/opencode`. Must be absolute when non-empty; empty means unset. Captured at startup and disabled by explicit `--home`. |
 | `TOKENX_USAGE_ZAI_CODING_PLAN_API_KEY` | Z.ai/Zhipu GLM Coding Plan quota key. |
 | `TOKENX_USAGE_KIMI_CODING_PLAN_API_KEY` | Kimi Coding Plan quota key. |
 | `TOKENX_USAGE_MINIMAX_TOKEN_PLAN_CN_KEY` | MiniMax CN Token Plan subscription key. |
 | `TOKENX_USAGE_MINIMAX_TOKEN_PLAN_GLOBAL_KEY` | MiniMax Global Token Plan subscription key. |
 
-Automatic input discovery uses only the fixed client paths documented in
+Automatic input discovery uses the client paths and environment overrides documented in
 [`clients.md`](clients.md). `scanner.extraScanPaths` is the sole configuration
 for additional recursive input roots; OpenCode uses
 `scanner.opencodeDbPaths` instead.

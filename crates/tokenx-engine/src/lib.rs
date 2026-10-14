@@ -36,8 +36,8 @@ pub use engine::{
     GenerationBuildError, PreparedAcquisition,
 };
 pub use generation::{
-    AcquisitionConfig, AcquisitionConfigError, CalendarContext, ClientSelection, ClientUniverse,
-    Generation, GenerationError, PricingContext, UsageQuery,
+    AcquisitionConfig, AcquisitionConfigError, CalendarContext, ClientRootOverrides,
+    ClientSelection, ClientUniverse, Generation, GenerationError, PricingContext, UsageQuery,
 };
 pub use input_footprint::{InputFootprint, InputFootprintOverflow};
 pub use input_health::{
@@ -450,7 +450,7 @@ fn prepare_inventory(
     clients: ClientUniverse,
     date_range: DateRange,
     scanner_settings: &scanner::ScannerSettings,
-    dsh_home: Option<&Path>,
+    client_roots: &ClientRootOverrides,
     input_cache_dir: PathBuf,
     cancellation: &AcquisitionCancellation,
 ) -> Result<PreparedInventory, AcquisitionError> {
@@ -462,7 +462,13 @@ fn prepare_inventory(
         .map_err(AcquisitionError::invalid_environment)?;
     let selected_integrations = integrations::selected_integrations(&clients);
     let prepared = prepare_selected_integrations(selected_integrations, |binding| {
-        prepare_integration(binding, home_dir, scanner_settings, dsh_home, cancellation)
+        prepare_integration(
+            binding,
+            home_dir,
+            scanner_settings,
+            client_roots.for_client(binding.client),
+            cancellation,
+        )
     })?;
     let mut health = DataHealth::default();
     let mut groups = Vec::with_capacity(prepared.len());
@@ -506,7 +512,7 @@ fn prepare_integration(
     binding: integrations::IntegrationBinding,
     home_dir: &Path,
     scanner_settings: &scanner::ScannerSettings,
-    dsh_home: Option<&Path>,
+    root_override: Option<&Path>,
     cancellation: &AcquisitionCancellation,
 ) -> Result<PreparedIntegrationOutcome, AcquisitionError> {
     cancellation
@@ -515,7 +521,7 @@ fn prepare_integration(
     let scan_ctx = integrations::DiscoveryContext {
         client: binding.client,
         home_dir,
-        dsh_home,
+        root_override,
         scanner_settings,
         cancellation: cancellation.clone(),
     };
@@ -600,7 +606,7 @@ fn prepare_test_inventory(
         clients,
         options.date_range,
         &options.scanner_settings,
-        None,
+        &ClientRootOverrides::default(),
         input_cache_dir_for_test_home(&home_dir),
         &AcquisitionCancellation::default(),
     )

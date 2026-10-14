@@ -485,14 +485,17 @@ fn cmd_with_home(tmp: &Path) -> Command {
     cmd.args(["--language", "en"]);
     cmd.env("HOME", tmp)
         .env_remove("TOKENX_CONFIG_DIR")
-        .env_remove("DSH_HOME");
+        .env_remove("DSH_HOME")
+        .env_remove("XDG_DATA_HOME");
     cmd
 }
 
 fn cmd_with_process_home(tmp: &Path) -> Command {
     let mut cmd = cargo_bin_cmd!("tokenx");
     cmd.args(["--language", "en"]);
-    cmd.env("HOME", tmp).env_remove("DSH_HOME");
+    cmd.env("HOME", tmp)
+        .env_remove("DSH_HOME")
+        .env_remove("XDG_DATA_HOME");
     cmd
 }
 
@@ -505,7 +508,8 @@ fn offline_cmd_with_home(tmp: &Path) -> Command {
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("ALL_PROXY", "http://127.0.0.1:9")
         .env_remove("TOKENX_CONFIG_DIR")
-        .env_remove("DSH_HOME");
+        .env_remove("DSH_HOME")
+        .env_remove("XDG_DATA_HOME");
     cmd
 }
 
@@ -1789,6 +1793,79 @@ fn test_models_dsh_honors_dsh_home_but_explicit_home_disables_it() {
     let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(model_rows(&document).len(), 1);
     assert_eq!(model_rows(&document)[0]["modelId"], "default-model");
+}
+
+#[test]
+fn opencode_v2_xdg_wal_and_cross_channel_usage_survive_warm_reads() {
+    let home = create_empty_fixture_dir();
+    let xdg = TempDir::new().unwrap();
+    let path = xdg.path().join("opencode/opencode-next.db");
+    let conn = create_opencode_sqlite_at(&path);
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA wal_autocheckpoint=0;
+         CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, parent_id TEXT);
+         CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, data TEXT);
+         INSERT INTO session_v2 VALUES ('root', '/work/project', NULL);",
+    )
+    .unwrap();
+    let data = |id| {
+        serde_json::json!({
+            "id": id, "model": {"id": "opencode-test-model", "providerID": "test"},
+            "time": {"created": 1783882279705_i64},
+            "tokens": {"input": 10, "output": 5, "reasoning": 2, "cache": {"read": 3, "write": 1}}
+        })
+    };
+    for (row, id) in [("a", "msg-a"), ("b", "msg-b"), ("fork-a", "msg-a")] {
+        conn.execute(
+            "INSERT INTO session_message VALUES (?1, 'root', 'assistant', ?2)",
+            rusqlite::params![row, data(id).to_string()],
+        )
+        .unwrap();
+    }
+    conn.execute(
+        "INSERT INTO session_message VALUES ('bad', 'root', 'assistant', '{')",
+        [],
+    )
+    .unwrap();
+    let copied = create_opencode_sqlite_at(&xdg.path().join("opencode/opencode-stable.db"));
+    let mut v1 = data("msg-a");
+    v1["role"] = serde_json::json!("assistant");
+    v1["modelID"] = serde_json::json!("opencode-test-model");
+    v1["providerID"] = serde_json::json!("test");
+    insert_opencode_message(&copied, "copied", "root", "/work/project", &v1.to_string());
+    let report = |data_root: &std::ffi::OsStr, explicit_home: bool| {
+        let mut command = offline_cmd_with_home(home.path());
+        command.env("XDG_DATA_HOME", data_root).args([
+            "models",
+            "--client",
+            "opencode",
+            "--json",
+            "--no-spinner",
+        ]);
+        if explicit_home {
+            command.arg("--home").arg(home.path());
+        }
+        serde_json::from_slice::<serde_json::Value>(&command.assert().success().get_output().stdout)
+            .unwrap()
+    };
+    // Keep the v2 connection open: the newly committed usage is still in WAL.
+    for _ in 0..2 {
+        let document = report(xdg.path().as_os_str(), false);
+        assert_eq!(model_rows(&document).len(), 1);
+        assert_eq!(model_token_sum(&document, "input"), 20);
+        assert_eq!(model_token_sum(&document, "output"), 10);
+        assert_eq!(model_token_sum(&document, "reasoning"), 4);
+        assert_eq!(document["health"]["rejectedRecords"], 1);
+    }
+    for (root, explicit_home) in [
+        (std::ffi::OsStr::new(""), false),
+        (xdg.path().as_os_str(), true),
+    ] {
+        let document = report(root, explicit_home);
+        assert!(model_rows(&document).is_empty());
+        assert_eq!(document["health"]["complete"], true);
+    }
 }
 
 #[test]

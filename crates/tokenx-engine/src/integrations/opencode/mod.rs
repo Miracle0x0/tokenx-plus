@@ -1,5 +1,8 @@
 pub(crate) mod decode;
 mod discover;
+mod schema;
+#[cfg(test)]
+mod sqlite_tests;
 
 use std::collections::HashSet;
 
@@ -21,7 +24,10 @@ impl IntegrationDriver for Driver {
         &self,
         ctx: &DiscoveryContext<'_>,
     ) -> Result<Vec<DiscoveredInput>, InputDiscoveryError> {
-        let data_dir = discover::data_dir(ctx.home_dir);
+        let data_dir = ctx
+            .root_override
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| discover::data_dir(ctx.home_dir));
         let mut db_paths = discover::databases(&data_dir).map_err(|source| {
             InputDiscoveryError::new(&data_dir, "discover OpenCode databases", source)
         })?;
@@ -188,7 +194,7 @@ mod tests {
         let ctx = DiscoveryContext {
             client: ClientId::OpenCode,
             home_dir: home.path(),
-            dsh_home: None,
+            root_override: None,
             scanner_settings: &settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         };
@@ -292,7 +298,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("opencode.db");
         let conn = Connection::open(&path).unwrap();
-        conn.execute_batch("CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);")
+        conn.execute_batch("CREATE TABLE message (id TEXT, session_id TEXT);")
             .unwrap();
         drop(conn);
         let unit = DiscoveredInput::sqlite_with_wal(path.clone(), DecoderKind::opencode_sqlite())
