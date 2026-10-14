@@ -460,9 +460,8 @@ impl TerminalState {
 #[derive(Debug)]
 pub(crate) struct ResolvedInputScope {
     pub(crate) home: PathBuf,
-    /// Effective DSH root captured once at command startup. An explicit
-    /// `--home` disables this environment-root override.
-    pub(crate) dsh_home: Option<PathBuf>,
+    /// Environment roots captured once at startup; disabled by `--home`.
+    pub(crate) client_roots: tokenx_engine::ClientRootOverrides,
     pub(crate) universe: ClientUniverse,
     pub(crate) restricted: bool,
 }
@@ -713,7 +712,16 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot<PendingPricin
         Some(calendar) => calendar,
         None => CalendarContext::system().map_err(anyhow::Error::new)?,
     };
-    let dsh_home = args.home.is_none().then(resolve_dsh_home).flatten();
+    let client_roots = if args.home.is_none() {
+        tokenx_engine::ClientRootOverrides {
+            dsh_home: resolve_dsh_home(),
+            opencode_data_dir: std::env::var_os("XDG_DATA_HOME")
+                .filter(|value| !value.is_empty())
+                .map(|root| PathBuf::from(root).join("opencode")),
+        }
+    } else {
+        tokenx_engine::ClientRootOverrides::default()
+    };
     let home = args
         .home
         .or_else(dirs::home_dir)
@@ -723,7 +731,7 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot<PendingPricin
         paths,
         input: ResolvedInputScope {
             home,
-            dsh_home,
+            client_roots,
             universe,
             restricted,
         },

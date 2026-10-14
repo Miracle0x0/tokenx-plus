@@ -18,7 +18,7 @@ pub(crate) fn acquisition_engine(
     calendar: tokenx_engine::CalendarContext,
     pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
 ) -> Result<AcquisitionEngine> {
-    acquisition_engine_with_dsh_home(
+    acquisition_engine_with_client_roots(
         input_cache_dir,
         resolved_home_dir,
         clients,
@@ -26,13 +26,13 @@ pub(crate) fn acquisition_engine(
         scanner,
         calendar,
         pricing,
-        None,
+        tokenx_engine::ClientRootOverrides::default(),
         tokenx_engine::ModelMappings::default(),
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn acquisition_engine_with_dsh_home(
+pub(crate) fn acquisition_engine_with_client_roots(
     input_cache_dir: PathBuf,
     resolved_home_dir: PathBuf,
     clients: ClientUniverse,
@@ -40,17 +40,17 @@ pub(crate) fn acquisition_engine_with_dsh_home(
     scanner: tokenx_engine::scanner::ScannerSettings,
     calendar: tokenx_engine::CalendarContext,
     pricing: Arc<tokenx_engine::pricing::ResolvedPricingSnapshot>,
-    dsh_home: Option<PathBuf>,
+    client_roots: tokenx_engine::ClientRootOverrides,
     model_mappings: tokenx_engine::ModelMappings,
 ) -> Result<AcquisitionEngine> {
-    let config = AcquisitionConfig::new_with_dsh_home(
+    let config = AcquisitionConfig::new_with_client_roots(
         resolved_home_dir,
         date_range,
         clients,
         scanner,
         calendar,
         pricing.context().clone(),
-        dsh_home,
+        client_roots,
     )?
     .with_model_mappings(model_mappings);
     Ok(AcquisitionEngine::new(config, pricing, input_cache_dir)?)

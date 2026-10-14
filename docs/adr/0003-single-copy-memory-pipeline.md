@@ -186,9 +186,11 @@ Client attribution occurs only after those operations when the bound sink emits
 the messages.
 
 OpenCode borrows potentially large message TEXT. It stream-validates the full
-JSON document and required role envelope, then fully decodes assistant payloads
-only. Malformed JSON, missing roles, and assistant-field errors remain visible
-instead of becoming empty usage.
+JSON document and the role authority selected by its SQLite schema: `message`
+requires a JSON role, while `session_message` carries the role in its `type`
+column. Malformed JSON, missing required roles, conflicting role authorities,
+and assistant-field errors remain visible instead of becoming empty usage.
+ADR 0021 owns table selection, metadata authority, and message deduplication.
 
 ### Message representation and aggregation
 

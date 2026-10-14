@@ -24,6 +24,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0018](0018-claude-input-reconciliation.md) | Claude input reconciliation before pricing | Accepted |
 | [0019](0019-claude-cost-state-usage.md) | Claude cost-state usage reconciliation | Accepted |
 | [0020](0020-omp-message-and-session-identity.md) | OMP message deduplication and child-session identity | Accepted |
+| [0021](0021-opencode-sqlite-schemas-and-discovery.md) | OpenCode SQLite schemas, discovery, and accounting | Accepted |
 
 ## Conventions
 

@@ -4,7 +4,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::acquisition::{acquisition_engine_with_dsh_home, build_generation_with_cancellation};
+use crate::acquisition::{
+    acquisition_engine_with_client_roots, build_generation_with_cancellation,
+};
 use crate::cli::RelativeDateRange;
 use crate::generation_cache::RetryBackoff;
 
@@ -336,7 +338,7 @@ impl GenerationController {
         } else {
             Arc::new(self.acquisition.pricing_snapshot().with_source_order(order))
         };
-        let replacement = acquisition_engine_with_dsh_home(
+        let replacement = acquisition_engine_with_client_roots(
             self.acquisition.input_cache_dir().to_path_buf(),
             current.resolved_home_dir().to_path_buf(),
             current.universe().clone(),
@@ -344,7 +346,7 @@ impl GenerationController {
             current.scanner().clone(),
             *current.calendar(),
             pricing,
-            current.dsh_home().map(std::path::Path::to_path_buf),
+            current.client_roots().clone(),
             current.model_mappings().clone(),
         )?;
         if replacement.config() == current {
@@ -399,7 +401,7 @@ impl GenerationController {
     ) -> Result<bool> {
         let current = self.acquisition.config();
         let context_changed = current.pricing() != pricing.context();
-        let replacement = acquisition_engine_with_dsh_home(
+        let replacement = acquisition_engine_with_client_roots(
             self.acquisition.input_cache_dir().to_path_buf(),
             current.resolved_home_dir().to_path_buf(),
             current.universe().clone(),
@@ -407,7 +409,7 @@ impl GenerationController {
             current.scanner().clone(),
             *current.calendar(),
             pricing,
-            current.dsh_home().map(std::path::Path::to_path_buf),
+            current.client_roots().clone(),
             current.model_mappings().clone(),
         )?;
         let context_changed = context_changed || replacement.config() != current;

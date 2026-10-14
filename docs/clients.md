@@ -24,7 +24,7 @@ means recursive discovery under the stated root.
 
 | ID | Display name | Current local inputs | Input semantics |
 | --- | --- | --- | --- |
-| `opencode` | OpenCode | `~/.local/share/opencode/opencode.db` and `opencode-<channel>.db`; direct files from `scanner.opencodeDbPaths` | Reads SQLite with committed WAL state, joins messages to sessions, validates assistant token payloads, and deduplicates across databases. |
+| `opencode` | OpenCode | `$XDG_DATA_HOME/opencode/` when non-empty, otherwise `~/.local/share/opencode/`; `opencode.db` and `opencode-<channel>.db`; direct files from `scanner.opencodeDbPaths` | Reads both `message` and `session_message` with committed WAL state, resolves `session`/`session_v2` metadata and nested model identity, and deduplicates copied usage without merging conflicting message IDs. See [OpenCode accounting](adr/0021-opencode-sqlite-schemas-and-discovery.md). |
 | `claude` | Claude | `~/.claude/projects/**/*.jsonl`; `~/.claude/transcripts/**/*.jsonl` | Reads assistant usage and the last `cost-state.modelUsage` snapshot, deduplicates message/request IDs across files, and adds only snapshot tokens not represented by transcript usage. Snapshot-only tokens use the recorded session start time and add no message or turn count. Explicit cache-split input takes precedence over bare prompt snapshots. See [reconciliation semantics](adr/0019-claude-cost-state-usage.md). |
 | `codex` | Codex | `~/.codex/sessions/**/*.jsonl[.zst]`; `~/.codex/archived_sessions/**/*.jsonl[.zst]` | Reads plain and Zstandard-compressed session events, separates inclusive input into ordinary input, cache read, and cache write, and deduplicates across files. Plain logs support append parsing; unchanged archives reuse parsed records without decompression. See [Codex token usage](facts/codex.md). |
 | `gemini` | Gemini CLI | `~/.gemini/tmp/<named-project>/chats/session-*.json` and `session-*.jsonl` | Requires `.project_root` in each named project directory and uses it as workspace identity. |
@@ -115,7 +115,9 @@ OpenCode accepts explicit database files instead:
 Each `opencodeDbPaths` entry is an authoritative input. A missing file, a
 non-file path, an unreadable database, or a schema mismatch is reported through
 Data Health. Automatic OpenCode discovery selects only `opencode.db` and
-`opencode-<channel>.db`.
+`opencode-<channel>.db`. The OpenCode XDG root is captured once at startup and
+participates in generation-cache identity; a non-empty `XDG_DATA_HOME` must be
+absolute. Legacy `storage/message` JSON files are not scanned.
 
 Extra roots use the same filename and schema rules as the integration's default
 root; they do not broaden accepted formats. Canonical paths are deduplicated

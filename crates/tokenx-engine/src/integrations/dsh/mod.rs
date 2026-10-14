@@ -39,7 +39,7 @@ impl IntegrationDriver for Driver {
         ctx: &DiscoveryContext<'_>,
     ) -> Result<Vec<DiscoveredInput>, InputDiscoveryError> {
         let default_root = ctx
-            .dsh_home
+            .root_override
             .map(|root| root.join("sessions"))
             .unwrap_or_else(|| SOURCE.resolve(ctx.home_dir));
         let mut paths = source_discovery::scan_roots(ctx, [default_root], SOURCE.matcher())?;
@@ -165,7 +165,7 @@ mod tests {
         DiscoveryContext {
             client: ClientId::Dsh,
             home_dir,
-            dsh_home,
+            root_override: dsh_home,
             scanner_settings: settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         }

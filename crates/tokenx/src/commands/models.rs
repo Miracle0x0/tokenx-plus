@@ -67,7 +67,7 @@ pub(crate) fn run_models(plan: ResolvedModelsPlan, no_spinner: bool) -> Result<(
                 input:
                     ResolvedInputScope {
                         home: home_dir,
-                        dsh_home,
+                        client_roots,
                         universe,
                         restricted,
                     },
@@ -90,7 +90,7 @@ pub(crate) fn run_models(plan: ResolvedModelsPlan, no_spinner: bool) -> Result<(
     let spinner =
         (!no_spinner).then(|| LightSpinner::start(rust_i18n::t!("commands.models.scanning")));
     let start = Instant::now();
-    let acquisition = crate::acquisition::acquisition_engine_with_dsh_home(
+    let acquisition = crate::acquisition::acquisition_engine_with_client_roots(
         paths.cache_dir(),
         home_dir,
         universe.clone(),
@@ -98,7 +98,7 @@ pub(crate) fn run_models(plan: ResolvedModelsPlan, no_spinner: bool) -> Result<(
         settings.scanner,
         calendar,
         pricing,
-        dsh_home,
+        client_roots,
         settings.model_mappings.clone(),
     )?;
     let resolved_home_dir = acquisition.config().resolved_home_dir().to_path_buf();

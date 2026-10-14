@@ -103,7 +103,7 @@ mod tests {
         let ctx = DiscoveryContext {
             client: ClientId::OpenClaw,
             home_dir: home.path(),
-            dsh_home: None,
+            root_override: None,
             scanner_settings: &settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         };

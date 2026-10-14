@@ -239,6 +239,42 @@ impl PricingContext {
     }
 }
 
+/// Environment roots captured once by the application composition root.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClientRootOverrides {
+    pub dsh_home: Option<PathBuf>,
+    pub opencode_data_dir: Option<PathBuf>,
+}
+
+impl ClientRootOverrides {
+    pub(crate) fn for_client(&self, client: ClientId) -> Option<&std::path::Path> {
+        match client {
+            ClientId::Dsh => self.dsh_home.as_deref(),
+            ClientId::OpenCode => self.opencode_data_dir.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn validate(&self) -> Result<(), AcquisitionConfigError> {
+        if self
+            .dsh_home
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err(AcquisitionConfigError::EmptyDshHome);
+        }
+        if self
+            .opencode_data_dir
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
+        {
+            return Err(AcquisitionConfigError::InvalidOpenCodeDataDirectory);
+        }
+        Ok(())
+    }
+}
+
 /// Complete, normalized identity of one local-data acquisition.
 ///
 /// This is the single authority shared by discovery, generation construction,
@@ -250,9 +286,7 @@ impl PricingContext {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AcquisitionConfig {
     resolved_home_dir: PathBuf,
-    /// The DSH root captured by the command-start composition root. `None`
-    /// means that the home-relative default is authoritative.
-    dsh_home: Option<PathBuf>,
+    client_roots: ClientRootOverrides,
     date_range: crate::DateRange,
     universe: ClientUniverse,
     scanner: ScannerSettings,
@@ -270,39 +304,34 @@ impl AcquisitionConfig {
         calendar: CalendarContext,
         pricing: PricingContext,
     ) -> Result<Self, AcquisitionConfigError> {
-        Self::new_with_dsh_home(
+        Self::new_with_client_roots(
             resolved_home_dir,
             date_range,
             universe,
             scanner,
             calendar,
             pricing,
-            None,
+            ClientRootOverrides::default(),
         )
     }
 
-    /// Construct an acquisition config with an optional, already-resolved DSH
-    /// root. Callers resolve process environment once before constructing this
+    /// Construct an acquisition config with already-resolved client roots.
+    /// Callers resolve process environment once before constructing this
     /// value so discovery and cache validation use the same authority for the
     /// whole generation.
-    pub fn new_with_dsh_home(
+    pub fn new_with_client_roots(
         resolved_home_dir: PathBuf,
         date_range: crate::DateRange,
         universe: ClientUniverse,
         scanner: ScannerSettings,
         calendar: CalendarContext,
         pricing: PricingContext,
-        dsh_home: Option<PathBuf>,
+        client_roots: ClientRootOverrides,
     ) -> Result<Self, AcquisitionConfigError> {
         if resolved_home_dir.as_os_str().is_empty() {
             return Err(AcquisitionConfigError::EmptyHomeDirectory);
         }
-        if dsh_home
-            .as_ref()
-            .is_some_and(|path| path.as_os_str().is_empty())
-        {
-            return Err(AcquisitionConfigError::EmptyDshHome);
-        }
+        client_roots.validate()?;
         let mut scanner = scanner;
         scanner.opencode_db_paths.sort();
         scanner.opencode_db_paths.dedup();
@@ -313,7 +342,7 @@ impl AcquisitionConfig {
         scanner.validate()?;
         Ok(Self {
             resolved_home_dir,
-            dsh_home,
+            client_roots,
             date_range,
             universe,
             scanner,
@@ -336,8 +365,8 @@ impl AcquisitionConfig {
         &self.resolved_home_dir
     }
 
-    pub fn dsh_home(&self) -> Option<&std::path::Path> {
-        self.dsh_home.as_deref()
+    pub fn client_roots(&self) -> &ClientRootOverrides {
+        &self.client_roots
     }
 
     pub fn date_range(&self) -> &crate::DateRange {
@@ -364,13 +393,7 @@ impl AcquisitionConfig {
         if self.resolved_home_dir.as_os_str().is_empty() {
             return Err(AcquisitionConfigError::EmptyHomeDirectory);
         }
-        if self
-            .dsh_home
-            .as_ref()
-            .is_some_and(|path| path.as_os_str().is_empty())
-        {
-            return Err(AcquisitionConfigError::EmptyDshHome);
-        }
+        self.client_roots.validate()?;
         self.scanner.validate()?;
         Ok(())
     }
@@ -382,6 +405,8 @@ pub enum AcquisitionConfigError {
     EmptyHomeDirectory,
     #[error("DSH home directory must not be empty")]
     EmptyDshHome,
+    #[error("OpenCode data directory must be an absolute path")]
+    InvalidOpenCodeDataDirectory,
     #[error(transparent)]
     InvalidScanner(#[from] ScannerSettingsError),
 }
@@ -1011,14 +1036,17 @@ mod tests {
 
     #[test]
     fn acquisition_config_rejects_an_empty_dsh_home() {
-        let error = AcquisitionConfig::new_with_dsh_home(
+        let error = AcquisitionConfig::new_with_client_roots(
             PathBuf::from("/tmp/home"),
             crate::DateRange::none(),
             ClientUniverse::new([ClientId::Dsh]).unwrap(),
             ScannerSettings::default(),
             CalendarContext::explicit("UTC").unwrap(),
             PricingContext::explicit_with_catalog("test-custom", "test-catalog"),
-            Some(PathBuf::new()),
+            ClientRootOverrides {
+                dsh_home: Some(PathBuf::new()),
+                ..Default::default()
+            },
         )
         .unwrap_err();
 
@@ -1028,14 +1056,17 @@ mod tests {
     #[test]
     fn resolved_dsh_home_is_part_of_acquisition_identity() {
         let config = |dsh_home| {
-            AcquisitionConfig::new_with_dsh_home(
+            AcquisitionConfig::new_with_client_roots(
                 PathBuf::from("/tmp/home"),
                 crate::DateRange::none(),
                 ClientUniverse::new([ClientId::Dsh]).unwrap(),
                 ScannerSettings::default(),
                 CalendarContext::explicit("UTC").unwrap(),
                 PricingContext::explicit_with_catalog("test-custom", "test-catalog"),
-                dsh_home,
+                ClientRootOverrides {
+                    dsh_home,
+                    ..Default::default()
+                },
             )
             .unwrap()
         };
@@ -1044,9 +1075,42 @@ mod tests {
 
         assert_ne!(default, custom);
         assert_eq!(
-            custom.dsh_home(),
+            custom.client_roots().dsh_home.as_deref(),
             Some(std::path::Path::new("/tmp/dsh-home"))
         );
+    }
+
+    #[test]
+    fn opencode_root_is_validated_and_part_of_acquisition_identity() {
+        let home = tempfile::TempDir::new().unwrap();
+        let make_config = |root| {
+            AcquisitionConfig::new_with_client_roots(
+                home.path().to_path_buf(),
+                crate::DateRange::none(),
+                ClientUniverse::new([ClientId::OpenCode]).unwrap(),
+                ScannerSettings::default(),
+                CalendarContext::explicit("UTC").unwrap(),
+                PricingContext::explicit_with_catalog("test-custom", "test-catalog"),
+                ClientRootOverrides {
+                    opencode_data_dir: root,
+                    ..Default::default()
+                },
+            )
+        };
+        let default = make_config(None).unwrap();
+        let custom = make_config(Some(home.path().join("xdg/opencode"))).unwrap();
+        assert_ne!(default, custom);
+        let serialized = serde_json::to_vec(&custom).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<AcquisitionConfig>(&serialized).unwrap(),
+            custom
+        );
+        for invalid in [PathBuf::new(), PathBuf::from("relative/opencode")] {
+            assert!(matches!(
+                make_config(Some(invalid)),
+                Err(AcquisitionConfigError::InvalidOpenCodeDataDirectory)
+            ));
+        }
     }
 
     #[test]

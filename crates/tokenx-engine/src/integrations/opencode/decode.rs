@@ -1,4 +1,6 @@
-//! OpenCode current-format SQLite decoder.
+//! OpenCode SQLite decoder for message and session_message stores.
+
+use super::schema::{message_queries, MessageFormat};
 
 use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
 use crate::provider_identity;
@@ -6,7 +8,7 @@ use crate::records::{
     normalize_opencode_agent_name, normalize_workspace_key, workspace_label_from_key, UsageRecord,
 };
 use crate::TokenBreakdown;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, Row};
 use serde::de::{self, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -15,7 +17,10 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug)]
-struct DecodedOpenCodeMessage(Option<OpenCodeAssistant>);
+struct DecodedOpenCodeMessage {
+    role: Option<String>,
+    assistant: Option<OpenCodeAssistant>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(field_identifier)]
@@ -28,6 +33,10 @@ enum OpenCodeMessageField {
     ModelId,
     #[serde(rename = "providerID")]
     ProviderId,
+    #[serde(rename = "model")]
+    Model,
+    #[serde(rename = "path")]
+    Path,
     #[serde(rename = "tokens")]
     Tokens,
     #[serde(rename = "time")]
@@ -57,6 +66,8 @@ impl<'de> Visitor<'de> for OpenCodeMessageVisitor {
         let mut id: Option<String> = None;
         let mut model_id: Option<String> = None;
         let mut provider_id: Option<String> = None;
+        let mut model: Option<OpenCodeModel> = None;
+        let mut workspace_root: Option<String> = None;
         let mut tokens: Option<NullableOpenCodeTokens> = None;
         let mut time: Option<OpenCodeTime> = None;
         let mut agent: Option<String> = None;
@@ -65,6 +76,8 @@ impl<'de> Visitor<'de> for OpenCodeMessageVisitor {
         let mut saw_id = false;
         let mut saw_model_id = false;
         let mut saw_provider_id = false;
+        let mut saw_model = false;
+        let mut saw_path = false;
         let mut saw_tokens = false;
         let mut saw_time = false;
         let mut saw_agent = false;
@@ -108,6 +121,24 @@ impl<'de> Visitor<'de> for OpenCodeMessageVisitor {
                     saw_provider_id = true;
                     provider_id = map.next_value()?;
                 }
+                OpenCodeMessageField::Model => {
+                    if saw_model {
+                        return Err(de::Error::duplicate_field("model"));
+                    }
+                    saw_model = true;
+                    model = map.next_value()?;
+                }
+                OpenCodeMessageField::Path => {
+                    if saw_path {
+                        return Err(de::Error::duplicate_field("path"));
+                    }
+                    saw_path = true;
+                    let path: serde_json::Value = map.next_value()?;
+                    workspace_root = path
+                        .get("root")
+                        .and_then(|root| root.as_str())
+                        .map(str::to_owned);
+                }
                 OpenCodeMessageField::Tokens => {
                     if saw_tokens {
                         return Err(de::Error::duplicate_field("tokens"));
@@ -142,20 +173,27 @@ impl<'de> Visitor<'de> for OpenCodeMessageVisitor {
             }
         }
 
-        let role = role.ok_or_else(|| de::Error::missing_field("role"))?;
-        if role != "assistant" {
-            return Ok(DecodedOpenCodeMessage(None));
+        if role.as_deref().is_some_and(|role| role != "assistant") {
+            return Ok(DecodedOpenCodeMessage {
+                role,
+                assistant: None,
+            });
         }
 
-        Ok(DecodedOpenCodeMessage(Some(OpenCodeAssistant {
-            id,
-            model_id,
-            provider_id,
-            tokens,
-            time,
-            agent,
-            mode,
-        })))
+        let model = model.unwrap_or_default();
+        Ok(DecodedOpenCodeMessage {
+            role,
+            assistant: Some(OpenCodeAssistant {
+                id,
+                model_id: model_id.or(model.id),
+                provider_id: provider_id.or(model.provider_id),
+                tokens,
+                time,
+                agent,
+                mode,
+                workspace_root,
+            }),
+        })
     }
 }
 
@@ -177,6 +215,14 @@ struct OpenCodeAssistant {
     time: Option<OpenCodeTime>,
     agent: Option<String>,
     mode: Option<String>,
+    workspace_root: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OpenCodeModel {
+    id: Option<String>,
+    #[serde(rename = "providerID")]
+    provider_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,7 +264,7 @@ struct OpenCodeSqliteFingerprint {
 
 #[derive(Debug, Clone)]
 struct OpenCodeSqliteDedupState {
-    has_embedded_message_id: bool,
+    message_id: Option<String>,
     has_workspace_conflict: bool,
 }
 
@@ -232,6 +278,8 @@ pub enum OpenCodeMessageSemanticError {
 
 #[derive(Debug, Error)]
 pub enum OpenCodeSqliteError {
+    #[error("OpenCode SQLite database {db_path} has neither message nor session_message tables")]
+    UnsupportedSchema { db_path: PathBuf },
     #[error("failed to open current OpenCode SQLite database {db_path}: {source}")]
     Open {
         db_path: PathBuf,
@@ -309,17 +357,186 @@ fn validate_created_timestamp(created: f64) -> Result<i64, OpenCodeMessageSemant
 
 fn decode_opencode_assistant(
     data_json: &str,
+    format: MessageFormat,
 ) -> Result<Option<OpenCodeAssistant>, serde_json::Error> {
-    serde_json::from_str(data_json).map(|message: DecodedOpenCodeMessage| message.0)
+    let message: DecodedOpenCodeMessage = serde_json::from_str(data_json)?;
+    match (format, message.role.as_deref()) {
+        (MessageFormat::Message, None) => Err(de::Error::missing_field("role")),
+        (MessageFormat::SessionMessage, Some(role)) if role != "assistant" => Err(
+            de::Error::custom("payload role conflicts with session_message.type"),
+        ),
+        _ => Ok(message.assistant),
+    }
 }
 
-/// Parse a current-format OpenCode SQLite database.
-///
-/// Opening the database and preparing/executing the current `message`/`session`
-/// query are input-level errors. A malformed row is rejected without erasing
-/// other rows, while a row-step failure interrupts the scan and preserves the
-/// messages already confirmed. Databases that predate the current
-/// `session.directory` schema are not accepted as an empty input.
+struct DecodedRow {
+    message: UsageRecord,
+    message_id: Option<String>,
+    fingerprint: OpenCodeSqliteFingerprint,
+    workspace_root: Option<String>,
+}
+
+fn decode_row(
+    row: &Row<'_>,
+    format: MessageFormat,
+) -> Result<Option<DecodedRow>, RecordRejectionReason> {
+    let malformed = |_| RecordRejectionReason::MalformedRecord;
+    if format == MessageFormat::SessionMessage {
+        let role: String = row.get(5).map_err(malformed)?;
+        if role != "assistant" {
+            return Ok(None);
+        }
+    }
+    let row_id: String = row.get(0).map_err(malformed)?;
+    let data = row.get_ref(2).map_err(malformed)?;
+    let data_json = data
+        .as_str()
+        .map_err(|_| RecordRejectionReason::MalformedRecord)?;
+    let Some(msg) = decode_opencode_assistant(data_json, format)
+        .map_err(|_| RecordRejectionReason::MalformedRecord)?
+    else {
+        return Ok(None);
+    };
+    let OpenCodeAssistant {
+        id: message_id,
+        model_id,
+        provider_id,
+        tokens,
+        time,
+        agent,
+        mode,
+        workspace_root: payload_root,
+    } = msg;
+    let tokens = tokens.ok_or(RecordRejectionReason::MalformedRecord)?;
+    let Some(tokens) = tokens.0 else {
+        return Ok(None);
+    };
+    let token_breakdown = TokenBreakdown {
+        input: tokens.input,
+        output: tokens.output,
+        cache_read: tokens.cache.read,
+        cache_write: tokens.cache.write,
+        cache_write_1h: 0,
+        reasoning: tokens.reasoning.unwrap_or(0),
+    };
+    match crate::positive_token_total(&token_breakdown) {
+        Some(0) => return Ok(None),
+        Some(_) => {}
+        None => return Err(RecordRejectionReason::MalformedRecord),
+    }
+    let session_id: String = row.get(1).map_err(malformed)?;
+    if session_id.trim().is_empty()
+        || row_id.trim().is_empty()
+        || message_id.as_ref().is_some_and(|id| id.trim().is_empty())
+    {
+        return Err(RecordRejectionReason::MalformedRecord);
+    }
+    let workspace_root: Option<String> = row.get(3).map_err(malformed)?;
+    let workspace_root = workspace_root
+        .filter(|root| !root.trim().is_empty())
+        .or(payload_root);
+    let parent_session_id: Option<String> = row.get(4).map_err(malformed)?;
+    let model_id = model_id
+        .filter(|id| !id.trim().is_empty())
+        .ok_or(RecordRejectionReason::MissingModel)?;
+    let time = time.ok_or(RecordRejectionReason::MissingTimestamp)?;
+    let created = time
+        .created
+        .ok_or(RecordRejectionReason::MissingTimestamp)?;
+    let created_timestamp =
+        validate_created_timestamp(created).map_err(|_| RecordRejectionReason::MissingTimestamp)?;
+    let provider_id = provider_identity::observed_provider_id(
+        provider_id.as_deref().unwrap_or_default(),
+        &model_id,
+    );
+    let agent = [mode.as_deref(), agent.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(normalize_opencode_agent_name)
+        .filter(|value| !value.is_empty());
+    let fingerprint = OpenCodeSqliteFingerprint {
+        created_bits: created.to_bits(),
+        completed_bits: time.completed.map(f64::to_bits),
+        model_id: model_id.clone(),
+        provider_id: provider_id.clone(),
+        input: token_breakdown.input,
+        output: token_breakdown.output,
+        reasoning: token_breakdown.reasoning,
+        cache_read: token_breakdown.cache_read,
+        cache_write: token_breakdown.cache_write,
+        agent: agent.clone(),
+    };
+    let mut message = UsageRecord::new_with_agent(
+        model_id,
+        provider_id,
+        session_id,
+        created_timestamp,
+        token_breakdown,
+        0.0,
+        agent,
+    );
+    message.dedup_key = Some(crate::records::dedup_hash_str(
+        message_id.as_deref().unwrap_or(&row_id),
+    ));
+    set_workspace_from_root(&mut message, workspace_root.as_deref());
+    message.is_main_session = parent_session_id.is_none();
+    Ok(Some(DecodedRow {
+        message,
+        message_id,
+        fingerprint,
+        workspace_root,
+    }))
+}
+
+#[derive(Default)]
+struct MessageAccumulator {
+    scanned: ScannedInput,
+    fingerprint_indices: HashMap<OpenCodeSqliteFingerprint, Vec<usize>>,
+    dedup_states: Vec<OpenCodeSqliteDedupState>,
+}
+
+impl MessageAccumulator {
+    fn ingest(&mut self, row: DecodedRow) {
+        let DecodedRow {
+            message,
+            message_id,
+            fingerprint,
+            workspace_root,
+        } = row;
+        let indices = self.fingerprint_indices.entry(fingerprint).or_default();
+        let candidate = indices.iter().copied().find(|&index| {
+            !matches!(
+                (&self.dedup_states[index].message_id, &message_id),
+                (Some(existing), Some(incoming)) if existing != incoming
+            )
+        });
+        if let Some(index) = candidate {
+            let state = &mut self.dedup_states[index];
+            if message_id.is_some() && state.message_id.is_none() {
+                state.message_id = message_id;
+                self.scanned.messages[index].dedup_key = message.dedup_key;
+            }
+            merge_duplicate_workspace(
+                &mut self.scanned.messages[index],
+                state,
+                workspace_root.as_deref(),
+            );
+        } else {
+            indices.push(self.scanned.messages.len());
+            self.dedup_states.push(OpenCodeSqliteDedupState {
+                message_id,
+                has_workspace_conflict: false,
+            });
+            self.scanned.messages.push(message);
+        }
+    }
+}
+
+/// Read all recognized message tables in one snapshot. Schema/query failures
+/// remain input errors, malformed records are rejected individually, and an
+/// interrupted row scan retains confirmed usage without caching a partial input.
 pub fn parse_opencode_sqlite(db_path: &Path) -> Result<ScannedInput, OpenCodeSqliteError> {
     let conn = Connection::open_with_flags(
         db_path,
@@ -329,295 +546,49 @@ pub fn parse_opencode_sqlite(db_path: &Path) -> Result<ScannedInput, OpenCodeSql
         db_path: db_path.to_path_buf(),
         source,
     })?;
-
-    let has_parent_id = conn
-        .query_row(
-            "SELECT EXISTS (
-                SELECT 1
-                FROM pragma_table_info('session')
-                WHERE name = 'parent_id'
-            )",
-            [],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(|source| OpenCodeSqliteError::CurrentSessionSchema {
-            db_path: db_path.to_path_buf(),
-            source,
-        })?;
-
-    let parent_query = r#"
-        SELECT
-            m.id,
-            m.session_id,
-            m.data,
-            NULLIF(s.directory, '') AS workspace_root,
-            NULLIF(TRIM(s.parent_id), '') AS parent_session_id
-        FROM message m
-        LEFT JOIN session s ON s.id = m.session_id
-        ORDER BY m.id
-    "#;
-    let directory_query = r#"
-        SELECT m.id, m.session_id, m.data, NULLIF(s.directory, '') AS workspace_root
-        FROM message m
-        LEFT JOIN session s ON s.id = m.session_id
-        ORDER BY m.id
-    "#;
-    let query = if has_parent_id {
-        parent_query
-    } else {
-        directory_query
+    let schema_error = |source| OpenCodeSqliteError::CurrentSessionSchema {
+        db_path: db_path.to_path_buf(),
+        source,
     };
-
-    let mut stmt =
-        conn.prepare(query)
-            .map_err(|source| OpenCodeSqliteError::CurrentSessionSchema {
+    let queries = message_queries(&conn).map_err(schema_error)?;
+    if queries.is_empty() {
+        return Err(OpenCodeSqliteError::UnsupportedSchema {
+            db_path: db_path.to_path_buf(),
+        });
+    }
+    let mut acc = MessageAccumulator::default();
+    for query in queries {
+        let mut stmt = conn.prepare(&query.sql).map_err(schema_error)?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|source| OpenCodeSqliteError::Query {
                 db_path: db_path.to_path_buf(),
                 source,
             })?;
-    let mut rows = stmt
-        .query([])
-        .map_err(|source| OpenCodeSqliteError::Query {
-            db_path: db_path.to_path_buf(),
-            source,
-        })?;
-
-    let mut scanned = ScannedInput::default();
-    let mut fingerprint_indices: HashMap<OpenCodeSqliteFingerprint, usize> = HashMap::new();
-    let mut dedup_states: Vec<OpenCodeSqliteDedupState> = Vec::new();
-
-    loop {
-        let row = match rows.next() {
-            Ok(Some(row)) => row,
-            Ok(None) => break,
-            Err(source) => {
-                let error = OpenCodeSqliteError::RowId {
-                    db_path: db_path.to_path_buf(),
-                    source,
-                };
-                scanned.interrupted = Some(InputFailure::new(
-                    "read OpenCode SQLite row",
-                    error.to_string(),
-                ));
-                break;
-            }
-        };
-        let row_id: String = match row.get(0) {
-            Ok(row_id) => row_id,
-            Err(_) => {
-                scanned
-                    .rejections
-                    .record(RecordRejectionReason::MalformedRecord);
-                continue;
-            }
-        };
-        let data_value = match row.get_ref(2) {
-            Ok(data_value) => data_value,
-            Err(_) => {
-                scanned
-                    .rejections
-                    .record(RecordRejectionReason::MalformedRecord);
-                continue;
-            }
-        };
-        let data_json = match data_value.as_str() {
-            Ok(data_json) => data_json,
-            Err(_) => {
-                scanned
-                    .rejections
-                    .record(RecordRejectionReason::MalformedRecord);
-                continue;
-            }
-        };
-
-        let msg = match decode_opencode_assistant(data_json) {
-            Ok(msg) => msg,
-            Err(_) => {
-                scanned
-                    .rejections
-                    .record(RecordRejectionReason::MalformedRecord);
-                continue;
-            }
-        };
-        let Some(msg) = msg else {
-            continue;
-        };
-
-        let OpenCodeAssistant {
-            id: message_id,
-            model_id,
-            provider_id,
-            tokens,
-            time,
-            agent,
-            mode,
-        } = msg;
-
-        let Some(tokens) = tokens else {
-            scanned
-                .rejections
-                .record(RecordRejectionReason::MalformedRecord);
-            continue;
-        };
-        let Some(tokens) = tokens.0 else {
-            continue;
-        };
-        let input = tokens.input;
-        let output = tokens.output;
-        let reasoning = tokens.reasoning.unwrap_or(0);
-        let cache_read = tokens.cache.read;
-        let cache_write = tokens.cache.write;
-        let token_breakdown = TokenBreakdown {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_write_1h: 0,
-            reasoning,
-        };
-        match crate::positive_token_total(&token_breakdown) {
-            Some(0) => continue,
-            Some(_) => {}
-            None => {
-                scanned
-                    .rejections
-                    .record(RecordRejectionReason::MalformedRecord);
-                continue;
-            }
-        }
-
-        let session_id: String = match row.get(1) {
-            Ok(session_id) => session_id,
-            Err(_) => {
-                scanned
-                    .rejections
-                    .record(RecordRejectionReason::MalformedRecord);
-                continue;
-            }
-        };
-        let workspace_root: Option<String> = match row.get(3) {
-            Ok(workspace_root) => workspace_root,
-            Err(_) => {
-                scanned
-                    .rejections
-                    .record(RecordRejectionReason::MalformedRecord);
-                continue;
-            }
-        };
-        let parent_session_id: Option<String> = if has_parent_id {
-            match row.get(4) {
-                Ok(parent_session_id) => parent_session_id,
-                Err(_) => {
-                    scanned
-                        .rejections
-                        .record(RecordRejectionReason::MalformedRecord);
-                    continue;
+        loop {
+            let row = match rows.next() {
+                Ok(Some(row)) => row,
+                Ok(None) => break,
+                Err(source) => {
+                    acc.scanned.interrupted = Some(InputFailure::new(
+                        "read OpenCode SQLite row",
+                        OpenCodeSqliteError::RowId {
+                            db_path: db_path.to_path_buf(),
+                            source,
+                        }
+                        .to_string(),
+                    ));
+                    break;
                 }
+            };
+            match decode_row(row, query.format) {
+                Ok(Some(row)) => acc.ingest(row),
+                Ok(None) => {}
+                Err(reason) => acc.scanned.rejections.record(reason),
             }
-        } else {
-            None
-        };
-
-        if session_id.trim().is_empty() {
-            scanned
-                .rejections
-                .record(RecordRejectionReason::MalformedRecord);
-            continue;
         }
-
-        let Some(model_id) = model_id else {
-            scanned
-                .rejections
-                .record(RecordRejectionReason::MissingModel);
-            continue;
-        };
-        if model_id.trim().is_empty() {
-            scanned
-                .rejections
-                .record(RecordRejectionReason::MissingModel);
-            continue;
-        }
-        let Some(time) = time else {
-            scanned
-                .rejections
-                .record(RecordRejectionReason::MissingTimestamp);
-            continue;
-        };
-        let Some(created) = time.created else {
-            scanned
-                .rejections
-                .record(RecordRejectionReason::MissingTimestamp);
-            continue;
-        };
-        let created_timestamp = match validate_created_timestamp(created) {
-            Ok(timestamp) => timestamp,
-            Err(_) => {
-                scanned
-                    .rejections
-                    .record(RecordRejectionReason::MissingTimestamp);
-                continue;
-            }
-        };
-        let provider_id = provider_identity::observed_provider_id(
-            provider_id.as_deref().unwrap_or_default(),
-            &model_id,
-        );
-        let agent = [mode.as_deref(), agent.as_deref()]
-            .into_iter()
-            .flatten()
-            .map(str::trim)
-            .find(|value| !value.is_empty())
-            .map(normalize_opencode_agent_name)
-            .filter(|value| !value.is_empty());
-
-        let dedup_key = message_id.clone().unwrap_or(row_id);
-        let fingerprint = OpenCodeSqliteFingerprint {
-            created_bits: created.to_bits(),
-            completed_bits: time.completed.map(f64::to_bits),
-            model_id: model_id.clone(),
-            provider_id: provider_id.clone(),
-            input,
-            output,
-            reasoning,
-            cache_read,
-            cache_write,
-            agent: agent.clone(),
-        };
-        let mut message = UsageRecord::new_with_agent(
-            model_id,
-            provider_id,
-            session_id.clone(),
-            created_timestamp,
-            token_breakdown,
-            0.0,
-            agent,
-        );
-        message.dedup_key = Some(crate::records::dedup_hash_str(&dedup_key));
-        set_workspace_from_root(&mut message, workspace_root.as_deref());
-        message.is_main_session = parent_session_id.is_none();
-
-        if let Some(index) = fingerprint_indices.get(&fingerprint).copied() {
-            let state = &mut dedup_states[index];
-            if message_id.is_some() && !state.has_embedded_message_id {
-                state.has_embedded_message_id = true;
-                scanned.messages[index].dedup_key = message.dedup_key;
-            }
-            merge_duplicate_workspace(
-                &mut scanned.messages[index],
-                state,
-                workspace_root.as_deref(),
-            );
-            continue;
-        }
-
-        dedup_states.push(OpenCodeSqliteDedupState {
-            has_embedded_message_id: message_id.is_some(),
-            has_workspace_conflict: false,
-        });
-        fingerprint_indices.insert(fingerprint, scanned.messages.len());
-        scanned.messages.push(message);
     }
-
-    Ok(scanned)
+    Ok(acc.scanned)
 }
 
 #[cfg(test)]
@@ -625,6 +596,12 @@ mod tests {
     use super::*;
     use std::hint::black_box;
     use std::time::{Duration, Instant};
+
+    fn decode_opencode_assistant(
+        data_json: &str,
+    ) -> Result<Option<OpenCodeAssistant>, serde_json::Error> {
+        super::decode_opencode_assistant(data_json, MessageFormat::Message)
+    }
 
     #[derive(Debug, Deserialize)]
     struct TwoPassRoleEnvelope {
@@ -1001,15 +978,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_database_without_current_session_schema() {
+    fn rejects_database_with_malformed_message_schema() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("opencode.db");
         let conn = Connection::open(&path).unwrap();
         conn.execute_batch(
             "CREATE TABLE message (
                 id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                data TEXT NOT NULL
+                session_id TEXT NOT NULL
             );",
         )
         .unwrap();
@@ -1019,7 +995,7 @@ mod tests {
         match error {
             OpenCodeSqliteError::CurrentSessionSchema { db_path, source } => {
                 assert_eq!(db_path, path);
-                assert!(source.to_string().contains("no such table: session"));
+                assert!(source.to_string().contains("no such column: m.data"));
             }
             error => panic!("expected current-schema error, got {error:?}"),
         }

@@ -21,7 +21,7 @@ pub(super) fn load_startup(
     query: tokenx_engine::UsageQuery,
 ) -> Result<StartupLoad> {
     let startup = startup.bind_local_pricing();
-    let acquisition = crate::acquisition::acquisition_engine_with_dsh_home(
+    let acquisition = crate::acquisition::acquisition_engine_with_client_roots(
         startup.paths.cache_dir(),
         startup.input.home,
         startup.input.universe,
@@ -29,7 +29,7 @@ pub(super) fn load_startup(
         startup.settings.scanner,
         startup.calendar,
         startup.pricing,
-        startup.input.dsh_home,
+        startup.input.client_roots,
         startup.settings.model_mappings,
     )?;
     let pricing_diagnostics = acquisition.pricing_snapshot().diagnostics().to_vec();
@@ -74,7 +74,7 @@ mod tests {
             paths: crate::product_paths::ProductPaths::at(root.join("config")),
             input: crate::cli::ResolvedInputScope {
                 home: root.to_path_buf(),
-                dsh_home: None,
+                client_roots: Default::default(),
                 universe: ClientUniverse::new([ClientId::Amp]).unwrap(),
                 restricted: true,
             },
