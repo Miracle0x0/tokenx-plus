@@ -104,7 +104,7 @@ impl IntegrationDriver for Driver {
         sink: &mut BoundUsageSink<'_>,
     ) -> Result<(), InputPipelineError> {
         let mut seen = HashSet::new();
-        fold_zcode_units(parsed, ctx, sink, &mut seen)
+        pipeline_cache::fold_units_deduped(parsed, ctx, sink, &mut seen)
     }
 
     fn fold_batches(
@@ -115,7 +115,7 @@ impl IntegrationDriver for Driver {
     ) -> Result<(), InputPipelineError> {
         let mut seen = HashSet::new();
         while let Some(parsed) = batches.next(ctx)? {
-            fold_zcode_units(parsed, ctx, sink, &mut seen)?;
+            pipeline_cache::fold_units_deduped(parsed, ctx, sink, &mut seen)?;
         }
         Ok(())
     }
@@ -123,20 +123,6 @@ impl IntegrationDriver for Driver {
 
 fn is_zcode_sqlite(path: &Path) -> bool {
     path.file_name().is_some_and(|name| name == "db.sqlite")
-}
-
-fn fold_zcode_units(
-    parsed: Vec<ParsedUnit>,
-    ctx: &mut FoldContext<'_>,
-    sink: &mut BoundUsageSink<'_>,
-    seen: &mut HashSet<u64>,
-) -> Result<(), InputPipelineError> {
-    pipeline_cache::fold_units_with_filter(parsed, ctx, sink, |_, messages| {
-        messages
-            .into_iter()
-            .filter(|message| crate::should_keep_deduped_message(seen, message))
-            .collect()
-    })
 }
 
 pub(crate) static DRIVER: Driver = Driver;

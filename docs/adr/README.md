@@ -23,6 +23,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0017](0017-claude-code-cache-duration-pricing.md) | Claude Code cache-duration pricing | Accepted |
 | [0018](0018-claude-input-reconciliation.md) | Claude input reconciliation before pricing | Accepted |
 | [0019](0019-claude-cost-state-usage.md) | Claude cost-state usage reconciliation | Accepted |
+| [0020](0020-omp-message-and-session-identity.md) | OMP message deduplication and child-session identity | Accepted |
 
 ## Conventions
 

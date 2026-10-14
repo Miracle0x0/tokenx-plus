@@ -189,10 +189,7 @@ fn fold_codex_units(
 ) -> Result<(), InputPipelineError> {
     for parsed in parsed {
         if parsed.unit.decoder == DecoderKind::CodexArchive {
-            pipeline_cache::fold_units_with_filter(vec![parsed], ctx, sink, |_, mut messages| {
-                messages.retain(|message| crate::should_keep_deduped_message(seen, message));
-                messages
-            })?;
+            pipeline_cache::fold_units_deduped(vec![parsed], ctx, sink, seen)?;
             continue;
         }
         let ParsedUnit {

@@ -377,6 +377,20 @@ pub(crate) fn fold_units(
     fold_units_with_filter(parsed, ctx, sink, |_, messages| messages)
 }
 
+/// Deduplicate only the emitted stream; shards keep every source record. The
+/// integration owns `seen` across its cache hits, misses and parsing batches.
+pub(crate) fn fold_units_deduped(
+    parsed: Vec<ParsedUnit>,
+    ctx: &mut FoldContext<'_>,
+    sink: &mut BoundUsageSink<'_>,
+    seen: &mut std::collections::HashSet<u64>,
+) -> Result<(), InputPipelineError> {
+    fold_units_with_filter(parsed, ctx, sink, |_, mut messages| {
+        messages.retain(|message| crate::should_keep_deduped_message(seen, message));
+        messages
+    })
+}
+
 pub(crate) fn emit_messages(
     messages: impl IntoIterator<Item = UsageRecord>,
     sink: &mut BoundUsageSink<'_>,
