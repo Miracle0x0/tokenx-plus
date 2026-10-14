@@ -32,7 +32,7 @@ means recursive discovery under the stated root.
 | `droid` | Droid | `~/.factory/sessions/**/*.settings.json` with the session event stream and Mission metadata beside it | Reads Factory session usage, workspace metadata, and agent-role attribution from the related provider artifacts. |
 | `openclaw` | OpenClaw | `~/.openclaw/agents/**/*.jsonl*` | Reads agent session indexes and token-bearing session transcripts from the OpenClaw agent tree. |
 | `pi` | Pi | `~/.pi/agent/sessions/**/*.jsonl` | Reads Pi agent session events and usage fields. |
-| `omp` | OMP | `~/.omp/agent/sessions/**/*.jsonl` | Reads OMP agent session events, including parent/child session attribution. |
+| `omp` | OMP | `~/.omp/agent/sessions/**/*.jsonl` | Reads OMP agent usage, deduplicates copied responses across forked sessions, and identifies child sessions from parent transcripts or standard session directory names. See [OMP identity semantics](adr/0020-omp-message-and-session-identity.md). |
 | `kimi` | Kimi | `~/.kimi-code/sessions/**/agents/*/wire.jsonl` | Reads ordered per-agent `usage.record` events and reconciles each model alias with its applicable `llm.request` or current config entry. |
 | `qwen` | Qwen | `~/.qwen/projects/**/*.jsonl` | Reads assistant records carrying Qwen usage metadata. |
 | `roocode` | Roo Code | `~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/**/ui_messages.json`; `~/.vscode-server/data/User/globalStorage/rooveterinaryinc.roo-cline/tasks/**/ui_messages.json` | Reads task UI messages together with the required `api_conversation_history.json` sibling. |

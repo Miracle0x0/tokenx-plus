@@ -2688,6 +2688,80 @@ fn test_models_group_by_workspace_model_merges_claude_project_path_with_codex_pi
 }
 
 #[test]
+fn test_omp_fork_usage_and_cost_are_counted_once_with_cached_inputs() {
+    let tmp = TempDir::new().unwrap();
+    prime_pricing_cache(tmp.path());
+    fs::write(
+        tmp.path().join(".tokenx/custom-pricing.json"),
+        r#"{"models":{"gpt-5.5":{
+            "input_cost_per_million_tokens":4,
+            "output_cost_per_million_tokens":20,
+            "cache_read_input_token_cost_per_million_tokens":0.4,
+            "cache_creation_input_token_cost_per_million_tokens":5
+        }}}"#,
+    )
+    .unwrap();
+    let sessions = tmp.path().join(".omp/agent/sessions/project");
+    fs::create_dir_all(&sessions).unwrap();
+    let response = serde_json::json!({
+        "type": "message", "id": "entry-response", "timestamp": "2026-01-01T00:00:01Z",
+        "message": {
+            "role": "assistant", "model": "gpt-5.5", "provider": "openai",
+            "responseId": "shared-response",
+            "usage": {
+                "input": 100, "output": 50, "cacheRead": 10, "cacheWrite": 5,
+                "reasoningTokens": 25,
+                "orchestration": {"input": 7, "output": 2, "cacheRead": 3},
+                "totalTokens": 177
+            }
+        }
+    });
+    let mut entry_only = response.clone();
+    entry_only["id"] = "entry-without-response-id".into();
+    entry_only["message"]
+        .as_object_mut()
+        .unwrap()
+        .remove("responseId");
+    let mut new_response = response.clone();
+    new_response["message"]["responseId"] = "new-response".into();
+    for (session, entries) in [
+        ("original", vec![&response, &entry_only]),
+        ("fork", vec![&response, &entry_only, &new_response]),
+    ] {
+        let header = serde_json::json!({"type": "session", "id": session, "cwd": "/tmp/project"});
+        let mut content = format!("{header}\n");
+        for entry in entries {
+            content.push_str(&format!("{entry}\n"));
+        }
+        fs::write(sessions.join(format!("{session}.jsonl")), content).unwrap();
+    }
+
+    for pass in ["cold", "warm", "remaining-copy"] {
+        if pass == "remaining-copy" {
+            fs::remove_file(sessions.join("original.jsonl")).unwrap();
+        }
+        let output = cmd_with_home(tmp.path())
+            .args(["models", "--json", "--client", "omp", "--no-spinner"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{pass}: {output:?}");
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["health"]["complete"], true, "{pass}");
+        assert_eq!(json["health"]["rejectedRecords"], 0, "{pass}");
+        assert_eq!(json["data"]["totals"]["tokens"], 531, "{pass}");
+        let rows = model_rows(&json);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["tokens"]["input"], 321);
+        assert_eq!(rows[0]["tokens"]["output"], 81);
+        assert_eq!(rows[0]["tokens"]["reasoning"], 75);
+        assert_eq!(rows[0]["tokens"]["cacheRead"], 39);
+        assert_eq!(rows[0]["tokens"]["cacheWrite"], 15);
+        // Three real calls: (107 * 4 + 52 * 20 + 13 * 0.4 + 5 * 5) / 1M each.
+        assert!((json["data"]["totals"]["cost"].as_f64().unwrap() - 0.0044946).abs() < 1e-12);
+    }
+}
+
+#[test]
 fn test_models_client_filter_splits_pi_and_omp_sessions() {
     let tmp = create_mixed_workspace_fixture_dir();
 

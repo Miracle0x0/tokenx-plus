@@ -167,7 +167,6 @@ struct OmpTitleSlot {
 struct SessionEntry {
     #[serde(rename = "type")]
     entry_type: String,
-    #[allow(dead_code)]
     id: Option<String>,
     #[serde(rename = "parentId")]
     #[allow(dead_code)]
@@ -182,6 +181,8 @@ struct Message {
     usage: Option<Usage>,
     model: Option<String>,
     provider: Option<String>,
+    #[serde(rename = "responseId")]
+    response_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,6 +430,63 @@ fn omp_swarm_agent_label_from_path(path: &Path) -> SessionParseResult<Option<Str
 
 pub(crate) fn omp_parent_candidate_path(path: &Path) -> Option<PathBuf> {
     path.parent().map(|parent| parent.with_extension("jsonl"))
+}
+
+/// The directory name is source-owned lineage even after its sibling transcript
+/// has been removed. Ordinary workspace directories do not have this shape.
+fn has_parent_session_directory(path: &Path) -> bool {
+    let Some(directory) = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+    let Some((timestamp, id)) = directory.rsplit_once('_') else {
+        return false;
+    };
+    let timestamp_shape = ["%Y-%m-%dT%H-%M-%S-%3fZ", "%Y-%m-%dT%H-%M-%SZ"]
+        .iter()
+        .any(|format| chrono::NaiveDateTime::parse_from_str(timestamp, format).is_ok());
+    let id_shape = (id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        || (id.len() == 36
+            && id.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            }));
+    timestamp_shape && id_shape
+}
+
+fn message_dedup_key(
+    entry_id: Option<&str>,
+    response_id: Option<&str>,
+    record: &UsageRecord,
+) -> Option<u64> {
+    // Forks copy provider responses into another session. Keep the identity
+    // independent of the containing session, parent entry, file and pricing.
+    // Encode tuple boundaries so colons in provider/model/id values are harmless.
+    let key = if let Some(id) = response_id.filter(|id| !id.trim().is_empty()) {
+        serde_json::to_string(&("omp-response", record.provider_id.as_ref(), id))
+    } else {
+        let id = entry_id.filter(|id| !id.trim().is_empty())?;
+        serde_json::to_string(&(
+            "omp-entry",
+            id,
+            record.timestamp,
+            record.provider_id.as_ref(),
+            record.raw_model_id.as_ref(),
+            record.tokens.input,
+            record.tokens.output,
+            record.tokens.cache_read,
+            record.tokens.cache_write,
+            record.tokens.reasoning,
+        ))
+    }
+    .expect("OMP message identity contains only strings and integers");
+    Some(crate::records::dedup_hash_str(&key))
 }
 
 pub fn build_omp_parent_task_agent_index(paths: &[PathBuf]) -> OmpParentTaskAgentIndex {
@@ -791,7 +849,8 @@ fn parse_file(
         }
         None => None,
     };
-    let is_main_session = parent_scan.is_none() && subagent_label.is_none();
+    let is_main_session =
+        parent_scan.is_none() && subagent_label.is_none() && !has_parent_session_directory(path);
 
     let mut session_id: Option<String> = None;
     let mut workspace_key: Option<String> = None;
@@ -922,6 +981,8 @@ fn parse_file(
             tokens,
             0.0,
         );
+        parsed.dedup_key =
+            message_dedup_key(entry.id.as_deref(), message.response_id.as_deref(), &parsed);
         parsed.is_main_session = is_main_session;
         parsed.set_workspace(workspace_key.clone(), workspace_label.clone());
         parsed.agent = subagent_label
@@ -957,6 +1018,109 @@ mod tests {
         file.write_all(content.as_bytes()).unwrap();
         file.flush().unwrap();
         file
+    }
+
+    fn identity_record(session: &str, entry: &serde_json::Value) -> UsageRecord {
+        let header = serde_json::json!({"type": "session", "id": session});
+        let file = create_test_file(&format!("{header}\n{entry}\n"));
+        parse_omp_file(file.path()).unwrap().messages.remove(0)
+    }
+
+    fn identity_entry() -> serde_json::Value {
+        serde_json::json!({
+            "type": "message", "id": "entry-a", "parentId": "parent-a",
+            "timestamp": "2026-01-01T00:00:01.000Z",
+            "message": {
+                "role": "assistant", "model": "gpt-5.5", "provider": "openai",
+                "usage": {
+                    "input": 20, "output": 10, "cacheRead": 5, "cacheWrite": 0,
+                    "reasoningTokens": 2, "totalTokens": 35
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn response_identity_survives_forks_but_keeps_distinct_calls_and_providers() {
+        let mut entry = identity_entry();
+        entry["message"]["responseId"] = "response-a".into();
+        let original = identity_record("original", &entry).dedup_key.unwrap();
+        entry["id"] = "copied-entry".into();
+        entry["parentId"] = "fork-parent".into();
+        assert_eq!(identity_record("fork", &entry).dedup_key, Some(original));
+
+        entry["message"]["responseId"] = "response-b".into();
+        assert_ne!(identity_record("fork", &entry).dedup_key, Some(original));
+        entry["message"]["responseId"] = "response-a".into();
+        entry["message"]["provider"] = "openrouter".into();
+        assert_ne!(identity_record("fork", &entry).dedup_key, Some(original));
+    }
+
+    #[test]
+    fn entry_identity_uses_immutable_usage_fields_without_session_lineage() {
+        let entry = identity_entry();
+        let original = identity_record("original", &entry).dedup_key.unwrap();
+        let mut copied = entry.clone();
+        copied["parentId"] = "fork-parent".into();
+        copied["message"]["responseId"] = " ".into();
+        assert_eq!(identity_record("fork", &copied).dedup_key, Some(original));
+
+        for (pointer, value) in [
+            ("/id", serde_json::json!("entry-b")),
+            ("/timestamp", serde_json::json!("2026-01-01T00:00:02.000Z")),
+            ("/message/model", serde_json::json!("gpt-5.4")),
+            ("/message/provider", serde_json::json!("openrouter")),
+            ("/message/usage/reasoningTokens", serde_json::json!(3)),
+        ] {
+            let mut changed = entry.clone();
+            *changed.pointer_mut(pointer).unwrap() = value;
+            assert_ne!(
+                identity_record("fork", &changed).dedup_key,
+                Some(original),
+                "{pointer}"
+            );
+        }
+        let mut changed = entry.clone();
+        changed["message"]["usage"]["input"] = 19.into();
+        changed["message"]["usage"]["cacheRead"] = 6.into();
+        assert_ne!(identity_record("fork", &changed).dedup_key, Some(original));
+
+        for id in [serde_json::Value::Null, serde_json::json!(" ")] {
+            let mut anonymous = entry.clone();
+            anonymous["id"] = id;
+            let record = identity_record("fork", &anonymous);
+            assert_eq!(record.dedup_key, None);
+            assert_eq!(record.tokens.total(), 35);
+        }
+    }
+
+    #[test]
+    fn orphan_subagent_directory_is_lineage_without_inventing_an_agent() {
+        let dir = TempDir::new().unwrap();
+        let header = serde_json::json!({"type": "session", "id": "child"});
+        let content = format!("{header}\n{}\n", identity_entry());
+        for (directory, is_main) in [
+            (
+                "2026-07-28T20-45-44-298Z_019faa79-e9ea-7000-a4cd-be6083d214ab",
+                false,
+            ),
+            ("2026-07-28T20-45-44Z_abcd1234", false),
+            ("--home-workspace--", true),
+            ("project_019faa79-e9ea-7000-a4cd-be6083d214ab", true),
+            ("1PROJECTZ_abcd1234", true),
+            ("2026-99-28T20-45-44Z_abcd1234", true),
+            ("2026-07-28T20-45-44Z_not-a-session-id", true),
+        ] {
+            let path = dir.path().join(directory).join("Review.jsonl");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &content).unwrap();
+            let scanned = parse_omp_file(&path).unwrap();
+            assert_eq!(scanned.rejections.total(), 0);
+            assert_eq!(scanned.messages.len(), 1);
+            assert_eq!(scanned.messages[0].is_main_session, is_main, "{directory}");
+            assert_eq!(scanned.messages[0].agent, None);
+            assert_eq!(scanned.messages[0].tokens.total(), 35);
+        }
     }
 
     fn create_omp_task_files(

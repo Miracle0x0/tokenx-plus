@@ -80,6 +80,7 @@ impl IntegrationDriver for Driver {
         ctx: &mut FoldContext<'_>,
         sink: &mut BoundUsageSink<'_>,
     ) -> Result<(), InputPipelineError> {
+        let mut seen = HashSet::new();
         let mut hit_units = Vec::new();
         let mut parsed_misses = Vec::new();
         for unit in parsed {
@@ -93,7 +94,7 @@ impl IntegrationDriver for Driver {
             }
         }
 
-        let (failed_hits, _) = fold_omp_cache_hits(hit_units, ctx, Some(sink))?;
+        let (failed_hits, _) = fold_omp_cache_hits(hit_units, ctx, Some(sink), &mut seen)?;
         if !failed_hits.is_empty() {
             let failed_hit_count = failed_hits.len();
             let recovery_invalidations: Vec<_> = failed_hits
@@ -131,10 +132,10 @@ impl IntegrationDriver for Driver {
                     unit.invalidate_cache,
                 );
             }
-            pipeline_cache::fold_units(reparsed, ctx, sink)?;
+            pipeline_cache::fold_units_deduped(reparsed, ctx, sink, &mut seen)?;
             return Ok(());
         }
-        pipeline_cache::fold_units(parsed_misses, ctx, sink)
+        pipeline_cache::fold_units_deduped(parsed_misses, ctx, sink, &mut seen)
     }
 
     fn fold_batches(
@@ -143,6 +144,7 @@ impl IntegrationDriver for Driver {
         ctx: &mut FoldContext<'_>,
         sink: &mut BoundUsageSink<'_>,
     ) -> Result<(), InputPipelineError> {
+        let mut seen = HashSet::new();
         let mut hit_units = Vec::new();
         let mut miss_units = Vec::new();
         for planned in batches.take_all_planned_units(ctx)? {
@@ -156,7 +158,7 @@ impl IntegrationDriver for Driver {
             plan_parent_health_cache(parent_health_candidates, ctx.input_cache)?;
 
         let batch_width = batches.batch_width();
-        let (failed_hits, _) = fold_omp_cache_hits(hit_units, ctx, Some(sink))?;
+        let (failed_hits, _) = fold_omp_cache_hits(hit_units, ctx, Some(sink), &mut seen)?;
         let mut remaining_failed_hits = failed_hits.len();
         let recovery_invalidations: Vec<_> = failed_hits
             .iter()
@@ -175,7 +177,7 @@ impl IntegrationDriver for Driver {
             })
             .collect();
         let (failed_parent_hits, parent_health_message_count) =
-            fold_omp_cache_hits(parent_hit_units, ctx, None)?;
+            fold_omp_cache_hits(parent_hit_units, ctx, None, &mut seen)?;
         if parent_health_message_count != 0 {
             return Err(InputPipelineError::contract(
                 "OMP parent-health cache contained usage records",
@@ -240,7 +242,7 @@ impl IntegrationDriver for Driver {
                 );
             }
             remaining_failed_hits -= recovered_in_batch;
-            pipeline_cache::fold_units(parsed, ctx, sink)?;
+            pipeline_cache::fold_units_deduped(parsed, ctx, sink, &mut seen)?;
         }
         if recovery_invalidations.next().is_some() {
             return Err(InputPipelineError::contract(
@@ -458,6 +460,7 @@ fn fold_omp_cache_hits(
     hit_units: Vec<ParsedUnit>,
     ctx: &mut FoldContext<'_>,
     mut sink: Option<&mut BoundUsageSink<'_>>,
+    seen: &mut HashSet<u64>,
 ) -> Result<(Vec<OmpFailedCacheHit>, usize), InputPipelineError> {
     let mut failed_units = Vec::new();
     let mut message_count = 0;
@@ -488,7 +491,12 @@ fn fold_omp_cache_hits(
                 ));
                 message_count += messages.len();
                 if let Some(sink) = sink.as_deref_mut() {
-                    rejections.merge(&pipeline_cache::emit_messages(messages, sink));
+                    rejections.merge(&pipeline_cache::emit_messages(
+                        messages
+                            .into_iter()
+                            .filter(|message| crate::should_keep_deduped_message(seen, message)),
+                        sink,
+                    ));
                 }
                 ctx.record_health(unit.path.clone(), status, rejections);
             }
@@ -706,7 +714,89 @@ mod tests {
     }
 
     fn omp_content(session_id: &str) -> String {
-        OMP_CHILD_CONTENT.replace("child-session", session_id)
+        OMP_CHILD_CONTENT
+            .replace("child-session", session_id)
+            .replace("child_001", &format!("{session_id}-message"))
+    }
+
+    #[test]
+    fn fork_dedup_spans_cold_warm_mixed_and_recovered_inputs() {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        for batched in [false, true] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let cache_dir = tempfile::TempDir::new().unwrap();
+            let original = dir.path().join("original.jsonl");
+            let fork = dir.path().join("fork.jsonl");
+            let shared = OMP_CHILD_CONTENT.replace(
+                r#""role":"assistant""#,
+                r#""role":"assistant","responseId":"response-shared""#,
+            );
+            write_file(&original, &shared);
+            let continued = omp_content("continued");
+            let (_, continued_entry) = continued.split_once('\n').unwrap();
+            let fork_content = format!(
+                "{}\n{continued_entry}",
+                shared.replace("child-session", "fork-session")
+            );
+            write_file(&fork, &fork_content);
+
+            let run = |paths: Vec<PathBuf>| {
+                let mut cache =
+                    input_record_cache::InputRecordShardStore::with_cache_dir(cache_dir.path());
+                let units = paths.into_iter().map(unit).collect();
+                let messages = if batched {
+                    // One worker makes each input a separate parsing batch.
+                    let (messages, health) =
+                        pool.install(|| fold_batches_with_omp_adapter(units, &mut cache));
+                    assert_eq!(health.issue_count(), 0);
+                    messages
+                } else {
+                    fold_with_omp_adapter(units, &mut cache)
+                };
+                cache.save_if_dirty().unwrap();
+                messages
+            };
+
+            for pass in ["cold", "warm"] {
+                let messages = run(vec![original.clone(), fork.clone()]);
+                assert_eq!(messages.len(), 2, "{pass}, batched={batched}");
+                assert_eq!(
+                    messages
+                        .iter()
+                        .map(|message| message.tokens.total())
+                        .sum::<i64>(),
+                    60
+                );
+            }
+
+            let appended = omp_content("appended");
+            let (_, appended_entry) = appended.split_once('\n').unwrap();
+            write_file(&fork, &format!("{fork_content}\n{appended_entry}"));
+            let mixed = run(vec![original.clone(), fork.clone()]);
+            assert_eq!(mixed.len(), 3, "mixed, batched={batched}");
+
+            // Cached files retain all source records: removing the other copy
+            // from the inventory must not lose the shared historical response.
+            assert_eq!(run(vec![fork.clone()]).len(), 3);
+
+            input_record_cache::truncate_shard_after_header_for_test(
+                cache_dir.path(),
+                &fork,
+                DecoderVersion::current(DecoderId::Omp),
+            );
+            let recovered = run(vec![original, fork]);
+            assert_eq!(recovered.len(), 3, "recovered, batched={batched}");
+            assert_eq!(
+                recovered
+                    .iter()
+                    .map(|message| message.tokens.total())
+                    .sum::<i64>(),
+                90
+            );
+        }
     }
 
     fn seed_omp_disk_cache(cache_dir: &Path, unit: &DiscoveredInput, session_id: &str) {
@@ -831,9 +921,11 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_parent_hits_warm_child_cache_and_parent_change_refreshes_agent() {
+    fn parent_changes_refresh_cached_child_attribution_without_losing_lineage() {
         let home = tempfile::TempDir::new().unwrap();
-        let session_root = home.path().join(".omp/agent/sessions/project/root-session");
+        let session_root = home.path().join(
+            ".omp/agent/sessions/project/2026-07-28T20-45-44-298Z_019faa79-e9ea-7000-a4cd-be6083d214ab",
+        );
         let parent_path = session_root.with_extension("jsonl");
         let child_path = session_root.join("0-ReviewFindings.jsonl");
         write_file(&parent_path, OMP_PARENT_CONTENT);
@@ -891,6 +983,17 @@ mod tests {
         let second = fold_parsed(parsed, &mut cache);
         assert_eq!(second[0].session_id.as_ref(), "child-session");
         assert_eq!(second[0].agent.as_deref(), Some("OMP Oracle"));
+
+        std::fs::remove_file(&parent_path).unwrap();
+        for _ in 0..2 {
+            let units = DRIVER.discover_inputs(&ctx).unwrap();
+            let (messages, health) = fold_batches_with_omp_adapter(units, &mut cache);
+            assert_eq!(health.issue_count(), 0);
+            assert_eq!(messages.len(), 1);
+            assert!(!messages[0].is_main_session);
+            assert_eq!(messages[0].agent, None);
+            assert_eq!(messages[0].tokens.total(), 30);
+        }
     }
 
     #[test]
