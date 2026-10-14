@@ -12,6 +12,10 @@ on:
       - "packages/tokenx/package.json"
       - "packages/tokenx-*/package.json"
       - "scripts/check-release-workflow-safety.py"
+      - "scripts/package-release.py"
+      - "LICENSE"
+      - "NOTICE"
+      - "THIRD_PARTY_LICENSES.html"
       - "scripts/build-linux-gnu.sh"
       - "scripts/zig-linker.py"
 
@@ -115,9 +119,15 @@ jobs:
             --json \
             --no-spinner >/dev/null
 
+      - name: Package release assets
+        shell: bash
+        env:
+          BUILD_TARGET: ${{ matrix.settings.target }}
+        run: python3 scripts/package-release.py --target "$BUILD_TARGET"
+
       - name: Upload artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: tokenx-binary-${{ matrix.settings.target }}
-          path: target/${{ matrix.settings.target }}/release/${{ matrix.settings.bin_name }}
+          path: dist/*
           if-no-files-found: error

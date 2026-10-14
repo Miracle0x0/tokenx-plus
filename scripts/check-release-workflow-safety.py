@@ -19,7 +19,7 @@ RELEASE_TOOLING_SCRIPT = ROOT / "scripts/test-release-tooling.sh"
 REQUIRED_ENV_KEYS = ("MACOSX_DEPLOYMENT_TARGET", "CARGO_TERM_COLOR", "CARGO_INCREMENTAL")
 COMMON_BUILD_FIELDS = ("host", "target", "build", "strip", "bin_name")
 DEFAULT_RELEASE_BRANCH = "main"
-RELEASE_TRIGGER_PATH = "packages/tokenx/package.json"
+RELEASE_TRIGGER_PATH = "Cargo.toml"
 RELEASE_TOOLING_COMMAND = "bash scripts/test-release-tooling.sh"
 LOCAL_BUN_SETUP_ACTION = "./.github/actions/setup-bun"
 FORBIDDEN_RELEASE_WORKFLOW_FRAGMENTS = (
@@ -413,6 +413,27 @@ def main() -> None:
         "bun install --frozen-lockfile",
     )
     finalize_block = job_block(release_lines, "finalize")
+    for label, lines, job in (
+        ("Release", release_lines, "build-native-binary"),
+        ("Build Native", native_lines, "build"),
+    ):
+        block = "\n".join(job_block(lines, job))
+        if 'python3 scripts/package-release.py --target "$BUILD_TARGET"' not in block:
+            errors.append(f"{label} must package native binaries and legal notices")
+        if "path: dist/*" not in block:
+            errors.append(f"{label} must upload packaged release assets")
+    finalize_text = "\n".join(finalize_block)
+    for fragment in (
+        "actions/download-artifact@",
+        "pattern: tokenx-binary-*",
+        "merge-multiple: true",
+        "path: dist",
+        "sha256sum --check *.sha256",
+    ):
+        if fragment not in finalize_text:
+            errors.append(f"Release finalize is missing asset handling: {fragment}")
+    if not re.search(r"gh release create[^\n]*dist/\*", finalize_text):
+        errors.append("Release creation must attach the built assets")
     if not text_indexes(finalize_block, "gh release create"):
         errors.append("Release finalize must create the GitHub Release")
     if not text_indexes(finalize_block, "--generate-notes"):

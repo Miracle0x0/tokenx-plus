@@ -8,19 +8,15 @@ Tokenx reads token-bearing records from local AI coding clients and presents the
 
 ## Install
 
-```bash
-npm install --global @juya-ai/tokenx
-tokenx
-```
+Download the archive for your platform from [GitHub Releases](https://github.com/Miracle0x0/tokenx-plus/releases/latest), extract it, and place `tokenx` (`tokenx.exe` on Windows) on your `PATH`. Prebuilt archives support macOS on Apple silicon, Linux x64 with glibc, and Windows x64.
 
-Prebuilt npm packages support macOS on Apple silicon, Linux x64 with glibc, and Windows x64. Other targets can build Tokenx from source with Bun and a stable Rust toolchain:
+Other targets can build from source with a stable Rust toolchain:
 
 ```bash
-git clone https://github.com/makoMakoGo/tokenx.git
-cd tokenx
-bun install --frozen-lockfile
-bun run build
-bun run cli
+git clone https://github.com/Miracle0x0/tokenx-plus.git
+cd tokenx-plus
+cargo build --locked --release -p tokenx
+./target/release/tokenx
 ```
 
 ## Use
@@ -47,7 +43,7 @@ tokenx pricing overrides --json
 tokenx config init-model-mappings --no-spinner
 ```
 
-When running from source, replace `tokenx` with `bun run cli --`.
+When running from source, replace `tokenx` with `./target/release/tokenx` (Windows: `target\release\tokenx.exe`).
 
 ## Behavior
 

@@ -93,6 +93,10 @@ jobs:
           smoke_home="$(mktemp -d)"
           export TOKENX_CONFIG_DIR="$smoke_home/.tokenx"
           "$TOKENX_BINARY" models --home "$smoke_home" --client amp --json --no-spinner
+      - run: python3 scripts/package-release.py --target "$BUILD_TARGET"
+      - uses: actions/upload-artifact@v6
+        with:
+          path: dist/*
 EOF_YAML
   cat > "${work}/.github/workflows/publish.yml" <<'EOF_YAML'
 name: Release
@@ -102,7 +106,7 @@ on:
     branches:
       - main
     paths:
-      - packages/tokenx/package.json
+      - Cargo.toml
   workflow_dispatch:
     inputs:
       version:
@@ -140,12 +144,22 @@ jobs:
           smoke_home="$(mktemp -d)"
           export TOKENX_CONFIG_DIR="$smoke_home/.tokenx"
           "$TOKENX_BINARY" models --home "$smoke_home" --client amp --json --no-spinner
+      - run: python3 scripts/package-release.py --target "$BUILD_TARGET"
+      - uses: actions/upload-artifact@v6
+        with:
+          path: dist/*
   finalize:
     needs: [prepare-release, build-native-binary]
     steps:
       - uses: actions/checkout@v5
       - run: bash scripts/check-release-commit.sh
-      - run: gh release create v3.0.0 --generate-notes
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: tokenx-binary-*
+          path: dist
+          merge-multiple: true
+      - run: sha256sum --check *.sha256
+      - run: gh release create v3.0.0 --generate-notes dist/*
 EOF_YAML
   cat > "${work}/.github/workflows/ci.yml" <<'EOF_YAML'
 name: CI (Test Only)
@@ -399,6 +413,36 @@ PY
   grep -q "release push branches must be" "${output}"
 }
 
+test_rejects_missing_release_assets() {
+  local work="${TMP_DIR}/missing-assets"
+  write_good_workflows "${work}"
+  replace_text "${work}/.github/workflows/publish.yml" \
+    "gh release create v3.0.0 --generate-notes dist/*" \
+    "gh release create v3.0.0 --generate-notes"
+  assert_safety_rejected "${work}" "${TMP_DIR}/missing-assets.txt" \
+    "Release creation must attach the built assets" \
+    "Expected release creation without assets to fail"
+}
+
+test_rejects_missing_asset_download() {
+  local work="${TMP_DIR}/missing-download"
+  write_good_workflows "${work}"
+  replace_text "${work}/.github/workflows/publish.yml" \
+    "actions/download-artifact@v6" "actions/checkout@v5"
+  assert_safety_rejected "${work}" "${TMP_DIR}/missing-download.txt" \
+    "Release finalize is missing asset handling: actions/download-artifact@" \
+    "Expected release without artifact download to fail"
+}
+
+test_rejects_npm_manifest_release_trigger() {
+  local work="${TMP_DIR}/npm-trigger"
+  write_good_workflows "${work}"
+  replace_text "${work}/.github/workflows/publish.yml" "- Cargo.toml" "- packages/tokenx/package.json"
+  assert_safety_rejected "${work}" "${TMP_DIR}/npm-trigger.txt" \
+    "release push paths must be ['Cargo.toml']" \
+    "Expected an npm-owned release trigger to fail"
+}
+
 test_rejects_npm_token_in_release_workflow() {
   local work="${TMP_DIR}/npm-token"
   write_good_workflows "${work}"
@@ -642,6 +686,9 @@ test_rejects_missing_native_binary_smoke
 test_rejects_missing_required_release_env
 test_rejects_release_artifact_name_drift
 test_rejects_missing_default_branch_push_trigger
+test_rejects_missing_release_assets
+test_rejects_missing_asset_download
+test_rejects_npm_manifest_release_trigger
 test_rejects_npm_token_in_release_workflow
 test_rejects_version_commits_in_release_workflow
 test_rejects_branch_pushes_in_release_workflow

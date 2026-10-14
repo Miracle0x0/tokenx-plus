@@ -9,9 +9,9 @@ bash scripts/check-npm-package-files.sh
 bash scripts/check-version-coherence.sh
 python3 scripts/check-release-workflow-safety.py
 python3 scripts/test-zig-linker.py
+python3 scripts/test-package-release.py
 bash scripts/test-check-version-coherence.sh
 bash scripts/test-bump-release-version.sh
 bash scripts/test-check-release-commit.sh
 bash scripts/test-measure-scan-performance.sh
-bash scripts/test-npm-release-state.sh
 bash scripts/test-release-workflow-safety.sh

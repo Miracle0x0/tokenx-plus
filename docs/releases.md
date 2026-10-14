@@ -1,6 +1,6 @@
 # Release process
 
-Repository releases build the supported native binaries and create a GitHub Release from an immutable version-bump commit on the default branch. The release workflow never edits or pushes the protected branch.
+Repository releases build native archives and publish them as GitHub Release assets from an immutable version-bump commit on `main`. Publishing to npm is not part of this process. The release workflow never edits or pushes the branch.
 
 ## Standard release
 
@@ -18,15 +18,24 @@ Open a pull request targeting the default branch. The release commit must contai
 
 CI verifies version coherence and release tooling. Squash-merge the pull request after required checks pass.
 
-When the version-bump commit reaches the default branch, the `Release` workflow automatically:
+A push to `main` that changes `Cargo.toml` starts release validation. The workspace version in `Cargo.toml` is authoritative; unchanged versions skip release builds. When the final commit introduces an increasing version, the `Release` workflow automatically:
 
 1. verifies that every Rust, Bun, and npm manifest has the same increasing version;
 2. verifies that the commit is an exact version-only change;
 3. builds and smoke-tests the three supported native binaries with locked dependencies;
-4. rechecks that the release commit is still the default-branch head;
-5. creates `v<version>` and the GitHub Release at the verified commit after every native build succeeds.
+4. packages each binary with `LICENSE`, `NOTICE`, and `THIRD_PARTY_LICENSES.html`, and computes a SHA-256 checksum;
+5. downloads all build artifacts, verifies their checksums, and revalidates the release commit;
+6. creates `v<version>` and attaches the archives and checksums to the GitHub Release at the verified commit.
 
-No manual workflow dispatch is needed for a normal release.
+No manual workflow dispatch is needed for a normal release. Code and CI commits may be pushed together with the version bump, provided the final commit is the independent version-only commit. A version bump followed by an unrelated commit does not qualify as a release head.
+
+The release contains these archives and a corresponding `.sha256` file for each:
+
+| Platform | Archive |
+| --- | --- |
+| macOS Apple silicon | `tokenx-aarch64-apple-darwin.tar.gz` |
+| Linux x64 glibc | `tokenx-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows x64 | `tokenx-x86_64-pc-windows-msvc.zip` |
 
 ## Maintainer direct release
 
@@ -41,13 +50,13 @@ If the native build or GitHub Release creation fails, run the `Release` workflow
 - `version`: the failed release version;
 - `commit`: the exact version-bump commit SHA from the failed run.
 
-Recovery accepts only a commit on default-branch history that introduced the requested version and passed the exact version-only check. The native binaries are rebuilt, and the tag and GitHub Release are completed at that same commit.
+Recovery accepts only a commit on default-branch history that introduced the requested version and passed the exact version-only check. The native binaries are rebuilt, and the tag, GitHub Release, and attached archives are completed at that same commit. Recovery replaces same-named assets; it does not move an existing tag.
 
 Do not use a later commit that happens to retain the same version. An incorrect completed release must be followed by a new version.
 
 ## Required repository state
 
-`GITHUB_TOKEN` is granted `contents: write` only in the final tag/Release job and cannot push the default branch. The repository must also authorize CodSpeed, enable appropriate branch rules, and allow the pinned third-party Actions used by the workflows.
+`GITHUB_TOKEN` is granted `contents: write` only in the final tag/Release job. The workflow creates no commits and pushes no branches. The repository must allow the pinned build and artifact Actions. The release requires no npm credentials.
 
 Before changing release infrastructure, run:
 

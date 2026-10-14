@@ -11,7 +11,7 @@ fail() {
 
 [[ $# -eq 1 ]] || fail "Usage: bun run release:bump -- <major|minor|patch|version>"
 request="$1"
-current_version="$(jq -er '.version' packages/tokenx/package.json)"
+current_version="$(python3 scripts/release-manifests.py version)"
 
 new_version="$(python3 - "${current_version}" "${request}" <<'PY'
 import re
