@@ -84,6 +84,27 @@ where
     load_or_scan_unit_cacheable(unit, ctx, ScanCacheOptions::default(), scan)
 }
 
+/// Complete immutable inputs can legitimately contain no usage. Cache that
+/// result too, so empty archives do not need decoding on every acquisition.
+pub(crate) fn load_or_scan_unit_including_empty<F>(
+    unit: ExecutionInput,
+    ctx: &ParseContext<'_>,
+    scan: F,
+) -> ParsedUnit
+where
+    F: Fn(&Path) -> crate::records::error::SessionParseResult<ScannedInput>,
+{
+    load_or_scan_unit_cacheable(
+        unit,
+        ctx,
+        ScanCacheOptions {
+            cache_clean_empty: true,
+            ..Default::default()
+        },
+        |path| scan(path).map(|scanned| (scanned, true)),
+    )
+}
+
 pub(crate) fn load_or_scan_empty_sentinel_with_primary_snapshot<F>(
     unit: ExecutionInput,
     ctx: &ParseContext<'_>,

@@ -123,13 +123,18 @@ displayed before their background inventory check; missing generations require
 background acquisition. Due input-integrity retries and acquisition-context
 changes still rebuild even when inventory metadata is unchanged.
 
-Codex is the exception because incremental append validation requires content
-identity. Its decoder computes the digest during the same pass that parses the
-input, and the shard retains that parser-produced digest with the incremental
-state. Append handling verifies the previous full digest as the expected prefix,
-then continues the same hasher across the tail. Exact hits require stamp and
-cached-digest consistency without another input-byte pass. Related inputs do
-not carry redundant content hashes.
+Plain Codex JSONL is the exception because incremental append validation
+requires content identity. Its decoder computes the digest during the same pass
+that parses the input, and the shard retains that parser-produced digest with
+the incremental state. Append handling verifies the previous full digest as the
+expected prefix, then continues the same hasher across the tail. Exact hits
+require stamp and cached-digest consistency without another input-byte pass.
+Codex `.jsonl.zst` archives use a distinct decoder variant and ordinary
+metadata-stamped record shards, including complete empty results. Unchanged
+archives require no source reads or decompression; changed archives are streamed
+from the beginning through the same event parser. Their decoded offsets are
+never stored as physical append positions. Both encodings share one ordered
+deduplication scope. Related inputs do not carry redundant content hashes.
 
 ### Single-copy bounded fold
 
@@ -160,8 +165,9 @@ integration group and survives all batches.
 OpenCode keeps one deduplication set across all current SQLite databases and
 batches. OMP builds one parent-task index from all miss paths, consumes planned
 hit bodies before that index is built, and then folds hits and misses in bounded
-order. Codex retains its dedicated exact-hit, stale, append, and recovery path
-because its incremental parse state is not the generic integration contract.
+order. Plain Codex logs retain their dedicated exact-hit, stale, append, and
+recovery path because incremental parse state is not the generic integration
+contract; compressed Codex archives use the generic whole-file path.
 
 Every cold parse, Codex append merge, and race reparse owns one raw
 `UsageRecord` vector. Before publishing a shard, the fold validates stable

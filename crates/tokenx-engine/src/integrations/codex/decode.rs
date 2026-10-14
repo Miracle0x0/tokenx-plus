@@ -1,6 +1,6 @@
 //! Codex session decoder.
 //!
-//! Parses the identical JSONL schema from `~/.codex/sessions/` and
+//! Parses plain and Zstandard-compressed JSONL from `~/.codex/sessions/` and
 //! `~/.codex/archived_sessions/`. Scan-root discovery lives in the Codex
 //! driver; content-derived dedup keys prevent a session present in both roots
 //! from being counted twice.
@@ -354,8 +354,11 @@ impl<R: Read> Read for HashingReader<R> {
 }
 
 fn session_id_from_path(path: &Path) -> SessionParseResult<String> {
-    let session_id = path
-        .file_stem()
+    let mut stem = path.file_stem();
+    if super::is_codex_archive(path) {
+        stem = stem.and_then(|stem| Path::new(stem).file_stem());
+    }
+    let session_id = stem
         .and_then(|s| s.to_str())
         .map(str::trim)
         .filter(|session_id| !session_id.is_empty())
@@ -1052,6 +1055,56 @@ fn flush_pending_model_messages(
 ) {
     for pending in pending_model_messages.drain(..) {
         messages.push(pending.into_message(model));
+    }
+}
+
+/// Archives use the same event state machine as plain logs, but their decoded
+/// offsets are never persisted as physical append offsets.
+pub(crate) fn parse_codex_archive(
+    path: &Path,
+    cancellation: Option<&crate::engine::AcquisitionCancellation>,
+) -> SessionParseResult<crate::input_health::ScannedInput> {
+    let file = std::fs::File::open(path)
+        .map_err(|source| SessionParseError::at_path(path, "open Codex archive", source))?;
+    #[cfg(test)]
+    let file = ObservedArchiveReader { file, path };
+    let decoder = zstd::stream::read::Decoder::new(file)
+        .map_err(|source| SessionParseError::at_path(path, "decode Codex zstd stream", source))?;
+    let mut reader = BufReader::new(decoder);
+    let parsed = parse_codex_reader(
+        &mut reader,
+        &session_id_from_path(path)?,
+        0,
+        CodexParseState::default(),
+        cancellation,
+    )?;
+    if parsed.consumed_offset == 0 {
+        if let Some(failure) = parsed.interrupted {
+            return Err(SessionParseError::invalid(
+                "read Codex archive",
+                failure.message,
+            ));
+        }
+    }
+    Ok(crate::input_health::ScannedInput {
+        messages: parsed.messages,
+        rejections: parsed.rejections,
+        interrupted: parsed.interrupted,
+    })
+}
+
+#[cfg(test)]
+struct ObservedArchiveReader<'a> {
+    file: std::fs::File,
+    path: &'a Path,
+}
+
+#[cfg(test)]
+impl Read for ObservedArchiveReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.file.read(buffer)?;
+        crate::input_record_cache::record_input_bytes(self.path, read);
+        Ok(read)
     }
 }
 

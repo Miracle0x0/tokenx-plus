@@ -1360,6 +1360,49 @@ fn test_codex_models_home_override_uses_the_explicit_home() {
     assert!(!String::from_utf8_lossy(&output.stdout).contains("\"gpt-5\""));
 }
 
+fn codex_models_json(home: &Path) -> serde_json::Value {
+    let output = offline_cmd_with_home(home)
+        .args(["models", "--json", "--client", "codex", "--no-spinner"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn test_codex_compressed_history_models_match_plain_and_cached_reports() {
+    let tmp = create_codex_fixture_dir();
+    let plain = tmp.path().join(".codex/sessions/session-1.jsonl");
+    let archive = plain.with_extension("jsonl.zst");
+    let content = fs::read(&plain).unwrap();
+    fs::write(&archive, zstd::encode_all(content.as_slice(), 0).unwrap()).unwrap();
+    let archive_size = fs::metadata(&archive).unwrap().len();
+    let mut expected = None;
+
+    // First scan both copies, then only the cached archive after migration.
+    for pass in 0..3 {
+        if pass == 1 {
+            fs::remove_file(&plain).unwrap();
+        }
+        let json = codex_models_json(tmp.path());
+        assert_eq!(json["health"]["complete"], true);
+        assert_eq!(model_token_sum(&json, "input"), 100);
+        assert_eq!(model_token_sum(&json, "cacheRead"), 20);
+        assert_eq!(model_token_sum(&json, "output"), 30);
+        assert_eq!(json["data"]["totals"]["tokens"], 150);
+        if let Some(expected) = &expected {
+            assert_eq!(&json["data"], expected);
+            assert_eq!(json["metadata"]["inputFootprint"]["codex"], archive_size);
+        } else {
+            expected = Some(json["data"].clone());
+        }
+    }
+}
+
 #[test]
 fn test_codex_cache_write_tokens_and_cost_survive_cached_models_projection() {
     let tmp = TempDir::new().unwrap();
@@ -1391,16 +1434,7 @@ fn test_codex_cache_write_tokens_and_cost_survive_cached_models_projection() {
 
     // Exercise both cold acquisition and a subsequent cached invocation.
     for _ in 0..2 {
-        let output = offline_cmd_with_home(tmp.path())
-            .args(["models", "--json", "--client", "codex", "--no-spinner"])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let json = codex_models_json(tmp.path());
         assert_eq!(model_rows(&json).len(), 1);
         assert_eq!(model_token_sum(&json, "input"), 200);
         assert_eq!(model_token_sum(&json, "output"), 100);
