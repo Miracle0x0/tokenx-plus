@@ -4,7 +4,6 @@
 
 use crate::input_health::{InputFailure, RecordRejectionReason, RejectionSummary, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
-use crate::records::utils::{extract_i64, extract_string, parse_timestamp_value};
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
 use crate::{provider_identity, TokenBreakdown};
 use serde::Deserialize;
@@ -792,7 +791,6 @@ fn parse_claude_file_with_project_resolver(
     let workspace_label = None;
     let mut project_candidates = ClaudeProjectCandidates::default();
     let mut parent_session_id = None;
-    let is_transcript_path = is_claude_transcripts_path(path);
     let mut session_id = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -825,9 +823,6 @@ fn parse_claude_file_with_project_resolver(
     // Tracks whether the previous entry was a user message,
     // so the next assistant message can be marked as a turn start.
     let mut pending_turn_start = false;
-    let mut last_model: Option<String> = None;
-    let mut last_provider_hint: Option<String> = None;
-    let mut suppress_unattributed_tool_results = false;
     // Sidechain detection state (resolved lazily on first parseable entry)
     let mut sidechain_agent: Option<String> = None;
     let mut sidechain_agent_instance: Option<String> = None;
@@ -988,65 +983,8 @@ fn parse_claude_file_with_project_resolver(
                 }
             }
 
-            if entry.entry_type == "user" || entry.entry_type == "tool_result" {
-                if entry.entry_type == "user" && is_human_turn(trimmed) {
-                    pending_turn_start = true;
-                }
-
-                let (context_workspace_key, context_workspace_label) = workspace_options_for_entry(
-                    entry_workspace.as_ref(),
-                    &workspace_key,
-                    &workspace_label,
-                );
-                let tool_result_message = if is_transcript_path {
-                    None
-                } else {
-                    match extract_claude_tool_result_message(
-                        trimmed,
-                        ClaudeToolResultContext {
-                            input_path: path,
-                            line_number: line_index + 1,
-                            entry: &entry,
-                            last_model: last_model.as_deref(),
-                            last_provider_hint: last_provider_hint.as_deref(),
-                            default_provider_hint: None,
-                            session_id: &session_id,
-                            suppress_unattributed: suppress_unattributed_tool_results,
-                            workspace_key: context_workspace_key,
-                            workspace_label: context_workspace_label,
-                            sidechain_agent: sidechain_agent.clone(),
-                            sidechain_agent_instance: sidechain_agent_instance.clone(),
-                        },
-                    ) {
-                        Ok(message) => message,
-                        Err(error) => {
-                            record_claude_error_rejection(&mut rejections, &error);
-                            continue;
-                        }
-                    }
-                };
-
-                if let Some(tool_message) = tool_result_message {
-                    if let Some(ref dedup_key) = tool_message.dedup_key {
-                        if let Some(&existing_idx) = processed_hashes.get(dedup_key) {
-                            merge_claude_tool_result_duplicate(
-                                &mut messages[existing_idx],
-                                tool_message.tokens.input,
-                                tool_message.timestamp,
-                            );
-                            if let Some(workspace) = entry_workspace.as_ref() {
-                                set_message_workspace(&mut messages[existing_idx], workspace);
-                            }
-                            continue;
-                        }
-                        processed_hashes.insert(*dedup_key, messages.len());
-                    }
-                    let provider_confidence =
-                        stored_claude_provider_confidence(&tool_message.provider_id);
-                    messages.push(tool_message);
-                    provider_confidences.push(provider_confidence);
-                }
-                continue;
+            if entry.entry_type == "user" && is_human_turn(trimmed) {
+                pending_turn_start = true;
             }
 
             // Only process assistant messages with usage data
@@ -1094,9 +1032,6 @@ fn parse_claude_file_with_project_resolver(
                     .is_some_and(|model| model.trim().is_empty())
                 {
                     if !has_positive_usage {
-                        last_model = None;
-                        last_provider_hint = None;
-                        suppress_unattributed_tool_results = true;
                         pending_turn_start = false;
                         continue;
                     }
@@ -1113,27 +1048,16 @@ fn parse_claude_file_with_project_resolver(
                         RecordRejectionReason::MissingModel,
                         &error,
                     );
-                    last_model = None;
-                    last_provider_hint = None;
-                    suppress_unattributed_tool_results = true;
                     pending_turn_start = false;
                     continue;
                 }
 
-                if let Some(model) = message.model.as_deref() {
-                    if is_claude_synthetic_placeholder_model(model) {
-                        last_model = None;
-                        last_provider_hint = None;
-                        suppress_unattributed_tool_results = true;
-                        continue;
-                    }
-                    suppress_unattributed_tool_results = false;
-                    last_model = Some(model.to_string());
-                    last_provider_hint = message
-                        .provider_id
-                        .as_deref()
-                        .or(entry.provider_id.as_deref())
-                        .map(str::to_string);
+                if message
+                    .model
+                    .as_deref()
+                    .is_some_and(is_claude_synthetic_placeholder_model)
+                {
+                    continue;
                 }
 
                 let usage = match message.usage {
@@ -1258,9 +1182,6 @@ fn parse_claude_file_with_project_resolver(
                     Some(m) => m,
                     None => {
                         if !has_positive_usage {
-                            last_model = None;
-                            last_provider_hint = None;
-                            suppress_unattributed_tool_results = true;
                             pending_turn_start = false;
                             continue;
                         }
@@ -1280,9 +1201,6 @@ fn parse_claude_file_with_project_resolver(
                             RecordRejectionReason::MissingModel,
                             &error,
                         );
-                        last_model = None;
-                        last_provider_hint = None;
-                        suppress_unattributed_tool_results = true;
                         pending_turn_start = false;
                         continue;
                     }
@@ -1367,18 +1285,6 @@ fn parse_claude_file_with_project_resolver(
     ))
 }
 
-fn record_claude_error_rejection(rejections: &mut RejectionSummary, error: &SessionParseError) {
-    let detail = error.to_string();
-    let reason = if error.operation().contains("model") || detail.contains("missing model") {
-        RecordRejectionReason::MissingModel
-    } else if error.operation().contains("timestamp") {
-        RecordRejectionReason::MissingTimestamp
-    } else {
-        RecordRejectionReason::MalformedRecord
-    };
-    rejections.record(reason);
-}
-
 fn record_claude_rejection(
     rejections: &mut RejectionSummary,
     reason: RecordRejectionReason,
@@ -1406,17 +1312,6 @@ fn claude_project_key_from_path(path: &Path) -> Option<String> {
     }
 
     None
-}
-
-fn is_claude_transcripts_path(path: &Path) -> bool {
-    let components: Vec<String> = path
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().to_string())
-        .collect();
-
-    components
-        .windows(2)
-        .any(|window| window[0] == ".claude" && window[1] == "transcripts")
 }
 
 fn workspace_parts_from_key(raw: &str) -> Option<ClaudeWorkspaceParts> {
@@ -1709,351 +1604,6 @@ fn merge_claude_duplicate(existing: &mut UsageRecord, usage: &ClaudeUsage, parse
     }
 }
 
-fn merge_claude_tool_result_duplicate(
-    existing: &mut UsageRecord,
-    input_tokens: i64,
-    timestamp_ms: i64,
-) {
-    existing.tokens.input = existing.tokens.input.max(input_tokens);
-    if timestamp_ms >= existing.timestamp {
-        existing.set_timestamp(timestamp_ms);
-    }
-}
-
-struct ClaudeToolResultUsage {
-    input_tokens: i64,
-    dedup_key: Option<String>,
-}
-
-struct ClaudeToolResultContext<'a> {
-    input_path: &'a Path,
-    line_number: usize,
-    entry: &'a ClaudeEntry,
-    last_model: Option<&'a str>,
-    last_provider_hint: Option<&'a str>,
-    default_provider_hint: Option<&'a str>,
-    session_id: &'a str,
-    suppress_unattributed: bool,
-    workspace_key: Option<String>,
-    workspace_label: Option<String>,
-    sidechain_agent: Option<String>,
-    sidechain_agent_instance: Option<String>,
-}
-
-fn extract_claude_tool_result_message(
-    line: &str,
-    context: ClaudeToolResultContext<'_>,
-) -> SessionParseResult<Option<UsageRecord>> {
-    let value: Value = serde_json::from_str(line).map_err(|source| {
-        SessionParseError::at_path(
-            context.input_path,
-            "decode Claude tool-result line",
-            std::io::Error::new(
-                ErrorKind::InvalidData,
-                format!("line {}: {source}", context.line_number),
-            ),
-        )
-    })?;
-    let Some(usage) = extract_claude_tool_result_usage(&value)? else {
-        return Ok(None);
-    };
-
-    let explicit_model = extract_claude_model(&value).or_else(|| {
-        context
-            .entry
-            .message
-            .as_ref()
-            .and_then(|message| message.model.clone())
-    });
-    let raw_model = match explicit_model {
-        Some(model) => model,
-        None if context.suppress_unattributed => return Ok(None),
-        None => context.last_model.map(str::to_string).ok_or_else(|| {
-            SessionParseError::at_path(
-                context.input_path,
-                "validate Claude tool-result model",
-                std::io::Error::new(
-                    ErrorKind::InvalidData,
-                    format!(
-                        "line {}: token-bearing tool result has no model context",
-                        context.line_number
-                    ),
-                ),
-            )
-        })?,
-    };
-    if is_claude_synthetic_placeholder_model(&raw_model) {
-        return Ok(None);
-    }
-    let provider_hint = extract_claude_provider(&value)
-        .or_else(|| {
-            context
-                .entry
-                .message
-                .as_ref()
-                .and_then(|message| message.provider_id.clone())
-        })
-        .or_else(|| context.entry.provider_id.clone())
-        .or_else(|| context.last_provider_hint.map(str::to_string))
-        .or_else(|| context.default_provider_hint.map(str::to_string));
-
-    let model = observed_claude_model(&raw_model);
-    let provider_choice =
-        claude_provider_choice_for_models(&raw_model, &model, provider_hint.as_deref());
-    let timestamp = parse_claude_entry_timestamp_checked(
-        context.input_path,
-        context.line_number,
-        context.entry.timestamp.as_deref(),
-    )?
-    .or(extract_claude_timestamp_checked(
-        &value,
-        context.input_path,
-        Some(context.line_number),
-        "validate Claude tool-result timestamp",
-    )?)
-    .ok_or_else(|| {
-        SessionParseError::at_path(
-            context.input_path,
-            "validate Claude tool-result timestamp",
-            std::io::Error::new(
-                ErrorKind::InvalidData,
-                format!(
-                    "line {}: token-bearing tool result is missing timestamp",
-                    context.line_number
-                ),
-            ),
-        )
-    })?;
-
-    let mut message = UsageRecord::new_with_dedup(
-        model,
-        provider_choice.id,
-        context.session_id,
-        timestamp,
-        TokenBreakdown {
-            input: usage.input_tokens,
-            output: 0,
-            cache_read: 0,
-            cache_write: 0,
-            cache_write_1h: 0,
-            reasoning: 0,
-        },
-        0.0,
-        usage.dedup_key.map(|key| {
-            crate::records::dedup_hash_str(&format!(
-                "claude:tool_result:{}:{key}",
-                context.session_id
-            ))
-        }),
-    );
-    message.message_count = 0;
-    message.claude_session_id = context
-        .entry
-        .session_id
-        .as_deref()
-        .filter(|id| !id.trim().is_empty())
-        .map(crate::records::intern::intern);
-    message.agent = context
-        .sidechain_agent
-        .as_deref()
-        .map(crate::records::intern::intern);
-    message.set_agent_instance(context.sidechain_agent_instance);
-    message.set_workspace(context.workspace_key, context.workspace_label);
-    Ok(Some(message))
-}
-
-fn extract_claude_tool_result_usage(
-    value: &Value,
-) -> SessionParseResult<Option<ClaudeToolResultUsage>> {
-    let mut total_tokens = 0_i64;
-    let mut first_dedup_id: Option<String> = None;
-    let mut seen_ids = HashSet::new();
-
-    for tool_result in claude_tool_result_values(value) {
-        let tool_result_id = extract_tool_result_id(tool_result);
-        let input_tokens = extract_tool_result_input_tokens(tool_result)?;
-        if let Some(id) = tool_result_id.as_ref() {
-            if !seen_ids.insert(id.clone()) {
-                continue;
-            }
-        }
-        if first_dedup_id.is_none() {
-            first_dedup_id = tool_result_id;
-        }
-        total_tokens = total_tokens
-            .checked_add(input_tokens.unwrap_or(0))
-            .ok_or_else(|| {
-                SessionParseError::invalid(
-                    "validate Claude tool-result usage",
-                    "tool-result input token total exceeds i64::MAX",
-                )
-            })?;
-    }
-
-    if total_tokens == 0 {
-        return Ok(None);
-    }
-
-    Ok(Some(ClaudeToolResultUsage {
-        input_tokens: total_tokens,
-        dedup_key: first_dedup_id.map(|id| format!("tool_result:{id}")),
-    }))
-}
-
-fn claude_tool_result_values(value: &Value) -> Vec<&Value> {
-    let mut results = Vec::new();
-
-    if value
-        .get("type")
-        .and_then(|kind| kind.as_str())
-        .is_some_and(|kind| kind == "tool_result")
-    {
-        results.push(value);
-    }
-
-    if let Some(tool_result) = value.get("tool_result") {
-        results.push(tool_result);
-    }
-
-    if let Some(message_tool_result) = value
-        .get("message")
-        .and_then(|message| message.get("tool_result"))
-    {
-        results.push(message_tool_result);
-    }
-
-    if let Some(content) = value
-        .get("message")
-        .and_then(|message| message.get("content"))
-        .or_else(|| value.get("content"))
-    {
-        collect_tool_result_blocks(content, &mut results);
-    }
-
-    results
-}
-
-fn collect_tool_result_blocks<'a>(value: &'a Value, results: &mut Vec<&'a Value>) {
-    if let Some(blocks) = value.as_array() {
-        for block in blocks {
-            if block
-                .get("type")
-                .and_then(|kind| kind.as_str())
-                .is_some_and(|kind| kind == "tool_result")
-            {
-                results.push(block);
-            }
-        }
-    }
-}
-
-fn extract_tool_result_id(tool_result: &Value) -> Option<String> {
-    extract_string(tool_result.get("tool_use_id"))
-        .or_else(|| extract_string(tool_result.get("id")))
-        .or_else(|| extract_string(tool_result.get("tool_result_id")))
-}
-
-fn extract_tool_result_input_tokens(tool_result: &Value) -> SessionParseResult<Option<i64>> {
-    if let Some(tokens) = explicit_tool_result_input_tokens(tool_result)? {
-        return Ok(Some(tokens));
-    }
-    Ok({
-        let chars = tool_result_output_char_count(tool_result);
-        (chars > 0).then(|| estimate_tokens_from_chars(chars))
-    })
-}
-
-fn explicit_tool_result_input_tokens(tool_result: &Value) -> SessionParseResult<Option<i64>> {
-    let mut selected = None;
-    for candidate in [
-        tool_result.get("input_tokens"),
-        tool_result.get("token_count"),
-        tool_result.get("tokens"),
-        tool_result
-            .get("usage")
-            .and_then(|usage| usage.get("input_tokens")),
-        tool_result
-            .get("tool_output")
-            .and_then(|tool_output| tool_output.get("input_tokens")),
-        tool_result
-            .get("tool_output")
-            .and_then(|tool_output| tool_output.get("token_count")),
-        tool_result
-            .get("tool_output")
-            .and_then(|tool_output| tool_output.get("tokens")),
-        tool_result
-            .get("tool_output")
-            .and_then(|tool_output| tool_output.get("usage"))
-            .and_then(|usage| usage.get("input_tokens")),
-    ] {
-        if let Some(tokens) = extract_i64(candidate) {
-            if tokens < 0 {
-                return Err(SessionParseError::invalid(
-                    "validate Claude tool-result usage",
-                    "tool-result input token bucket is negative",
-                ));
-            }
-            selected.get_or_insert(tokens);
-        }
-    }
-    Ok(selected)
-}
-
-fn tool_result_output_char_count(tool_result: &Value) -> usize {
-    let mut chars = 0;
-
-    if let Some(output) = tool_result
-        .get("tool_output")
-        .and_then(|tool_output| tool_output.get("output"))
-        .and_then(|output| output.as_str())
-    {
-        chars += output.chars().count();
-    }
-
-    match tool_result.get("content") {
-        Some(content) if content.is_string() => {
-            chars += content
-                .as_str()
-                .map(str::chars)
-                .map(Iterator::count)
-                .unwrap_or(0);
-        }
-        Some(content) => {
-            chars += tool_result_content_output_chars(content);
-        }
-        None => {}
-    }
-
-    chars
-}
-
-fn tool_result_content_output_chars(content: &Value) -> usize {
-    content
-        .as_array()
-        .map(|blocks| {
-            blocks
-                .iter()
-                .map(|block| {
-                    block
-                        .get("tool_output")
-                        .and_then(|tool_output| tool_output.get("output"))
-                        .and_then(|output| output.as_str())
-                        .or_else(|| block.get("text").and_then(|text| text.as_str()))
-                        .map(str::chars)
-                        .map(Iterator::count)
-                        .unwrap_or(0)
-                })
-                .sum()
-        })
-        .unwrap_or(0)
-}
-
-fn estimate_tokens_from_chars(chars: usize) -> i64 {
-    // Claude Code tool outputs may not include token metadata. Match the
-    // existing Kiro fallback of one token per four characters, rounded up.
-    chars.div_ceil(4) as i64
-}
-
 fn is_claude_synthetic_placeholder_model(model: &str) -> bool {
     model.trim().eq_ignore_ascii_case("<synthetic>")
 }
@@ -2097,27 +1647,6 @@ fn is_human_turn(raw_line: &str) -> bool {
         }
     }
     false
-}
-
-fn extract_claude_model(value: &Value) -> Option<String> {
-    extract_string(value.get("model")).or_else(|| {
-        value
-            .get("message")
-            .and_then(|msg| extract_string(msg.get("model")))
-    })
-}
-
-fn extract_claude_provider(value: &Value) -> Option<String> {
-    extract_string(value.get("providerId"))
-        .or_else(|| extract_string(value.get("provider_id")))
-        .or_else(|| extract_string(value.get("provider")))
-        .or_else(|| {
-            value.get("message").and_then(|msg| {
-                extract_string(msg.get("providerId"))
-                    .or_else(|| extract_string(msg.get("provider_id")))
-                    .or_else(|| extract_string(msg.get("provider")))
-            })
-        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2231,14 +1760,6 @@ fn update_claude_provider_id(
     }
 }
 
-fn stored_claude_provider_confidence(provider_id: &str) -> u8 {
-    match provider_identity::canonical_provider(provider_id) {
-        None => 0,
-        Some(provider) if provider == "anthropic" => CLAUDE_PROVIDER_DEFAULT_CONFIDENCE,
-        Some(_) => CLAUDE_PROVIDER_INFERRED_CONFIDENCE,
-    }
-}
-
 fn provider_from_model_prefix(model: &str) -> Option<String> {
     let provider = model
         .trim()
@@ -2251,47 +1772,6 @@ fn provider_from_model_prefix(model: &str) -> Option<String> {
     } else {
         Some(provider)
     }
-}
-
-fn extract_claude_timestamp_checked(
-    value: &Value,
-    path: &Path,
-    line_number: Option<usize>,
-    operation: &'static str,
-) -> SessionParseResult<Option<i64>> {
-    let Some(raw_timestamp) = value
-        .get("timestamp")
-        .or_else(|| value.get("created_at"))
-        .or_else(|| {
-            value
-                .get("message")
-                .and_then(|message| message.get("created_at"))
-        })
-    else {
-        return Ok(None);
-    };
-
-    parse_timestamp_value(raw_timestamp)
-        .map(Some)
-        .ok_or_else(|| {
-            SessionParseError::at_path(
-                path,
-                operation,
-                std::io::Error::new(
-                    ErrorKind::InvalidData,
-                    format!(
-                        "{}: invalid timestamp value {raw_timestamp}",
-                        claude_input_location(line_number)
-                    ),
-                ),
-            )
-        })
-}
-
-fn claude_input_location(line_number: Option<usize>) -> String {
-    line_number
-        .map(|line_number| format!("line {line_number}"))
-        .unwrap_or_else(|| "JSON input".to_string())
 }
 
 #[cfg(test)]
@@ -2450,24 +1930,31 @@ mod tests {
         assert_eq!(scanned.messages[0].tokens.output, 5);
         assert_eq!(scanned.messages[0].timestamp, 1_733_047_200_000);
         assert_eq!(scanned.messages[1].tokens.input, 20);
-        assert_eq!(scanned.rejections.total(), 1);
-        let rejection = scanned.rejections.entries().next().unwrap();
-        assert_eq!(rejection.key, "malformed-record");
-        assert_eq!(rejection.count, 1);
+        let rejected: Vec<_> = scanned
+            .rejections
+            .entries()
+            .map(|entry| (entry.key, entry.count))
+            .collect();
+        assert_eq!(rejected, [("malformed-record", 1)]);
         assert!(scanned.interrupted.is_none());
     }
 
     #[test]
-    fn zero_usage_without_model_or_timestamp_is_an_intentional_filter() {
-        let file = create_test_file(
+    fn non_usage_records_do_not_emit_or_reject_tokens() {
+        for content in [
             r#"{"type":"assistant","message":{"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#,
-        );
-
-        let scanned = super::parse_claude_file(file.path()).unwrap();
-
-        assert!(scanned.messages.is_empty());
-        assert!(scanned.rejections.is_empty());
-        assert!(scanned.interrupted.is_none());
+            r#"{"type":"assistant","timestamp":"not-a-timestamp","message":{"model":"claude-sonnet-4.6","usage":{"input_tokens":0,"output_tokens":0}}}"#,
+            r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"claude-sonnet-4.6"}}
+{"type":"user","timestamp":"not-a-timestamp","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_zero","tool_output":{"output":""}}]}}"#,
+            r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"claude-sonnet-4.6"}}
+{"type":"user","timestamp":"2026-05-27T10:00:01.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_context","tool_output":{"output":"abcdefghijklmnop"}}]}}"#,
+        ] {
+            let file = create_test_file(content);
+            let scanned = super::parse_claude_file(file.path()).unwrap();
+            assert!(scanned.messages.is_empty(), "{content}");
+            assert!(scanned.rejections.is_empty(), "{content}");
+            assert!(scanned.interrupted.is_none(), "{content}");
+        }
     }
 
     #[test]
@@ -2488,20 +1975,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_usage_with_invalid_timestamp_is_an_intentional_filter() {
-        let file = create_test_file(
-            r#"{"type":"assistant","timestamp":"not-a-timestamp","message":{"model":"claude-sonnet-4.6","usage":{"input_tokens":0,"output_tokens":0}}}"#,
-        );
-
-        let scanned = super::parse_claude_file(file.path()).unwrap();
-
-        assert!(scanned.messages.is_empty());
-        assert!(scanned.rejections.is_empty());
-        assert!(scanned.interrupted.is_none());
-    }
-
-    #[test]
-    fn rejected_missing_model_does_not_leak_stale_tool_result_context() {
+    fn rejected_missing_model_keeps_valid_usage_beside_tool_content() {
         let file = create_test_file(
             r#"{"type":"assistant","timestamp":"2026-07-14T00:00:00Z","message":{"model":"claude-sonnet-4.6","usage":{"input_tokens":10,"output_tokens":1}}}
 {"type":"assistant","timestamp":"2026-07-14T00:00:01Z","message":{"usage":{"input_tokens":99,"output_tokens":9}}}
@@ -2583,7 +2057,7 @@ mod tests {
     }
 
     #[test]
-    fn token_bearing_tool_result_without_timestamp_is_rejected() {
+    fn tool_result_without_timestamp_is_not_api_usage() {
         let file = create_test_file(
             r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"claude-sonnet-4.6","usage":{"input_tokens":1,"output_tokens":1}}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_missing_timestamp","tool_output":{"output":"abcdefghijklmnop"}}]}}"#,
@@ -2592,37 +2066,6 @@ mod tests {
         let scanned = super::parse_claude_file(file.path()).unwrap();
 
         assert_eq!(scanned.messages.len(), 1);
-        let rejection = scanned.rejections.entries().next().unwrap();
-        assert_eq!(rejection.key, "missing-timestamp");
-        assert!(scanned.interrupted.is_none());
-    }
-
-    #[test]
-    fn zero_usage_tool_result_with_invalid_timestamp_is_an_intentional_filter() {
-        let file = create_test_file(
-            r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"claude-sonnet-4.6"}}
-{"type":"user","timestamp":"not-a-timestamp","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_zero","tool_output":{"output":""}}]}}"#,
-        );
-
-        let scanned = super::parse_claude_file(file.path()).unwrap();
-
-        assert!(scanned.messages.is_empty());
-        assert!(scanned.rejections.is_empty());
-        assert!(scanned.interrupted.is_none());
-    }
-
-    #[test]
-    fn assistant_without_usage_still_provides_tool_result_model_context() {
-        let file = create_test_file(
-            r#"{"type":"assistant","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"claude-sonnet-4.6"}}
-{"type":"user","timestamp":"2026-05-27T10:00:01.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_context","tool_output":{"output":"abcdefghijklmnop"}}]}}"#,
-        );
-
-        let scanned = super::parse_claude_file(file.path()).unwrap();
-
-        assert_eq!(scanned.messages.len(), 1);
-        assert_eq!(scanned.messages[0].model_id.as_ref(), "claude-sonnet-4.6");
-        assert_eq!(scanned.messages[0].tokens.input, 4);
         assert!(scanned.rejections.is_empty());
         assert!(scanned.interrupted.is_none());
     }
@@ -2989,34 +2432,21 @@ mod tests {
         let file = create_test_file(content);
         let messages = parse_claude_file(file.path()).unwrap();
 
-        assert_eq!(
-            messages.len(),
-            4,
-            "Should include 3 assistant messages plus 1 tool-result input message"
-        );
-        let assistant_messages: Vec<_> = messages
-            .iter()
-            .filter(|message| message.tokens.output > 0)
-            .collect();
-        assert_eq!(
-            assistant_messages.len(),
-            3,
-            "Should have 3 assistant usage messages"
-        );
+        assert_eq!(messages.len(), 3, "Only assistant usage is counted");
 
         // First assistant after first human user → turn start
         assert!(
-            assistant_messages[0].is_turn_start,
+            messages[0].is_turn_start,
             "First response should be turn start"
         );
         // Assistant after tool_result → NOT a new turn
         assert!(
-            !assistant_messages[1].is_turn_start,
+            !messages[1].is_turn_start,
             "Response after tool_result should NOT be turn start"
         );
         // First assistant after second human user → turn start
         assert!(
-            assistant_messages[2].is_turn_start,
+            messages[2].is_turn_start,
             "Response after real user input should be turn start"
         );
 
@@ -3171,78 +2601,24 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_result_output_counts_as_input() {
-        let content = r#"{"type":"user","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"anthropic/claude-4-6-sonnet","content":[{"type":"tool_result","tool_use_id":"toolu_input","tool_output":{"output":"abcdefghijklmnop"}}]}}"#;
-
-        let file = create_test_file(content);
-        let messages = parse_claude_file(file.path()).unwrap();
-
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "anthropic/claude-4-6-sonnet");
-        assert_eq!(messages[0].provider_id.as_ref(), "anthropic");
-        assert_eq!(messages[0].tokens.input, 4);
-        assert_eq!(messages[0].tokens.output, 0);
-        assert_eq!(messages[0].tokens.cache_read, 0);
-        assert_eq!(messages[0].tokens.cache_write, 0);
-        let expected_dedup_key = crate::records::dedup_hash_str(&format!(
-            "claude:tool_result:{}:tool_result:toolu_input",
-            messages[0].session_id
-        ));
-        assert_eq!(messages[0].dedup_key, Some(expected_dedup_key));
-        assert_eq!(messages[0].message_count, 0);
-    }
-
-    #[test]
-    fn test_tool_result_duplicate_uses_max_input_tokens() {
-        let content = r#"{"type":"tool_result","timestamp":"2026-05-27T10:00:00.000Z","model":"anthropic/claude-4-6-sonnet","tool_result":{"tool_use_id":"toolu_stream","tool_output":{"output":"abcdefghijklmnop"}}}
-{"type":"tool_result","timestamp":"2026-05-27T10:00:00.100Z","model":"anthropic/claude-4-6-sonnet","tool_result":{"tool_use_id":"toolu_stream","tool_output":{"output":"abcdefghijklmnopqrstuvwxyzabcd"}}}"#;
-
-        let file = create_test_file(content);
-        let messages = parse_claude_file(file.path()).unwrap();
-
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].model_id.as_ref(), "anthropic/claude-4-6-sonnet");
-        assert_eq!(messages[0].tokens.input, 8);
-        assert_eq!(messages[0].timestamp, 1_779_876_000_100);
-    }
-
-    #[test]
-    fn test_negative_explicit_tool_result_is_rejected_beside_good_sibling() {
-        let content = r#"{"type":"tool_result","timestamp":"2026-05-27T10:00:00.000Z","model":"anthropic/claude-4-6-sonnet","tool_result":{"tool_use_id":"toolu_bad","input_tokens":-1}}
-{"type":"tool_result","timestamp":"2026-05-27T10:00:01.000Z","model":"anthropic/claude-4-6-sonnet","tool_result":{"tool_use_id":"toolu_good","input_tokens":7}}"#;
-
-        let file = create_test_file(content);
-        let scanned = super::parse_claude_file(file.path()).unwrap();
-
-        assert_eq!(scanned.messages.len(), 1);
-        assert_eq!(scanned.messages[0].tokens.input, 7);
-        assert_eq!(scanned.rejections.total(), 1);
-        let rejection = scanned.rejections.entries().next().unwrap();
-        assert_eq!(rejection.key, "malformed-record");
-        assert_eq!(rejection.count, 1);
-        assert!(scanned.interrupted.is_none());
-    }
-
-    #[test]
-    fn test_tool_result_repeated_in_same_record_is_not_counted_twice() {
-        let content = r#"{"type":"tool_result","timestamp":"2026-05-27T10:00:00.000Z","model":"anthropic/claude-4-6-sonnet","tool_result":{"tool_use_id":"toolu_same","tool_output":{"output":"abcdefghijklmnop"}},"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_same","tool_output":{"output":"abcdefghijklmnop"}}]}}"#;
-
-        let file = create_test_file(content);
-        let messages = parse_claude_file(file.path()).unwrap();
-
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].tokens.input, 4);
-    }
-
-    #[test]
-    fn test_tool_result_prefers_input_token_metadata_over_char_estimate() {
-        let content = r#"{"type":"user","timestamp":"2026-05-27T10:00:00.000Z","message":{"model":"claude-sonnet-4.6","content":[{"type":"tool_result","tool_use_id":"toolu_metadata","tool_output":{"output":"abcdefghijklmnopqrstuvwxyzabcd","input_tokens":3}}]}}"#;
-
-        let file = create_test_file(content);
-        let messages = parse_claude_file(file.path()).unwrap();
-
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].tokens.input, 3);
+    fn tool_result_shapes_and_size_metadata_are_not_api_usage() {
+        for tool in [
+            serde_json::json!({"type": "tool_result", "tool_use_id": "tool", "content": "long tool output"}),
+            serde_json::json!({"type": "tool_result", "tool_use_id": "tool", "tool_output": {"output": "long tool output", "input_tokens": 100}}),
+            serde_json::json!({"type": "tool_result", "tool_use_id": "tool", "token_count": 100}),
+            serde_json::json!({"type": "tool_result", "tool_use_id": "tool", "usage": {"input_tokens": -1}}),
+        ] {
+            for row in [
+                tool.clone(),
+                serde_json::json!({"type": "user", "message": {"content": [tool]}}),
+            ] {
+                let file = create_test_file(&row.to_string());
+                let scanned = super::parse_claude_file(file.path()).unwrap();
+                assert!(scanned.messages.is_empty(), "{row}");
+                assert!(scanned.rejections.is_empty(), "{row}");
+                assert!(scanned.interrupted.is_none(), "{row}");
+            }
+        }
     }
 
     #[test]
@@ -3310,7 +2686,7 @@ mod tests {
     }
 
     #[test]
-    fn test_synthetic_placeholder_does_not_seed_tool_result_model() {
+    fn test_synthetic_placeholder_and_tool_content_are_not_usage() {
         let content = r#"{"type":"assistant","timestamp":"2026-02-18T10:00:00.000Z","message":{"model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}},"isApiErrorMessage":true,"error":"unknown"}
 {"type":"user","timestamp":"2026-02-18T10:00:01.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"tool output that should not be estimated under a placeholder model"}]}}
 {"type":"assistant","timestamp":"2026-02-18T10:00:02.000Z","message":{"model":"glm-5.1","usage":{"input_tokens":123,"output_tokens":45}}}"#;

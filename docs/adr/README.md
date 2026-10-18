@@ -26,6 +26,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0020](0020-omp-message-and-session-identity.md) | OMP message deduplication and child-session identity | Accepted |
 | [0021](0021-opencode-sqlite-schemas-and-discovery.md) | OpenCode SQLite schemas, discovery, and accounting | Accepted |
 | [0022](0022-github-release-artifacts.md) | Version-triggered native GitHub Release assets | Accepted |
+| [0023](0023-claude-recorded-usage-and-catalog-identity.md) | Claude recorded usage and catalog identity | Accepted |
 
 ## Conventions
 

@@ -84,6 +84,28 @@ fn models(generation: &Generation) -> tokenx_engine::ModelProjection {
 }
 
 #[test]
+fn request_replay_and_tool_content_do_not_inflate_snapshot_usage_on_shard_hits() {
+    let home = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let rows: Vec<Value> = include_str!("fixtures/claude_2_1_302.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    write(
+        &home.path().join(".claude/projects/-project/session.jsonl"),
+        &rows,
+    );
+    let run = || acquire(home.path(), cache.path(), 1.0, ModelMappings::default());
+    let cold = run();
+    let warm = run();
+    assert_eq!(models(&cold).total_tokens, 211);
+    assert_eq!(models(&warm), models(&cold));
+    assert_eq!(cold.health().rejected_records(), 0);
+    assert_eq!(cold.sessions()[0].message_count, 1);
+    assert_eq!(cold.sessions()[0].turn_count, 1);
+}
+
+#[test]
 fn cost_state_reconciles_subagents_mirrors_cached_inputs_and_repricing() {
     let home = tempfile::tempdir().unwrap();
     let cache = tempfile::tempdir().unwrap();
