@@ -72,6 +72,84 @@ fn opus_5_5_spellings_use_their_own_price() {
 }
 
 #[test]
+fn native_claude_catalog_identity_prices_hourly_writes_and_preserves_source_authority() {
+    let litellm = serde_json::from_str(include_str!(
+        "../../tests/fixtures/litellm_claude_pricing.json"
+    ))
+    .unwrap();
+    let lookup = PricingLookup::new(
+        litellm,
+        HashMap::from([("anthropic/claude-opus-5.5".into(), pricing(4e-6, 20e-6))]),
+    );
+    let usage = TokenBreakdown {
+        input: 2,
+        output: 20,
+        cache_read: 100,
+        cache_write: 10,
+        cache_write_1h: 10,
+        ..Default::default()
+    };
+    for spelling in ["claude-opus-5-5", "claude-opus-5.5", "claude-opus-5-5[1m]"] {
+        let selected = lookup.lookup(spelling).unwrap();
+        assert_eq!(selected.pricing_source, "LiteLLM");
+        assert_eq!(selected.matched_key, "claude-opus-5-5");
+        assert!(
+            (lookup
+                .calculate_cost_with_provider(spelling, Some("anthropic"), &usage)
+                .unwrap()
+                - 0.000508)
+                .abs()
+                < 1e-12
+        );
+    }
+    let forced = lookup
+        .lookup_with_pricing_source("claude-opus-5.5", Some("litellm"))
+        .unwrap();
+    assert_eq!(forced.matched_key, "claude-opus-5-5");
+    let mut order = SourceOrder::default();
+    order.swap(0, 1);
+    let reordered = lookup.with_order(order);
+    assert_eq!(
+        reordered.lookup("claude-opus-5.5").unwrap().pricing_source,
+        "OpenRouter"
+    );
+    assert_eq!(
+        reordered.calculate_cost_with_provider("claude-opus-5.5", Some("anthropic"), &usage),
+        Err(PricingComputationError::MissingCacheWrite1hRate)
+    );
+    assert!(lookup
+        .lookup_with_provider("claude-opus-5.5", Some("google"))
+        .is_none());
+}
+
+#[test]
+fn claude_catalog_normalization_does_not_merge_priced_variants_or_infer_native_provider() {
+    for key in [
+        "anthropic/claude-opus-5-5-fast",
+        "anthropic/claude-opus-5-5:batch",
+        "anthropic/claude-opus-5-5-20261001",
+        "anthropic/claude-opus-5-5-private",
+        "bedrock/anthropic.claude-opus-5-5",
+        "claude-opus-5",
+    ] {
+        let lookup = PricingLookup::new(
+            HashMap::from([(key.into(), pricing(1.0, 1.0))]),
+            HashMap::new(),
+        );
+        assert!(lookup.lookup("claude-opus-5.5").is_none(), "{key}");
+    }
+    // Missing native metadata stays unscoped, below an explicit Anthropic row.
+    let lookup = PricingLookup::new(
+        HashMap::from([("claude-opus-5-5".into(), pricing(1.0, 1.0))]),
+        HashMap::from([("anthropic/claude-opus-5-5".into(), pricing(2.0, 2.0))]),
+    );
+    assert_eq!(
+        lookup.lookup("claude-opus-5.5").unwrap().pricing_source,
+        "OpenRouter"
+    );
+}
+
+#[test]
 fn observed_provider_takes_precedence_over_family_inference() {
     let lookup = PricingLookup::new(
         HashMap::from([

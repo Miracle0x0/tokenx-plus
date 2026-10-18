@@ -19,13 +19,19 @@ struct CachedResult {
     matched_key: String,
 }
 
+struct CatalogKey {
+    raw: String,
+    model_id: String,
+    provider_key: Option<String>,
+}
+
 pub struct PricingLookup {
     litellm: Arc<HashMap<String, ModelPricing>>,
     openrouter: Arc<HashMap<String, ModelPricing>>,
     models_dev: Arc<HashMap<String, ModelPricing>>,
-    litellm_keys: Arc<[String]>,
-    openrouter_keys: Arc<[String]>,
-    models_dev_keys: Arc<[String]>,
+    litellm_keys: Arc<[CatalogKey]>,
+    openrouter_keys: Arc<[CatalogKey]>,
+    models_dev_keys: Arc<[CatalogKey]>,
     order: SourceOrder,
     lookup_cache: RwLock<HashMap<String, Option<CachedResult>>>,
 }
@@ -79,9 +85,9 @@ impl PricingLookup {
         models_dev: HashMap<String, ModelPricing>,
         order: SourceOrder,
     ) -> Self {
-        let litellm_keys = sorted_catalog_keys(&litellm);
-        let openrouter_keys = sorted_catalog_keys(&openrouter);
-        let models_dev_keys = sorted_catalog_keys(&models_dev);
+        let litellm_keys = sorted_catalog_keys(&litellm, CatalogSource::Litellm);
+        let openrouter_keys = sorted_catalog_keys(&openrouter, CatalogSource::Openrouter);
+        let models_dev_keys = sorted_catalog_keys(&models_dev, CatalogSource::ModelsDev);
 
         Self {
             litellm: Arc::new(litellm),
@@ -269,7 +275,7 @@ impl PricingLookup {
     fn catalog(
         &self,
         source: CatalogSource,
-    ) -> (&HashMap<String, ModelPricing>, &[String], &'static str) {
+    ) -> (&HashMap<String, ModelPricing>, &[CatalogKey], &'static str) {
         match source {
             CatalogSource::Litellm => (&self.litellm, &self.litellm_keys, "LiteLLM"),
             CatalogSource::Openrouter => (&self.openrouter, &self.openrouter_keys, "OpenRouter"),
@@ -355,12 +361,39 @@ impl PricingLookup {
     }
 }
 
-fn sorted_catalog_keys(dataset: &HashMap<String, ModelPricing>) -> Vec<String> {
-    let mut keys: Vec<String> = dataset.keys().cloned().collect();
+fn sorted_catalog_keys(
+    dataset: &HashMap<String, ModelPricing>,
+    source: CatalogSource,
+) -> Vec<CatalogKey> {
+    let mut keys: Vec<CatalogKey> = dataset
+        .iter()
+        .map(|(raw, pricing)| {
+            let (model, provider_key) = match raw.rsplit_once('/') {
+                Some((_, model)) => (model, Some(raw.clone())),
+                None => {
+                    // Native Claude rows declare Anthropic explicitly. Bedrock,
+                    // Vertex and other routes must keep their own authority.
+                    let native_claude = source == CatalogSource::Litellm
+                        && raw.to_ascii_lowercase().starts_with("claude-")
+                        && pricing.litellm_provider.as_deref() == Some("anthropic");
+                    (
+                        raw.as_str(),
+                        native_claude.then(|| format!("anthropic/{raw}")),
+                    )
+                }
+            };
+            CatalogKey {
+                raw: raw.clone(),
+                model_id: model_aliases::normalize_claude_catalog_model(model),
+                provider_key,
+            }
+        })
+        .collect();
     keys.sort_by(|left, right| {
-        left.to_ascii_lowercase()
-            .cmp(&right.to_ascii_lowercase())
-            .then_with(|| left.cmp(right))
+        left.raw
+            .to_ascii_lowercase()
+            .cmp(&right.raw.to_ascii_lowercase())
+            .then_with(|| left.raw.cmp(&right.raw))
     });
     keys
 }
@@ -378,7 +411,7 @@ fn resolved_provider_scope<'a>(provider_id: Option<&'a str>, model_id: &str) -> 
 
 fn lookup_catalog(
     dataset: &HashMap<String, ModelPricing>,
-    keys: &[String],
+    keys: &[CatalogKey],
     pricing_source: &str,
     model_id: &str,
     provider_scope: Option<&str>,
@@ -392,38 +425,37 @@ fn lookup_catalog(
 
 fn lookup_provider_scoped_exact(
     dataset: &HashMap<String, ModelPricing>,
-    keys: &[String],
+    keys: &[CatalogKey],
     pricing_source: &str,
     model_id: &str,
     provider_scope: &str,
 ) -> Option<LookupResult> {
     keys.iter()
         .filter(|key| {
-            let Some((_, catalog_model_id)) = key.rsplit_once('/') else {
-                return false;
-            };
-            catalog_model_id.eq_ignore_ascii_case(model_id)
-                && provider_identity::matches_provider_hint(key, Some(provider_scope))
+            key.model_id.eq_ignore_ascii_case(model_id)
+                && key.provider_key.as_deref().is_some_and(|provider_key| {
+                    provider_identity::matches_provider_hint(provider_key, Some(provider_scope))
+                })
         })
         .find_map(|key| {
             dataset
-                .get(key)
-                .and_then(|pricing| lookup_result_if_usable(pricing, pricing_source, key))
+                .get(&key.raw)
+                .and_then(|pricing| lookup_result_if_usable(pricing, pricing_source, &key.raw))
         })
 }
 
 fn lookup_unscoped_exact(
     dataset: &HashMap<String, ModelPricing>,
-    keys: &[String],
+    keys: &[CatalogKey],
     pricing_source: &str,
     model_id: &str,
 ) -> Option<LookupResult> {
     keys.iter()
-        .filter(|key| !key.contains('/') && key.eq_ignore_ascii_case(model_id))
+        .filter(|key| key.provider_key.is_none() && key.model_id.eq_ignore_ascii_case(model_id))
         .find_map(|key| {
             dataset
-                .get(key)
-                .and_then(|pricing| lookup_result_if_usable(pricing, pricing_source, key))
+                .get(&key.raw)
+                .and_then(|pricing| lookup_result_if_usable(pricing, pricing_source, &key.raw))
         })
 }
 

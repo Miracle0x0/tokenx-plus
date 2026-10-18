@@ -29,6 +29,9 @@ pub struct TimePeriodPrice {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelPricing {
+    /// Source-declared provider for native LiteLLM rows without a route prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub litellm_provider: Option<String>,
     #[serde(flatten)]
     pub service_tiers: super::service_tier::ServiceTierPricing,
     pub input_cost_per_token: Option<f64>,

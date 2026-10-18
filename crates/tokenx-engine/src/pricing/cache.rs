@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const CACHE_TTL_SECS: u64 = 3600;
-pub const CACHE_FORMAT_VERSION: u32 = 3;
+pub const CACHE_FORMAT_VERSION: u32 = 4;
 
 pub fn get_cache_path(cache_dir: &Path, filename: &str) -> PathBuf {
     cache_dir.join(filename)
@@ -125,7 +125,7 @@ mod tests {
     fn unchanged_data_only_renews_freshness_without_replacing_the_file() {
         let root = tempfile::TempDir::new().unwrap();
         let path = root.path().join("catalog.json");
-        let previous = br#"{"data":{"b":2,"a":1},"version":3}"#;
+        let previous = br#"{"data":{"b":2,"a":1},"version":4}"#;
         fs::write(&path, previous).unwrap();
         let file = fs::OpenOptions::new()
             .read(true)
@@ -180,9 +180,16 @@ mod tests {
             parse_cache::<serde_json::Value>(br#"{"version":1,"timestamp":1,"data":{}}"#, now)
                 .is_err()
         );
-        assert!(parse_cache::<serde_json::Value>(br#"{"version":2,"data":{}}"#, now).is_err());
+        for version in [2, 3] {
+            let old = serde_json::to_vec(&CachedData {
+                version,
+                data: serde_json::json!({}),
+            })
+            .unwrap();
+            assert!(parse_cache::<serde_json::Value>(&old, now).is_err());
+        }
         assert!(parse_cache::<serde_json::Value>(
-            br#"{"version":3,"data":{}}"#,
+            br#"{"version":4,"data":{}}"#,
             now + Duration::from_secs(30)
         )
         .is_err());

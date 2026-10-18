@@ -64,6 +64,25 @@ pub(crate) fn normalize_model_syntax(model_id: &str) -> String {
         .unwrap_or_else(|| lexically_normalized.into_owned())
 }
 
+/// Catalog normalization only equates unsuffixed Claude numeric versions.
+/// Unlike observed labels, priced variants and release dates remain distinct.
+pub(crate) fn normalize_claude_catalog_model(model: &str) -> String {
+    let lower = model.to_ascii_lowercase();
+    if let Some((family, version)) = lower
+        .strip_prefix("claude-")
+        .and_then(|rest| rest.split_once('-'))
+    {
+        if CLAUDE_FAMILIES.contains(&family) {
+            if let Some((major, minor)) = version.split_once('-') {
+                if is_modern_claude_major(major) && is_single_digit_minor(minor) {
+                    return format!("claude-{family}-{major}.{minor}");
+                }
+            }
+        }
+    }
+    lower
+}
+
 /// Test helper for observing changes at the default identity boundary.
 ///
 /// Returns `Some` only when canonicalization changes the normalized terminal id.

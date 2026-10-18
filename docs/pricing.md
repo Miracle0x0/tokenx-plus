@@ -46,7 +46,10 @@ Tokenx searches public catalogs in the configured order, whose default is
 LiteLLM, OpenRouter, and models.dev. A forced
 `--pricing-source` limits lookup to one catalog. Public lookup receives the
 canonical model component without a provider or route prefix and considers only
-catalog rows with that exact component.
+catalog rows with that exact component. Catalog components normalize unsuffixed
+Claude numeric versions (`claude-opus-5-5` and `claude-opus-5.5`); dated,
+fast/batch, private, and route-specific variants remain distinct. Lookup results
+retain the raw catalog key.
 
 The public-catalog order can be changed with `pricingSourceOrder` in
 `settings.json`, or from the TUI pricing-source order panel (`o`). The setting
@@ -59,7 +62,9 @@ OpenRouter time-period rule remains ahead of this configurable order.
 A non-empty observed provider, or otherwise shared deterministic model-family
 inference, defines provider scope. Exact rows for a known provider are selected
 before exact unscoped rows across all catalogs; catalog order breaks ties inside
-each class. With unknown provider scope, only an exact unscoped row is eligible.
+each class. LiteLLM's unprefixed `claude-*` rows with
+`litellm_provider: "anthropic"` are explicitly Anthropic-scoped. With unknown
+provider scope, only an exact unscoped row is eligible.
 Prefix, substring, fuzzy/edit-distance, arbitrary separator, and private alias
 matching are not pricing strategies.
 
@@ -97,6 +102,10 @@ not record that response tier. Local costs remain catalog estimates, separate
 from invoices and [ChatGPT credit consumption](https://learn.chatgpt.com/docs/agent-configuration/speed).
 
 ### Claude Code cache durations
+
+Claude accounting uses recorded assistant and cumulative snapshot usage.
+Tool-output text and request replay records add no separate tokens. See
+[Claude Code fields and accounting](facts/claude-code.md).
 
 Claude Code records one-hour cache creation in
 `usage.cache_creation.ephemeral_1h_input_tokens`. Tokenx retains it as a subset
@@ -205,7 +214,8 @@ Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:
 - `pricing-openrouter.json`
 - `pricing-models-dev.json`
 
-Pricing cache schema 3 stores `version` and `data`; file modification time
+Pricing cache schema 4 retains declared native provider identity alongside
+prices in the `version` and `data` envelope; file modification time
 determines the one-hour freshness window. Older formats are refreshed.
 Identical fetched data renews only the file timestamp; changed data replaces
 the cache atomically. Deleting these files forces a fetch on the next lookup

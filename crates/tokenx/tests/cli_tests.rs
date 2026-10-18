@@ -10,7 +10,7 @@ use tempfile::TempDir;
 // ── Fixture helpers ────────────────────────────────────────────────────────
 
 fn prime_pricing_cache(base: &Path) {
-    let payload = r#"{"version":3,"data":{}}"#;
+    let payload = r#"{"version":4,"data":{}}"#;
 
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
@@ -20,7 +20,7 @@ fn prime_pricing_cache(base: &Path) {
 }
 
 fn prime_override_pricing_cache(config_dir: &Path) {
-    let payload = r#"{"version":3,"data":{}}"#;
+    let payload = r#"{"version":4,"data":{}}"#;
 
     let cache_dir = config_dir.join("cache");
     fs::create_dir_all(&cache_dir).unwrap();
@@ -749,8 +749,8 @@ fn invalid_model_mapping_file_fails_before_acquisition() {
 }
 
 fn write_pricing_cache(base: &Path, timestamp: u64) {
-    let litellm = r#"{"version":3,"data":{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001},"claude-sonnet-4":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}"#;
-    let empty = r#"{"version":3,"data":{}}"#;
+    let litellm = r#"{"version":4,"data":{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001},"claude-sonnet-4":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}"#;
+    let empty = r#"{"version":4,"data":{}}"#;
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
     for (name, payload) in [
@@ -1275,6 +1275,56 @@ fn test_opencode_invalid_sqlite_payload_is_rejected_without_losing_good_rows() {
         .stderr(predicate::str::contains(
             "Data health: 1 degraded input(s), 1 rejected record(s), 0 partial input(s), 0 failed input(s)",
         ));
+}
+
+#[test]
+fn claude_current_format_uses_native_prices_and_recorded_tokens_on_generation_hits() {
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().join(".claude/projects/-project");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("session.jsonl"),
+        include_str!("../../tokenx-engine/tests/fixtures/claude_2_1_302.jsonl"),
+    )
+    .unwrap();
+    let litellm: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tokenx-engine/tests/fixtures/litellm_claude_pricing.json"
+    ))
+    .unwrap();
+    let openrouter = serde_json::json!({"anthropic/claude-opus-5.5": {
+        "input_cost_per_token": 0.000004, "output_cost_per_token": 0.000020
+    }});
+    let cache = tmp.path().join(".tokenx/cache");
+    for (name, data) in [
+        ("litellm", litellm),
+        ("openrouter", openrouter),
+        ("models-dev", serde_json::json!({})),
+    ] {
+        tokenx_engine::pricing::cache::save_cache(&cache, &format!("pricing-{name}.json"), &data)
+            .unwrap();
+    }
+    let run = || {
+        let output = cmd_with_home(tmp.path())
+            .args(["models", "--client", "claude", "--json", "--no-spinner"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        serde_json::from_slice::<serde_json::Value>(&output).unwrap()
+    };
+    let cold = run();
+    let warm = run();
+    assert_eq!(cold["data"]["totals"]["tokens"], 211);
+    assert!((cold["data"]["totals"]["cost"].as_f64().unwrap() - 0.000698).abs() < 1e-12);
+    assert_eq!(cold["metadata"]["pricingStatus"], "available");
+    assert_eq!(
+        cold["metadata"]["pricingDiagnostics"],
+        serde_json::json!([])
+    );
+    assert_eq!(cold["health"]["rejectedRecords"], 0);
+    assert_eq!(warm["data"], cold["data"]);
+    assert_eq!(warm["metadata"]["pricingStatus"], "available");
 }
 
 // ── Date filtering tests ───────────────────────────────────────────────────
