@@ -39,7 +39,8 @@ See [ADR 0004](adr/0004-period-views-derive-from-daily.md).
 
 ## Pricing Source authority
 
-Exact custom overrides from `custom-pricing.json` are checked first. For a
+Exact custom overrides from `custom-pricing.json` are checked first: a matching
+billing-provider scope precedes the global model row. For a
 canonical `deepseek-v4` family model, an exact OpenRouter row carrying
 time-period prices is checked before the general public-catalog order. Otherwise,
 Tokenx searches public catalogs in the configured order, whose default is
@@ -184,13 +185,26 @@ Create `custom-pricing.json` in the Tokenx config directory:
       "pricingSource": "https://docs.fireworks.ai/serverless/pricing",
       "notes": "Kimi K2.6 local usage override"
     }
-  }
+  },
+  "provider_overrides": [
+    {
+      "provider_id": "gateway-a",
+      "model_id": "gpt-5",
+      "pricing": {
+        "input_cost_per_million_tokens": 1.0,
+        "output_cost_per_million_tokens": 4.0,
+        "cache_read_input_token_cost_per_million_tokens": 0.1
+      }
+    }
+  ]
 }
 ```
 
 Per-million-token fields are the recommended user-facing form. At least one of
 `input_cost_per_million_tokens` or `output_cost_per_million_tokens` must be
-present and positive. Cache-read and cache-creation prices are optional.
+present. Rates must be finite and nonnegative; an explicit zero means free.
+Cache-read and cache-creation prices are optional. Scoped rows must provide a
+rate for every used bucket.
 One-hour cache creation accepts
 `cache_creation_input_token_cost_per_million_tokens_above_1hr` and
 `cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens`,
@@ -202,6 +216,27 @@ Overrides are exact-only and case-insensitive:
   necessarily the raw observed label emitted by a client or parser.
 - Key each local usage override by that final canonical id.
 - `tokenx pricing lookup <model>` matches the command argument as a catalog query.
+
+Billing labels are matched as complete strings after trimming whitespace and
+lowercasing ASCII. `gateway-a` and `gateway_a` remain distinct, as do
+`openrouter/google` and `google`. Missing, blank, or `unknown` labels cannot
+select scoped prices. A scoped row wins as a whole: missing rates for used
+buckets exclude that record's cost and produce `billingRateUnavailable`, while
+its tokens remain visible. Duplicate provider/model scopes disable every
+conflicting entry and emit a diagnostic. Unknown price fields, null scoped
+rates, and mixed unit forms are rejected with diagnostics.
+
+Billing evidence is separate from grouping attribution. Supported observations
+are Claude record/message provider fields; Codex `model_provider`; Pi and OMP
+message providers; OpenCode and Kilo provider IDs; Hermes `billing_provider`;
+Goose provider names; Cline `modelInfo.provider`; Roo `modelInfo.providerId`;
+Droid provider locks; Junie usage providers; OpenClaw recorded model/provider
+snapshots; DSH request/usage provider fields; and
+Zed's verified `zed.dev` ownership. Model-derived providers, protocol-only
+labels, Copilot OTEL provider/system attributes, and model-only cumulative
+snapshots do not establish a channel.
+Conflicting Claude copies remain unscoped. These labels distinguish recorded
+channels, not accounts or verified invoices.
 
 Restart the command after editing the file because overrides are loaded at
 startup.
@@ -222,7 +257,8 @@ the cache atomically. Deleting these files forces a fetch on the next lookup
 or usage load that needs pricing.
 
 Input-record shards are cost-free: they retain token buckets, timestamps, and
-model/provider identity, observed service tier, and cache-duration evidence,
+model/provider identity, separate billing evidence, observed service tier, and
+cache-duration evidence,
 but not derived prices. The Generation cache contains aggregated costs and is
 invalidated when the pricing
 context, including source order, changes.
@@ -247,8 +283,13 @@ instead of replacing fresh rates with missing or stale disk state.
 ```bash
 tokenx pricing lookup claude-sonnet-4-5 --no-spinner
 tokenx pricing lookup grok-code --pricing-source openrouter --no-spinner
+tokenx pricing lookup gpt-5 --pricing-source custom --billing-provider gateway-a --no-spinner
 tokenx pricing overrides --json
 ```
+
+Custom-only lookup and override listing are offline. JSON lookup and listing
+identify a matched scope with `billingProvider`; an omitted custom scope is
+global. Missing lookup rates are null; explicit zero rates remain zero.
 
 Standalone lookup does not infer arbitrary observed-model prefixes, route
 prefixes, private aliases, or reasoning-tier suffixes. It is a pricing catalog

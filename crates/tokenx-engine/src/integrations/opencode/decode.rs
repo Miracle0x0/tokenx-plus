@@ -445,6 +445,7 @@ fn decode_row(
         .ok_or(RecordRejectionReason::MissingTimestamp)?;
     let created_timestamp =
         validate_created_timestamp(created).map_err(|_| RecordRejectionReason::MissingTimestamp)?;
+    let billing_provider = crate::BillingProvider::from_observation(provider_id.as_deref());
     let provider_id = provider_identity::observed_provider_id(
         provider_id.as_deref().unwrap_or_default(),
         &model_id,
@@ -477,6 +478,7 @@ fn decode_row(
         0.0,
         agent,
     );
+    message.billing_provider = billing_provider;
     message.dedup_key = Some(crate::records::dedup_hash_str(
         message_id.as_deref().unwrap_or(&row_id),
     ));

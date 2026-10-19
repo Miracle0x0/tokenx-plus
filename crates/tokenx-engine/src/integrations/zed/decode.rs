@@ -214,6 +214,7 @@ fn parse_thread_row(row: ZedThreadRow) -> ThreadOutcome {
         0.0,
         Some(crate::records::dedup_hash_str(&format!("zed:{}", row.id))),
     );
+    message.set_billing_provider(Some(ZED_HOSTED_PROVIDER));
     message.message_count = message_count;
 
     match workspace_key_from_folders(

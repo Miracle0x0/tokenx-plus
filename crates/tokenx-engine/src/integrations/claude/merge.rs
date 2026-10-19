@@ -73,10 +73,10 @@ fn codec_error(error: bincode::Error) -> io::Error {
 }
 
 /// Owns an anonymous private temporary file, deleted on close. The in-memory
-/// index contains only dedup keys and offsets, across all acquisition batches.
+/// index contains dedup keys, offsets, and billing evidence across acquisition batches.
 pub(super) struct ClaudeMerge {
     writer: BufWriter<File>,
-    offsets: HashMap<u64, u64>,
+    offsets: HashMap<u64, (u64, crate::BillingProvider)>,
     end: u64,
     records: usize,
 }
@@ -92,7 +92,9 @@ impl ClaudeMerge {
     }
 
     pub(super) fn push(&mut self, input_index: usize, record: UsageRecord) -> io::Result<()> {
-        if let Some(offset) = record.dedup_key.and_then(|key| self.offsets.get(&key)) {
+        if let Some((offset, billing)) = record.dedup_key.and_then(|key| self.offsets.get_mut(&key))
+        {
+            billing.merge(&record.billing_provider);
             self.writer.flush()?;
             let file = self.writer.get_mut();
             file.seek(SeekFrom::Start(*offset))?;
@@ -109,7 +111,8 @@ impl ClaudeMerge {
         usage.write_to(&mut self.writer)?;
         bincode::serialize_into(&mut self.writer, &entry).map_err(codec_error)?;
         if let Some(key) = record.dedup_key {
-            self.offsets.insert(key, self.end);
+            self.offsets
+                .insert(key, (self.end, record.billing_provider.clone()));
         }
         self.end += USAGE_BYTES as u64 + bincode::serialized_size(&entry).map_err(codec_error)?;
         self.records += 1;
@@ -125,6 +128,7 @@ impl ClaudeMerge {
         Ok(MergedRecords {
             reader: BufReader::new(file),
             remaining: self.records,
+            billing: self.offsets,
         })
     }
 }
@@ -132,6 +136,7 @@ impl ClaudeMerge {
 pub(super) struct MergedRecords {
     reader: BufReader<File>,
     remaining: usize,
+    billing: HashMap<u64, (u64, crate::BillingProvider)>,
 }
 
 impl Iterator for MergedRecords {
@@ -146,6 +151,9 @@ impl Iterator for MergedRecords {
             let usage = MergeUsage::read_from(&mut self.reader)?;
             let (input_index, mut record): (usize, UsageRecord) =
                 bincode::deserialize_from(&mut self.reader).map_err(codec_error)?;
+            if let Some((_, billing)) = record.dedup_key.and_then(|key| self.billing.remove(&key)) {
+                record.billing_provider = billing;
+            }
             record.tokens = usage.tokens;
             record.claude_input_is_split = usage.input_is_split;
             Ok((input_index, record))

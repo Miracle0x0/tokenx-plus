@@ -1,3 +1,10 @@
+/// Billing labels are literal log evidence, never vendor aliases or model inference.
+pub(crate) fn billing_provider_id(raw: &str) -> Option<String> {
+    let label = raw.trim();
+    (!label.is_empty() && !label.eq_ignore_ascii_case("unknown"))
+        .then(|| label.to_ascii_lowercase())
+}
+
 fn canonicalize_provider_segment(segment: &str) -> Option<String> {
     let trimmed = segment.trim().trim_end_matches('/');
     if trimmed.starts_with('<') && trimmed.ends_with('>') {

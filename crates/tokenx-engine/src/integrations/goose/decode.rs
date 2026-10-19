@@ -185,6 +185,7 @@ pub fn parse_goose_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
                 .record(RecordRejectionReason::MissingTimestamp);
             continue;
         };
+        let billing = crate::BillingProvider::from_observation(provider_name.as_deref());
         let provider = resolved_provider(provider_name, &model_id);
         let Some(non_reasoning_tokens) = input.checked_add(output) else {
             scanned
@@ -217,6 +218,7 @@ pub fn parse_goose_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
             },
             0.0,
         );
+        msg.billing_provider = billing;
         msg.dedup_key = Some(crate::records::dedup_hash_str(session_id));
         scanned.messages.push(msg);
     }

@@ -30,6 +30,7 @@ commands:
     pricing_cached_fallback: "价格刷新失败；成本使用缓存费率"
     pricing_unavailable: "价格不可用；零成本可能意味着缺少费率"
   pricing:
+    billing_provider: "计费渠道：%{provider}"
     fetching: "正在获取价格数据..."
     fetching_from: "正在从 %{source} 获取价格数据..."
     model_not_found: "未找到模型：%{model_id}"

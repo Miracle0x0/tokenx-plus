@@ -1274,69 +1274,45 @@ pub(super) fn parse_claude_reader(
                 // Merge streaming counters under the input convention reported by
                 // each copy; explicit split input takes precedence over snapshots.
                 let pending_hash = match (&message.id, &entry.request_id) {
-                    (Some(msg_id), Some(req_id)) => {
-                        let hash =
-                            crate::records::dedup_hash_str(&format!("{}:{}", msg_id, req_id));
-                        if let Some(&existing_idx) = processed_hashes.get(&hash) {
-                            let duplicate_model = message
-                                .model
-                                .as_deref()
-                                .map(observed_claude_model)
-                                .unwrap_or_else(|| messages[existing_idx].model_id.to_string());
-                            let duplicate_provider_choice = claude_provider_choice_from_parts(
-                                Some(&duplicate_model),
-                                provider_hint.as_deref(),
-                            );
-                            merge_claude_duplicate(
-                                &mut messages[existing_idx],
-                                &usage,
-                                parsed_timestamp,
-                            );
-                            if let Some(workspace) = entry_workspace.as_ref() {
-                                set_message_workspace(&mut messages[existing_idx], workspace);
-                            }
-                            if let Some(choice) = duplicate_provider_choice {
-                                update_claude_provider_id(
-                                    &mut messages[existing_idx].provider_id,
-                                    &mut provider_confidences[existing_idx],
-                                    choice,
-                                );
-                            }
-                            continue;
-                        }
-                        Some(hash)
-                    }
-                    (Some(msg_id), None) => {
-                        let hash = crate::records::dedup_hash_str(&format!("message:{}", msg_id));
-                        if let Some(&existing_idx) = processed_hashes.get(&hash) {
-                            let duplicate_provider_choice = claude_provider_choice_from_parts(
-                                message
-                                    .model
-                                    .as_deref()
-                                    .or(Some(messages[existing_idx].model_id.as_ref())),
-                                provider_hint.as_deref(),
-                            );
-                            merge_claude_duplicate(
-                                &mut messages[existing_idx],
-                                &usage,
-                                parsed_timestamp,
-                            );
-                            if let Some(workspace) = entry_workspace.as_ref() {
-                                set_message_workspace(&mut messages[existing_idx], workspace);
-                            }
-                            if let Some(choice) = duplicate_provider_choice {
-                                update_claude_provider_id(
-                                    &mut messages[existing_idx].provider_id,
-                                    &mut provider_confidences[existing_idx],
-                                    choice,
-                                );
-                            }
-                            continue;
-                        }
-                        Some(hash)
-                    }
+                    (Some(message_id), Some(request_id)) => Some(crate::records::dedup_hash_str(
+                        &format!("{message_id}:{request_id}"),
+                    )),
+                    (Some(message_id), None) => Some(crate::records::dedup_hash_str(&format!(
+                        "message:{message_id}"
+                    ))),
                     _ => None,
                 };
+                if let Some(existing_idx) =
+                    pending_hash.and_then(|key| processed_hashes.get(&key).copied())
+                {
+                    let duplicate_model = message
+                        .model
+                        .as_deref()
+                        .map(str::trim)
+                        .unwrap_or(messages[existing_idx].model_id.as_ref());
+                    let provider_choice = claude_provider_choice_from_parts(
+                        Some(duplicate_model),
+                        provider_hint.as_deref(),
+                    );
+                    let existing = &mut messages[existing_idx];
+                    merge_claude_duplicate(
+                        existing,
+                        &usage,
+                        parsed_timestamp,
+                        provider_hint.as_deref(),
+                    );
+                    if let Some(workspace) = entry_workspace.as_ref() {
+                        set_message_workspace(existing, workspace);
+                    }
+                    if let Some(choice) = provider_choice {
+                        update_claude_provider_id(
+                            &mut existing.provider_id,
+                            &mut provider_confidences[existing_idx],
+                            choice,
+                        );
+                    }
+                    continue;
+                }
 
                 let raw_model = match message.model {
                     Some(m) => m,
@@ -1384,6 +1360,7 @@ pub(super) fn parse_claude_reader(
                     0.0,
                     dedup_key,
                 );
+                message.set_billing_provider(provider_hint.as_deref());
                 message.claude_input_is_split = usage.reports_input_split();
                 message.claude_session_id = entry
                     .session_id
@@ -1758,7 +1735,15 @@ fn parse_claude_entry_timestamp_checked(
     }
 }
 
-fn merge_claude_duplicate(existing: &mut UsageRecord, usage: &ClaudeUsage, parsed_timestamp: i64) {
+fn merge_claude_duplicate(
+    existing: &mut UsageRecord,
+    usage: &ClaudeUsage,
+    parsed_timestamp: i64,
+    provider_hint: Option<&str>,
+) {
+    existing
+        .billing_provider
+        .merge(&crate::BillingProvider::from_observation(provider_hint));
     super::merge::merge_input(
         &mut existing.tokens.input,
         &mut existing.claude_input_is_split,

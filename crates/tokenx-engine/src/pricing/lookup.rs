@@ -40,6 +40,7 @@ pub struct LookupResult {
     pub pricing: ModelPricing,
     pub pricing_source: String,
     pub matched_key: String,
+    pub billing_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -61,6 +62,11 @@ pub enum PricingComputationError {
     },
     #[error("one-hour cache writes have no valid rate in the selected pricing row")]
     MissingCacheWrite1hRate,
+    #[error("custom pricing for billing provider `{provider}` has no {component} rate")]
+    MissingBillingRate {
+        provider: String,
+        component: &'static str,
+    },
 }
 
 impl PricingLookup {
@@ -145,6 +151,7 @@ impl PricingLookup {
                 pricing: cached.pricing,
                 pricing_source: cached.pricing_source,
                 matched_key: cached.matched_key,
+                billing_provider: None,
             });
         }
 
@@ -588,6 +595,7 @@ fn lookup_result_if_usable(
         pricing: pricing.clone(),
         pricing_source: pricing_source.into(),
         matched_key: matched_key.into(),
+        billing_provider: None,
     })
 }
 

@@ -246,6 +246,7 @@ pub fn parse_kilo_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
             0.0,
             agent,
         );
+        message.set_billing_provider(msg.provider_id.as_deref());
         message.dedup_key = dedup_key;
 
         scanned.messages.push(message);

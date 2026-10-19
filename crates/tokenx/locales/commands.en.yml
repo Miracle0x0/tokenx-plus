@@ -30,6 +30,7 @@ commands:
     pricing_cached_fallback: "Pricing refresh failed; costs use cached rates"
     pricing_unavailable: "Pricing unavailable; zero costs may mean missing rates"
   pricing:
+    billing_provider: "Billing provider: %{provider}"
     fetching: "Fetching pricing data..."
     fetching_from: "Fetching pricing data from %{source}..."
     model_not_found: "Model not found: %{model_id}"

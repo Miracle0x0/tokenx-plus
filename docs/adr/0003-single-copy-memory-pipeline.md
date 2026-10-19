@@ -297,7 +297,7 @@ reported explicitly; already completed removals are not rolled back.
 One local fold produces one immutable `Generation`: acquisition configuration,
 the prepared source fingerprint, canonical `UsageIndex`, sessions,
 `InputFootprint`, Data Health, and pricing diagnostics. The cache serializes
-that value once as a Zstd frame behind the schema-6 binary envelope and atomic
+that value once as a Zstd frame behind the versioned binary envelope and atomic
 rename. Buffered compressed input and decoded output retain authentication
 before deserialization and a second digest check during decoding. The header
 authenticates both lengths under the existing generation body-size bound;

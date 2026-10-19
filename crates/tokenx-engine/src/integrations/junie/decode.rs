@@ -151,6 +151,7 @@ pub fn parse_junie_file(
                 0.0,
                 agent.clone(),
             );
+            message.set_billing_provider(string_field(usage, "provider"));
             message.dedup_key = Some(dedup_hash_str(&dedup_key));
             seen.insert(dedup_key);
             if pending_turn_start && !turn_start_assigned {
