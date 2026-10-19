@@ -115,13 +115,16 @@ pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
                 .record(RecordRejectionReason::MalformedRecord);
             continue;
         }
+        // Hermes stores reasoning as a breakdown of output, not extra usage.
+        // Preserve the authoritative output total even if its detail is larger.
+        let reasoning = reasoning.min(output);
         let tokens = TokenBreakdown {
-            input: input.max(0),
-            output: output.max(0),
-            cache_read: cache_read.max(0),
-            cache_write: cache_write.max(0),
+            input,
+            output: output - reasoning,
+            cache_read,
+            cache_write,
             cache_write_1h: 0,
-            reasoning: reasoning.max(0),
+            reasoning,
         };
         let Some(token_total) = tokens.checked_total() else {
             scanned
@@ -169,6 +172,69 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
 
+    fn usage_database() -> (tempfile::TempDir, std::path::PathBuf, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT, model TEXT, billing_provider TEXT, started_at REAL,
+                message_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
+                cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER
+            );",
+        )
+        .unwrap();
+        (dir, path, conn)
+    }
+
+    #[test]
+    fn reasoning_is_an_output_breakdown_for_totals_and_pricing() {
+        let (_dir, path, conn) = usage_database();
+        for (id, output, reasoning) in [
+            ("partial", 40, 10),
+            ("all", 40, 40),
+            ("oversized", 40, 60),
+            ("none", 40, 0),
+            ("empty", 0, 10),
+        ] {
+            conn.execute(
+                "INSERT INTO sessions VALUES (?1, 'gpt-5', 'openai', 1700000000, 1, 100, ?2, 5, 3, ?3)",
+                params![id, output, reasoning],
+            ).unwrap();
+        }
+        drop(conn);
+        let scanned = parse_hermes_sqlite(&path).unwrap();
+        assert!(scanned.rejections.is_empty());
+        assert_eq!(scanned.messages.len(), 5);
+        let pricing = crate::pricing::ModelPricing {
+            output_cost_per_token: Some(2.0),
+            ..Default::default()
+        };
+        for message in scanned.messages {
+            let expected_reasoning = match message.session_id.as_ref() {
+                "partial" => 10,
+                "all" | "oversized" => 40,
+                "none" | "empty" => 0,
+                other => panic!("unexpected session {other}"),
+            };
+            let expected_output = if message.session_id.as_ref() == "empty" {
+                0
+            } else {
+                40
+            };
+            assert_eq!(message.tokens.total(), 108 + expected_output);
+            assert_eq!(message.tokens.reasoning, expected_reasoning);
+            assert_eq!(
+                message.tokens.output + message.tokens.reasoning,
+                expected_output
+            );
+            assert_eq!(
+                crate::pricing::lookup::compute_cost(&pricing, &message.tokens).unwrap(),
+                2.0 * expected_output as f64
+            );
+        }
+    }
+
     #[test]
     fn parse_hermes_sqlite_reports_missing_schema_as_input_error() {
         let dir = tempfile::tempdir().unwrap();
@@ -182,17 +248,7 @@ mod tests {
 
     #[test]
     fn parse_hermes_sqlite_keeps_good_rows_around_a_bad_row() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.db");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE sessions (
-                id TEXT, model TEXT, billing_provider TEXT, started_at REAL,
-                message_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
-                cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER
-            );",
-        )
-        .unwrap();
+        let (_dir, path, conn) = usage_database();
         for (id, started_at) in [
             ("01-good", rusqlite::types::Value::Real(1_700_000_000.0)),
             ("02-bad", rusqlite::types::Value::Text("bad".to_string())),
@@ -219,17 +275,7 @@ mod tests {
 
     #[test]
     fn token_bearing_row_without_model_is_reported() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.db");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE sessions (
-                id TEXT, model TEXT, billing_provider TEXT, started_at REAL,
-                message_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
-                cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER
-            );",
-        )
-        .unwrap();
+        let (_dir, path, conn) = usage_database();
         conn.execute(
             "INSERT INTO sessions VALUES ('missing-model', NULL, 'openai', 1700000000, 1, 1, 0, 0, 0, 0)",
             [],
@@ -247,17 +293,7 @@ mod tests {
 
     #[test]
     fn token_bearing_row_without_resolvable_provider_is_kept() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.db");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE sessions (
-                id TEXT, model TEXT, billing_provider TEXT, started_at REAL,
-                message_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
-                cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER
-            );",
-        )
-        .unwrap();
+        let (_dir, path, conn) = usage_database();
         conn.execute(
             "INSERT INTO sessions VALUES ('unknown-provider', 'private-model', NULL, 1700000000, 1, 1, 0, 0, 0, 0)",
             [],
@@ -274,17 +310,7 @@ mod tests {
 
     #[test]
     fn explicit_billing_provider_wins_over_model_inference() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.db");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE sessions (
-                id TEXT, model TEXT, billing_provider TEXT, started_at REAL,
-                message_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
-                cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER
-            );",
-        )
-        .unwrap();
+        let (_dir, path, conn) = usage_database();
         conn.execute(
             "INSERT INTO sessions VALUES ('explicit-route', 'claude-sonnet-4', 'OpenRouter.Route', 1700000000, 1, 1, 0, 0, 0, 0)",
             [],
@@ -301,17 +327,7 @@ mod tests {
 
     #[test]
     fn zero_token_row_is_filtered_but_negative_tokens_are_rejected() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.db");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE sessions (
-                id TEXT, model TEXT, billing_provider TEXT, started_at REAL,
-                message_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
-                cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER
-            );",
-        )
-        .unwrap();
+        let (_dir, path, conn) = usage_database();
         conn.execute(
             "INSERT INTO sessions VALUES ('zero', NULL, NULL, NULL, 0, 0, 0, 0, 0, 0)",
             [],
@@ -334,17 +350,7 @@ mod tests {
 
     #[test]
     fn out_of_range_timestamp_is_rejected_instead_of_saturating() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.db");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE sessions (
-                id TEXT, model TEXT, billing_provider TEXT, started_at REAL,
-                message_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
-                cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER
-            );",
-        )
-        .unwrap();
+        let (_dir, path, conn) = usage_database();
         conn.execute(
             "INSERT INTO sessions VALUES ('huge-time', 'gpt-5', 'openai', 1e300, 1, 1, 0, 0, 0, 0)",
             [],
@@ -362,17 +368,7 @@ mod tests {
 
     #[test]
     fn overflowing_token_total_is_rejected_and_later_row_is_kept() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state.db");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE sessions (
-                id TEXT, model TEXT, billing_provider TEXT, started_at REAL,
-                message_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
-                cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER
-            );",
-        )
-        .unwrap();
+        let (_dir, path, conn) = usage_database();
         conn.execute(
             "INSERT INTO sessions VALUES ('01-overflow', 'gpt-5', 'openai', 1700000000, 1, ?1, 1, 0, 0, 0)",
             [i64::MAX],
