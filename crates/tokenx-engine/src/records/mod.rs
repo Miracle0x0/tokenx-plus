@@ -21,6 +21,41 @@ pub(crate) struct CopilotContext {
     pub agent_observed: bool,
 }
 
+/// Billing evidence is independent of model-vendor attribution. Conflicts are
+/// absorbing so a third duplicate cannot revive an arbitrarily selected route.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BillingProvider {
+    #[default]
+    Unknown,
+    Observed(#[serde(deserialize_with = "intern::de_intern")] std::sync::Arc<str>),
+    Conflicted,
+}
+
+impl BillingProvider {
+    pub(crate) fn from_observation(raw: Option<&str>) -> Self {
+        match raw.and_then(crate::provider_identity::billing_provider_id) {
+            Some(label) => Self::Observed(intern::intern(&label)),
+            None => Self::Unknown,
+        }
+    }
+
+    pub fn as_deref(&self) -> Option<&str> {
+        match self {
+            Self::Observed(label) => Some(label),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn merge(&mut self, other: &Self) {
+        match (&*self, other) {
+            (Self::Conflicted, _) | (_, Self::Unknown) => {}
+            (Self::Unknown, _) => *self = other.clone(),
+            (Self::Observed(a), Self::Observed(b)) if a == b => {}
+            _ => *self = Self::Conflicted,
+        }
+    }
+}
+
 /// Source-neutral runtime usage payload produced by session parsers.
 ///
 /// Input-record shards persist an explicit cost-free wire DTO rather than
@@ -34,6 +69,8 @@ pub struct UsageRecord {
     pub raw_model_id: std::sync::Arc<str>,
     #[serde(deserialize_with = "intern::de_intern")]
     pub provider_id: std::sync::Arc<str>,
+    /// Explicit billing/routing channel, kept separate from inferred attribution.
+    pub billing_provider: BillingProvider,
     /// Observed request/session service tier, independent of model identity.
     #[serde(default, deserialize_with = "intern::de_intern_opt")]
     pub service_tier: Option<std::sync::Arc<str>>,
@@ -363,6 +400,7 @@ impl UsageRecord {
             model_id: intern::intern(model_id.as_ref()),
             raw_model_id: intern::intern(model_id.as_ref()),
             provider_id: intern::intern(provider_id.as_ref()),
+            billing_provider: BillingProvider::Unknown,
             service_tier: None,
             session_id: intern::intern(session_id.as_ref()),
             is_main_session: true,
@@ -389,6 +427,10 @@ impl UsageRecord {
             client,
             usage: self,
         }
+    }
+
+    pub(crate) fn set_billing_provider(&mut self, observed: Option<&str>) {
+        self.billing_provider = BillingProvider::from_observation(observed);
     }
 }
 

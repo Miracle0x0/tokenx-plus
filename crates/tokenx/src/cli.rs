@@ -397,6 +397,8 @@ pub(crate) enum PricingSubcommand {
         json: bool,
         #[arg(long = "pricing-source", value_enum, help = rust_i18n::t!("cli.help.pricing_source"))]
         pricing_source: Option<PricingSource>,
+        #[arg(long, help = rust_i18n::t!("cli.help.billing_provider"))]
+        billing_provider: Option<String>,
         #[arg(long, help = rust_i18n::t!("cli.help.no_spinner"))]
         no_spinner: bool,
     },

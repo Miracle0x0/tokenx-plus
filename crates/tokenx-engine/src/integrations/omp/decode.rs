@@ -981,6 +981,7 @@ fn parse_file(
             tokens,
             0.0,
         );
+        parsed.set_billing_provider(message.provider.as_deref());
         parsed.dedup_key =
             message_dedup_key(entry.id.as_deref(), message.response_id.as_deref(), &parsed);
         parsed.is_main_session = is_main_session;

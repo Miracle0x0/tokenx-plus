@@ -42,6 +42,7 @@ pub(crate) async fn run_pricing_lookup(
     model_id: &str,
     json: bool,
     pricing_source: Option<&str>,
+    billing_provider: Option<&str>,
     no_spinner: bool,
 ) -> Result<()> {
     use colored::Colorize;
@@ -69,15 +70,27 @@ pub(crate) async fn run_pricing_lookup(
     };
 
     let result = match async {
-        let svc = PricingService::fetch_current_with_order(
-            &paths.custom_pricing_file(),
-            &paths.cache_dir(),
-            settings.pricing_source_order,
-        )
-        .await?;
-        Ok::<_, String>(svc.lookup_canonical_with_pricing_source(
+        let svc = if pricing_source_normalized.as_deref() == Some("custom") {
+            std::sync::Arc::new(PricingService::new_with_custom(
+                tokenx_engine::pricing::custom::CustomPricing::load_from_path(
+                    &paths.custom_pricing_file(),
+                ),
+                Default::default(),
+                Default::default(),
+            ))
+        } else {
+            PricingService::fetch_current_with_order(
+                &paths.custom_pricing_file(),
+                &paths.cache_dir(),
+                settings.pricing_source_order,
+            )
+            .await?
+        };
+        Ok::<_, String>(svc.lookup_canonical_with_billing_provider(
             &settings.model_mappings.canonicalize(model_id),
             pricing_source_normalized.as_deref(),
+            None,
+            billing_provider,
         ))
     }
     .await
@@ -101,8 +114,8 @@ pub(crate) async fn run_pricing_lookup(
                 #[derive(serde::Serialize)]
                 #[serde(rename_all = "camelCase")]
                 struct PricingValues {
-                    input_cost_per_token: f64,
-                    output_cost_per_token: f64,
+                    input_cost_per_token: Option<f64>,
+                    output_cost_per_token: Option<f64>,
                     #[serde(skip_serializing_if = "Option::is_none")]
                     cache_read_input_token_cost: Option<f64>,
                     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,6 +153,8 @@ pub(crate) async fn run_pricing_lookup(
                     model_id: String,
                     matched_key: String,
                     pricing_source: String,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    billing_provider: Option<String>,
                     pricing: PricingValues,
                 }
 
@@ -147,9 +162,10 @@ pub(crate) async fn run_pricing_lookup(
                     model_id: model_id.to_string(),
                     matched_key: pricing.matched_key,
                     pricing_source: pricing.pricing_source,
+                    billing_provider: pricing.billing_provider,
                     pricing: PricingValues {
-                        input_cost_per_token: pricing.pricing.input_cost_per_token.unwrap_or(0.0),
-                        output_cost_per_token: pricing.pricing.output_cost_per_token.unwrap_or(0.0),
+                        input_cost_per_token: pricing.pricing.input_cost_per_token,
+                        output_cost_per_token: pricing.pricing.output_cost_per_token,
                         cache_read_input_token_cost: pricing.pricing.cache_read_input_token_cost,
                         cache_creation_input_token_cost: pricing
                             .pricing
@@ -201,6 +217,12 @@ pub(crate) async fn run_pricing_lookup(
                     "  {}",
                     rust_i18n::t!("commands.pricing.matched_key", key = pricing.matched_key)
                 );
+                if let Some(provider) = &pricing.billing_provider {
+                    println!(
+                        "  {}",
+                        rust_i18n::t!("commands.pricing.billing_provider", provider = provider)
+                    );
+                }
                 let pricing_source_label = match pricing.pricing_source.to_lowercase().as_str() {
                     "custom" => rust_i18n::t!("commands.pricing.source_custom").into_owned(),
                     "litellm" => "LiteLLM".to_string(),
@@ -216,20 +238,24 @@ pub(crate) async fn run_pricing_lookup(
                     )
                 );
                 println!();
-                let input = pricing.pricing.input_cost_per_token.unwrap_or(0.0);
-                let output = pricing.pricing.output_cost_per_token.unwrap_or(0.0);
+                let input = pricing.pricing.input_cost_per_token;
+                let output = pricing.pricing.output_cost_per_token;
                 println!(
                     "  {}",
                     rust_i18n::t!(
                         "commands.pricing.rate_input",
-                        price = format!("${:.2}", input * 1_000_000.0)
+                        price = input
+                            .map(|rate| format!("${:.2}", rate * 1_000_000.0))
+                            .unwrap_or_else(|| "—".into())
                     )
                 );
                 println!(
                     "  {}",
                     rust_i18n::t!(
                         "commands.pricing.rate_output",
-                        price = format!("${:.2}", output * 1_000_000.0)
+                        price = output
+                            .map(|rate| format!("${:.2}", rate * 1_000_000.0))
+                            .unwrap_or_else(|| "—".into())
                     )
                 );
                 if let Some(cache_read) = pricing.pricing.cache_read_input_token_cost {
@@ -335,6 +361,8 @@ pub(crate) fn run_pricing_list_overrides(
     struct OverrideEntry {
         model_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        billing_provider: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         input_cost_per_million_tokens: Option<f64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         output_cost_per_million_tokens: Option<f64>,
@@ -348,9 +376,10 @@ pub(crate) fn run_pricing_list_overrides(
         cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens: Option<f64>,
     }
 
-    fn entry(model_id: &str, pricing: &ModelPricing) -> OverrideEntry {
+    fn entry(model_id: &str, pricing: &ModelPricing, provider: Option<&str>) -> OverrideEntry {
         OverrideEntry {
             model_id: model_id.to_string(),
+            billing_provider: provider.map(str::to_owned),
             input_cost_per_million_tokens: per_million(pricing.input_cost_per_token),
             output_cost_per_million_tokens: per_million(pricing.output_cost_per_token),
             cache_read_input_token_cost_per_million_tokens: per_million(
@@ -371,9 +400,16 @@ pub(crate) fn run_pricing_list_overrides(
     let overrides = CustomPricing::load_from_path(&path);
     let mut entries: Vec<OverrideEntry> = overrides
         .entries()
-        .map(|(model_id, pricing)| entry(model_id, pricing))
+        .map(|(model_id, pricing)| entry(model_id, pricing, None))
         .collect();
-    entries.sort_by(|a, b| a.model_id.cmp(&b.model_id));
+    entries.extend(
+        overrides
+            .scoped_entries()
+            .map(|(provider, model, pricing)| entry(model, pricing, Some(provider))),
+    );
+    entries.sort_by(|a, b| {
+        (&a.model_id, &a.billing_provider).cmp(&(&b.model_id, &b.billing_provider))
+    });
 
     if json {
         #[derive(serde::Serialize)]
@@ -421,6 +457,12 @@ pub(crate) fn run_pricing_list_overrides(
 
     for entry in entries {
         println!("  {}", entry.model_id.bold());
+        if let Some(provider) = &entry.billing_provider {
+            println!(
+                "    {}",
+                rust_i18n::t!("commands.pricing.billing_provider", provider = provider)
+            );
+        }
         if let Some(input) = entry.input_cost_per_million_tokens {
             println!(
                 "    {}",

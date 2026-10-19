@@ -4,7 +4,7 @@
 //! - tasks/<taskId>/ui_messages.json
 //! - tasks/<taskId>/api_conversation_history.json
 
-use crate::input_health::{RecordRejectionReason, RejectionSummary, ScannedInput};
+use crate::input_health::{InputFailure, RecordRejectionReason, RejectionSummary, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::parse_timestamp_str;
 use crate::records::{normalize_agent_name, UsageRecord};
@@ -81,7 +81,24 @@ pub fn parse_roocode_file(path: &Path) -> SessionParseResult<ScannedInput> {
             continue;
         };
         let provider = provider_from_api_protocol(payload.api_protocol.as_deref());
-        usage_events.push((timestamp, token_breakdown, provider));
+        let info = entry.get("modelInfo");
+        let observed_model = info
+            .and_then(|info| info.get("modelId"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .map(str::to_owned);
+        let billing = crate::BillingProvider::from_observation(
+            info.and_then(|info| info.get("providerId"))
+                .and_then(Value::as_str),
+        );
+        usage_events.push((
+            timestamp,
+            token_breakdown,
+            provider,
+            observed_model,
+            billing,
+        ));
     }
 
     if usage_events.is_empty() {
@@ -93,24 +110,25 @@ pub fn parse_roocode_file(path: &Path) -> SessionParseResult<ScannedInput> {
     }
 
     let session_id = extract_session_id(path)?;
-    let (model_id, agent) = read_task_metadata(path)?;
-    let Some(model_id) = model_id else {
-        for _ in 0..usage_events.len() {
-            rejections.record(RecordRejectionReason::MissingModel);
-        }
-        return Ok(ScannedInput {
-            messages: Vec::new(),
-            rejections,
-            interrupted: None,
-        });
+    let needs_task_model = usage_events
+        .iter()
+        .all(|(_, _, _, model, _)| model.is_none());
+    let (model_id, agent, interrupted) = match read_task_metadata(path, needs_task_model) {
+        Ok((model, agent)) => (model, agent, None),
+        Err(error) if needs_task_model => return Err(error),
+        Err(error) => (None, None, Some(InputFailure::from(&error))),
     };
     let mut messages = Vec::with_capacity(usage_events.len());
-    for (timestamp, token_breakdown, provider) in usage_events {
+    for (timestamp, token_breakdown, provider, observed_model, billing) in usage_events {
+        let Some(model_id) = observed_model.as_ref().or(model_id.as_ref()) else {
+            rejections.record(RecordRejectionReason::MissingModel);
+            continue;
+        };
         let provider = provider_identity::observed_provider_id(
             provider.as_deref().unwrap_or_default(),
-            &model_id,
+            model_id,
         );
-        messages.push(UsageRecord::new_with_agent(
+        let mut record = UsageRecord::new_with_agent(
             model_id.clone(),
             provider,
             session_id.clone(),
@@ -118,13 +136,15 @@ pub fn parse_roocode_file(path: &Path) -> SessionParseResult<ScannedInput> {
             token_breakdown,
             0.0,
             agent.clone(),
-        ));
+        );
+        record.billing_provider = billing;
+        messages.push(record);
     }
 
     Ok(ScannedInput {
         messages,
         rejections,
-        interrupted: None,
+        interrupted,
     })
 }
 
@@ -148,11 +168,22 @@ fn extract_session_id(path: &Path) -> SessionParseResult<String> {
 
 fn read_task_metadata(
     ui_messages_path: &Path,
+    required: bool,
 ) -> SessionParseResult<(Option<String>, Option<String>)> {
     let history_path = sibling_history_path(ui_messages_path);
-    let content = std::fs::read_to_string(&history_path).map_err(|error| {
-        SessionParseError::at_path(&history_path, "read Roo Code task metadata", error)
-    })?;
+    let content = match std::fs::read_to_string(&history_path) {
+        Ok(content) => content,
+        Err(error) if !required && error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((None, None))
+        }
+        Err(error) => {
+            return Err(SessionParseError::at_path(
+                &history_path,
+                "read Roo Code task metadata",
+                error,
+            ))
+        }
+    };
 
     Ok(extract_optional_model_and_agent(&content))
 }
@@ -614,5 +645,51 @@ after"#;
         assert!(scanned.messages.is_empty());
         assert!(scanned.rejections.is_empty());
         assert!(scanned.interrupted.is_none());
+    }
+    #[test]
+    fn native_model_info_pairs_billing_with_model_without_using_api_protocol() {
+        let dir = TempDir::new().unwrap();
+        for provider in [Some(" Gateway-A "), None] {
+            let path = setup_task(
+                &dir,
+                if provider.is_some() {
+                    "observed"
+                } else {
+                    "unknown"
+                },
+                &serde_json::json!([{"type":"say","say":"api_req_started","ts":1792281600000_i64,
+                    "text":"{\"tokensIn\":10,\"tokensOut\":1,\"apiProtocol\":\"openai\"}",
+                    "modelInfo":{"modelId":"gpt-5","providerId":provider}}])
+                .to_string(),
+                None,
+            );
+            let scanned = super::parse_roocode_file(&path).unwrap();
+            assert_eq!(scanned.messages.len(), 1);
+            assert_eq!(scanned.messages[0].model_id.as_ref(), "gpt-5");
+            assert_eq!(
+                scanned.messages[0].billing_provider.as_deref(),
+                provider.map(|_| "gateway-a")
+            );
+            assert!(scanned.interrupted.is_none());
+        }
+    }
+    #[test]
+    fn unreadable_task_metadata_keeps_self_contained_usage_and_reports_dependents() {
+        let dir = TempDir::new().unwrap();
+        let mut rows = serde_json::json!([{"type":"say","say":"api_req_started","ts":1792281600000_i64,
+            "text":"{\"tokensIn\":10,\"tokensOut\":1}","modelInfo":{"modelId":"gpt-5","providerId":"gateway-a"}}]);
+        let mut dependent = rows[0].clone();
+        dependent.as_object_mut().unwrap().remove("modelInfo");
+        rows.as_array_mut().unwrap().push(dependent);
+        let path = setup_task(&dir, "partial", &rows.to_string(), None);
+        fs::create_dir(sibling_history_path(&path)).unwrap();
+        let scanned = super::parse_roocode_file(&path).unwrap();
+        assert_eq!(scanned.messages.len(), 1);
+        assert_eq!(scanned.rejections.total(), 1);
+        assert!(scanned.interrupted.is_some());
+        assert_eq!(
+            scanned.messages[0].billing_provider.as_deref(),
+            Some("gateway-a")
+        );
     }
 }

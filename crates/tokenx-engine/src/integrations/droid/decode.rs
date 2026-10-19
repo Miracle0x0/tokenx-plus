@@ -477,6 +477,7 @@ pub fn parse_droid_file(path: &Path) -> SessionParseResult<ScannedInput> {
 
     let mut message =
         UsageRecord::new_with_agent(model, provider, session_id, timestamp, tokens, 0.0, agent);
+    message.set_billing_provider(provider_lock);
     message.raw_model_id = crate::records::intern::intern(raw_model);
     scanned.messages.push(message);
     classify_droid_main_session(path, &mut scanned.messages);

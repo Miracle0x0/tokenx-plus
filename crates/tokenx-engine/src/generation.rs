@@ -641,6 +641,7 @@ impl Generation {
                 diagnostic.kind(),
                 crate::pricing::PricingDiagnosticKind::ServiceTierUnavailable
                     | crate::pricing::PricingDiagnosticKind::CacheWrite1hUnavailable
+                    | crate::pricing::PricingDiagnosticKind::BillingRateUnavailable
             )
         });
         self.pricing_diagnostics.extend(diagnostics);

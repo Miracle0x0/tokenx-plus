@@ -3297,3 +3297,49 @@ fn cache_warm_writes_to_canonical_path() {
         "cache warm should populate the canonical cache path"
     );
 }
+
+#[test]
+fn billing_scoped_lookup_and_override_listing_are_offline_and_explicit() {
+    let home = TempDir::new().unwrap();
+    let config = home.path().join(".tokenx");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(config.join("custom-pricing.json"),serde_json::json!({
+        "models":{"gpt-5":{"input_cost_per_token":10}},
+        "provider_overrides":[{"provider_id":"Gateway-A","model_id":"gpt-5","pricing":{"input_cost_per_token":0,"output_cost_per_token":0}}]
+    }).to_string()).unwrap();
+    let output = offline_cmd_with_home(home.path())
+        .args([
+            "pricing",
+            "lookup",
+            "openai/gpt-5",
+            "--pricing-source",
+            "custom",
+            "--billing-provider",
+            " GATEWAY-A ",
+            "--json",
+            "--no-spinner",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let doc: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(doc["billingProvider"], "gateway-a");
+    assert_eq!(doc["pricing"]["inputCostPerToken"], 0.0);
+    assert!(!config.join("cache/pricing-litellm.json").exists());
+    let output = offline_cmd_with_home(home.path())
+        .args(["pricing", "overrides", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(doc["count"], 2);
+    assert!(doc["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["billingProvider"] == "gateway-a"));
+}

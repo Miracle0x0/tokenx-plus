@@ -47,6 +47,7 @@ pub enum PricingDiagnosticKind {
     ServiceTierUnavailable,
     /// Usage-derived failure for an observed one-hour cache write.
     CacheWrite1hUnavailable,
+    BillingRateUnavailable,
     CachedFallback,
     Unavailable,
 }
@@ -440,11 +441,7 @@ impl PricingService {
         model_id: &str,
         forced_pricing_source: Option<&str>,
     ) -> Option<LookupResult> {
-        self.lookup_canonical_with_pricing_source_and_provider(
-            model_id,
-            forced_pricing_source,
-            None,
-        )
+        self.lookup_canonical_with_billing_provider(model_id, forced_pricing_source, None, None)
     }
 
     pub fn lookup_with_pricing_source_and_provider(
@@ -454,25 +451,27 @@ impl PricingService {
         provider_id: Option<&str>,
     ) -> Option<LookupResult> {
         let canonical_model_id = model_aliases::canonicalize_model_id(model_id);
-        self.lookup_canonical_with_pricing_source_and_provider(
+        self.lookup_canonical_with_billing_provider(
             &canonical_model_id,
             forced_pricing_source,
             provider_id,
+            None,
         )
     }
 
-    fn lookup_canonical_with_pricing_source_and_provider(
+    pub fn lookup_canonical_with_billing_provider(
         &self,
         canonical_model_id: &str,
         forced_pricing_source: Option<&str>,
         provider_id: Option<&str>,
+        billing_provider: Option<&str>,
     ) -> Option<LookupResult> {
         match forced_pricing_source {
             Some(pricing_source) if pricing_source.eq_ignore_ascii_case("custom") => {
-                return self.lookup_custom(canonical_model_id);
+                return self.lookup_custom(canonical_model_id, billing_provider);
             }
             None => {
-                if let Some(result) = self.lookup_custom(canonical_model_id) {
+                if let Some(result) = self.lookup_custom(canonical_model_id, billing_provider) {
                     return Some(result);
                 }
             }
@@ -530,6 +529,7 @@ impl PricingService {
             usage,
             timestamp_ms,
             None,
+            None,
         )
     }
 
@@ -540,10 +540,46 @@ impl PricingService {
         usage: &TokenBreakdown,
         timestamp_ms: Option<i64>,
         service_tier: Option<&str>,
+        billing_provider: Option<&str>,
     ) -> Result<f64, PricingComputationError> {
-        if let Some(result) = self.custom.lookup_with_key(canonical_model_id) {
+        if let Some(result) = self
+            .custom
+            .lookup_with_billing_provider(canonical_model_id, billing_provider)
+        {
             let pricing =
                 service_tier::effective_service_tier(result.pricing, service_tier, usage)?;
+            if let Some(provider) = result.billing_provider {
+                for (used, rate, component) in [
+                    (usage.input > 0, pricing.input_cost_per_token, "input"),
+                    (
+                        usage.output > 0 || usage.reasoning > 0,
+                        pricing.output_cost_per_token,
+                        "output",
+                    ),
+                    (
+                        usage.cache_read > 0,
+                        pricing.cache_read_input_token_cost,
+                        "cache read",
+                    ),
+                    (
+                        usage.cache_write > usage.cache_write_1h,
+                        pricing.cache_creation_input_token_cost,
+                        "cache write",
+                    ),
+                    (
+                        usage.cache_write_1h > 0,
+                        pricing.cache_creation_input_token_cost_above_1hr,
+                        "one-hour cache write",
+                    ),
+                ] {
+                    if used && rate.is_none() {
+                        return Err(PricingComputationError::MissingBillingRate {
+                            provider: provider.to_owned(),
+                            component,
+                        });
+                    }
+                }
+            }
             return compute_cost(&pricing, usage);
         }
 
@@ -556,13 +592,18 @@ impl PricingService {
         )
     }
 
-    fn lookup_custom(&self, model_id: &str) -> Option<LookupResult> {
+    fn lookup_custom(
+        &self,
+        model_id: &str,
+        billing_provider: Option<&str>,
+    ) -> Option<LookupResult> {
         self.custom
-            .lookup_with_key(model_id)
+            .lookup_with_billing_provider(model_id, billing_provider)
             .map(|result| LookupResult {
                 pricing: result.pricing.clone(),
                 pricing_source: "Custom".into(),
                 matched_key: result.matched_key.to_string(),
+                billing_provider: result.billing_provider.map(str::to_owned),
             })
     }
 }
@@ -1344,6 +1385,7 @@ mod tests {
                 &usage,
                 None,
                 Some("priority"),
+                None,
             )
         };
         for tier_price in [Some(7.0), None] {

@@ -189,6 +189,7 @@ pub(crate) fn parse_pi_file(path: &Path) -> SessionParseResult<ScannedInput> {
             tokens,
             0.0,
         );
+        parsed.set_billing_provider(message.provider.as_deref());
         parsed.set_workspace(workspace_key.clone(), workspace_label.clone());
         parsed.set_agent_instance(agent_instance.clone());
         scanned.messages.push(parsed);

@@ -242,6 +242,7 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                     0.0,
                     Some(dedup_key),
                 );
+                message.set_billing_provider(source_provider.or(header_provider));
                 message.is_turn_start = is_turn_start;
                 if let Some(key) = workspace_key.clone() {
                     let label = workspace_label_from_key(&key);

@@ -16,23 +16,40 @@ const MAX_CUSTOM_PRICING_MODEL_CAPACITY: usize = 10_000;
 #[derive(Clone, Default)]
 pub struct CustomPricing {
     models: HashMap<String, ModelPricing>,
+    providers: HashMap<String, HashMap<String, ModelPricing>>,
 }
 
 pub struct CustomLookupResult<'a> {
     pub matched_key: &'a str,
     pub pricing: &'a ModelPricing,
+    pub billing_provider: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawCustomPricingFile {
     #[serde(default, deserialize_with = "deserialize_models")]
     models: Vec<(String, Value)>,
+    #[serde(default)]
+    provider_overrides: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderOverride {
+    provider_id: String,
+    model_id: String,
+    pricing: CustomModelPricing,
 }
 
 #[derive(Deserialize)]
 struct CustomModelPricing {
     #[serde(rename = "pricingSource")]
     _pricing_source: Option<String>,
+    #[serde(rename = "notes")]
+    _notes: Option<String>,
+    #[serde(rename = "source")]
+    _source: Option<String>,
     #[serde(flatten)]
     service_tiers: super::service_tier::ServiceTierPricing,
     input_cost_per_million_tokens: Option<f64>,
@@ -69,10 +86,26 @@ struct CustomModelPricing {
     cache_read_input_token_cost: Option<f64>,
     cache_read_input_token_cost_above_200k_tokens: Option<f64>,
     cache_read_input_token_cost_above_272k_tokens: Option<f64>,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, Value>,
 }
 
 impl CustomModelPricing {
     fn into_model_pricing(self) -> Result<ModelPricing, String> {
+        if let Some(field) = self.extra.keys().next() {
+            return Err(format!("unknown pricing field `{field}`"));
+        }
+        let Value::Object(tiers) = serde_json::to_value(&self.service_tiers)
+            .map_err(|error| format!("invalid service-tier pricing: {error}"))?
+        else {
+            unreachable!("service-tier pricing serializes as an object");
+        };
+        for (field, value) in tiers {
+            let rate = value
+                .as_f64()
+                .ok_or_else(|| format!("{field} must be finite"))?;
+            validate_non_negative(rate, &field)?;
+        }
         let input_cost_per_token = base_price(
             self.input_cost_per_million_tokens,
             self.input_cost_per_token,
@@ -86,12 +119,8 @@ impl CustomModelPricing {
             "output_cost_per_token",
         )?;
 
-        if !input_cost_per_token.is_some_and(|value| value > 0.0)
-            && !output_cost_per_token.is_some_and(|value| value > 0.0)
-        {
-            return Err(
-                "at least one of input or output pricing must be present and positive".into(),
-            );
+        if input_cost_per_token.is_none() && output_cost_per_token.is_none() {
+            return Err("at least one of input or output pricing must be present".into());
         }
 
         Ok(ModelPricing {
@@ -311,15 +340,18 @@ impl CustomPricing {
         for (key, pricing) in models {
             normalized.insert(key.to_lowercase(), pricing);
         }
-        Self { models: normalized }
+        Self {
+            models: normalized,
+            providers: HashMap::new(),
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.models.len()
+        self.models.len() + self.providers.values().map(HashMap::len).sum::<usize>()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.models.is_empty()
+        self.models.is_empty() && self.providers.is_empty()
     }
 
     pub fn entries(&self) -> impl Iterator<Item = (&str, &ModelPricing)> {
@@ -333,11 +365,41 @@ impl CustomPricing {
     }
 
     pub fn lookup_with_key(&self, model_id: &str) -> Option<CustomLookupResult<'_>> {
+        self.lookup_with_billing_provider(model_id, None)
+    }
+
+    pub fn scoped_entries(&self) -> impl Iterator<Item = (&str, &str, &ModelPricing)> {
+        self.providers.iter().flat_map(|(provider, models)| {
+            models
+                .iter()
+                .map(move |(model, pricing)| (provider.as_str(), model.as_str(), pricing))
+        })
+    }
+
+    pub fn lookup_with_billing_provider(
+        &self,
+        model_id: &str,
+        billing_provider: Option<&str>,
+    ) -> Option<CustomLookupResult<'_>> {
         let raw_key = model_id.to_lowercase();
+        if let Some(provider) =
+            billing_provider.and_then(crate::provider_identity::billing_provider_id)
+        {
+            if let Some((provider, models)) = self.providers.get_key_value(&provider) {
+                if let Some((key, pricing)) = models.get_key_value(&raw_key) {
+                    return Some(CustomLookupResult {
+                        matched_key: key,
+                        pricing,
+                        billing_provider: Some(provider),
+                    });
+                }
+            }
+        }
         if let Some(pricing) = self.models.get_key_value(&raw_key) {
             return Some(CustomLookupResult {
                 matched_key: pricing.0,
                 pricing: pricing.1,
+                billing_provider: None,
             });
         }
 
@@ -399,8 +461,77 @@ impl CustomPricing {
             }
         }
 
-        Self { models }
+        let mut providers: HashMap<String, HashMap<String, ModelPricing>> = HashMap::new();
+        let mut counts = std::collections::BTreeMap::new();
+        for value in &raw.provider_overrides {
+            if let Some(key) = scoped_key(value) {
+                *counts.entry(key).or_insert(0usize) += 1;
+            }
+        }
+        for ((provider, model), count) in &counts {
+            if *count > 1 {
+                warn_custom_pricing(diagnostics, path, format_args!("duplicate billing/model scope `{provider}` / `{model}`: all entries disabled"));
+            }
+        }
+        for value in raw.provider_overrides {
+            let Some((provider, model)) = scoped_key(&value) else {
+                warn_custom_pricing(diagnostics, path, format_args!("provider_overrides entry needs non-empty provider_id and model_id; unknown is not a billing scope"));
+                continue;
+            };
+            if counts[&(provider.clone(), model.clone())] > 1 {
+                continue;
+            }
+            if value
+                .get("pricing")
+                .and_then(Value::as_object)
+                .is_some_and(|fields| {
+                    fields.iter().any(|(key, value)| {
+                        value.is_null()
+                            && !matches!(key.as_str(), "pricingSource" | "source" | "notes")
+                    })
+                })
+            {
+                warn_custom_pricing(
+                    diagnostics,
+                    path,
+                    format_args!("skipping {provider}/{model}: null is not a rate"),
+                );
+                continue;
+            }
+            let parsed = serde_json::from_value::<ProviderOverride>(value)
+                .map_err(|error| error.to_string())
+                .and_then(|entry| {
+                    debug_assert_eq!(
+                        crate::provider_identity::billing_provider_id(&entry.provider_id)
+                            .as_deref(),
+                        Some(provider.as_str())
+                    );
+                    debug_assert_eq!(entry.model_id.trim().to_lowercase(), model);
+                    entry.pricing.into_model_pricing()
+                });
+            match parsed {
+                Ok(pricing) => {
+                    providers
+                        .entry(provider)
+                        .or_default()
+                        .insert(model, pricing);
+                }
+                Err(error) => warn_custom_pricing(
+                    diagnostics,
+                    path,
+                    format_args!("skipping {provider}/{model}: {error}"),
+                ),
+            }
+        }
+        Self { models, providers }
     }
+}
+
+fn scoped_key(value: &Value) -> Option<(String, String)> {
+    let provider =
+        crate::provider_identity::billing_provider_id(value.get("provider_id")?.as_str()?)?;
+    let model = value.get("model_id")?.as_str()?.trim();
+    (!model.is_empty()).then(|| (provider, model.to_lowercase()))
 }
 
 fn base_price(
@@ -842,7 +973,7 @@ mod tests {
     }
 
     #[test]
-    fn drops_entries_with_zero_prices() {
+    fn accepts_explicit_zero_prices_but_rejects_negative_prices() {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("custom-pricing.json");
         fs::write(
@@ -868,7 +999,10 @@ mod tests {
 
         let loaded = CustomPricing::load_from_path(&path);
 
-        assert!(loaded.lookup("all-zero").is_none());
+        assert_eq!(
+            loaded.lookup("all-zero").unwrap().input_cost_per_token,
+            Some(0.0)
+        );
         assert_eq!(
             loaded.lookup("free-input").unwrap().output_cost_per_token,
             Some(0.000008)
@@ -997,5 +1131,103 @@ mod tests {
             loaded.lookup("model-a").unwrap().input_cost_per_token,
             Some(0.000002)
         );
+    }
+    fn scoped_config(value: Value) -> (CustomPricing, PricingDiagnostics) {
+        let mut diagnostics = Vec::new();
+        let custom = CustomPricing::load_from_str(
+            &value.to_string(),
+            Path::new("custom-pricing.json"),
+            &mut Some(&mut diagnostics),
+        );
+        (custom, diagnostics)
+    }
+
+    #[test]
+    fn scoped_prices_match_whole_literal_labels_and_precede_global_rows() {
+        let providers = [
+            " Gateway-A ",
+            "gateway_a",
+            "openrouter/google",
+            "google",
+            "123",
+        ];
+        let rules: Vec<_> = providers
+            .iter()
+            .enumerate()
+            .map(|(i, provider)| {
+                serde_json::json!({
+                    "provider_id":provider,"model_id":"GPT-5","pricing":{"input_cost_per_token":i+1}
+                })
+            })
+            .collect();
+        let (custom, diagnostics) = scoped_config(
+            serde_json::json!({"models":{"gpt-5":{"input_cost_per_token":99}},"provider_overrides":rules}),
+        );
+        assert!(diagnostics.is_empty());
+        for (provider, expected) in [
+            ("GATEWAY-A", 1.0),
+            ("gateway_a", 2.0),
+            ("openrouter/google", 3.0),
+            ("google", 4.0),
+            ("123", 5.0),
+        ] {
+            let selected = custom
+                .lookup_with_billing_provider("gpt-5", Some(provider))
+                .unwrap();
+            assert_eq!(selected.pricing.input_cost_per_token, Some(expected));
+            assert!(selected.billing_provider.is_some());
+        }
+        for provider in [None, Some(""), Some("unknown"), Some("missing")] {
+            let selected = custom
+                .lookup_with_billing_provider("gpt-5", provider)
+                .unwrap();
+            assert_eq!(selected.pricing.input_cost_per_token, Some(99.0));
+            assert!(selected.billing_provider.is_none());
+        }
+        assert!(custom
+            .lookup_with_billing_provider("openai/gpt-5", Some("gateway-a"))
+            .is_none());
+        assert_eq!(custom.len(), 6);
+    }
+
+    #[test]
+    fn duplicate_scopes_are_disabled_in_both_orders_and_valid_rows_survive() {
+        let a = serde_json::json!({"provider_id":" Route ","model_id":"gpt-5","pricing":{"input_cost_per_token":1}});
+        let b = serde_json::json!({"provider_id":"route","model_id":"GPT-5","pricing":{"input_cost_per_token":9}});
+        for duplicates in [[a.clone(), b.clone()], [b, a]] {
+            let (custom, diagnostics) = scoped_config(
+                serde_json::json!({"provider_overrides":[duplicates[0],duplicates[1],
+                {"provider_id":"valid","model_id":"gpt-5","pricing":{"input_cost_per_token":0,"output_cost_per_token":0}}]}),
+            );
+            assert!(custom
+                .lookup_with_billing_provider("gpt-5", Some("route"))
+                .is_none());
+            assert_eq!(
+                custom
+                    .lookup_with_billing_provider("gpt-5", Some("valid"))
+                    .unwrap()
+                    .pricing
+                    .input_cost_per_token,
+                Some(0.0)
+            );
+            assert_eq!(diagnostics.len(), 1);
+        }
+    }
+
+    #[test]
+    fn scoped_prices_reject_null_unknown_fields_and_conflicting_units() {
+        for pricing in [
+            serde_json::json!({"input_cost_per_token":null}),
+            serde_json::json!({"input_cost_per_token":1,"output_cost_per_tokn":2}),
+            serde_json::json!({"input_cost_per_token":1,"input_cost_per_million_tokens":2}),
+            serde_json::json!({"input_cost_per_token":-1}),
+            serde_json::json!({"input_cost_per_token":1,"input_cost_per_token_priority":-1}),
+        ] {
+            let (custom, diagnostics) = scoped_config(
+                serde_json::json!({"provider_overrides":[{"provider_id":"route","model_id":"gpt-5","pricing":pricing}]}),
+            );
+            assert!(custom.is_empty());
+            assert!(!diagnostics.is_empty());
+        }
     }
 }

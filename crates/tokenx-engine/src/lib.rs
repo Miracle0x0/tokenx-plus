@@ -49,7 +49,7 @@ pub use input_record_cache::{
 };
 pub use projection::{ModelProjection, UsageProjection};
 pub use provider_identity::{inferred_provider_from_model, normalize_provider_for_grouping};
-pub use records::AttributedUsageRecord;
+pub use records::{AttributedUsageRecord, BillingProvider};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -699,6 +699,7 @@ fn apply_canonical_token_pricing(
         &message.tokens,
         Some(message.timestamp),
         message.service_tier.as_deref(),
+        message.billing_provider.as_deref(),
     )?;
 
     if calculated_cost > 0.0 {
@@ -844,7 +845,8 @@ fn price_source_eligible_messages<M: AsMut<records::UsageRecord>>(
             match error {
                 pricing::PricingComputationError::UnsupportedServiceTier { .. }
                 | pricing::PricingComputationError::MissingServiceTierRate { .. }
-                | pricing::PricingComputationError::MissingCacheWrite1hRate => {
+                | pricing::PricingComputationError::MissingCacheWrite1hRate
+                | pricing::PricingComputationError::MissingBillingRate { .. } => {
                     message.pricing_error = Some(error);
                 }
                 _ => {

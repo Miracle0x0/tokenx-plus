@@ -39,7 +39,7 @@ impl IntegrationDriver for Driver {
             source_discovery::scan_roots(ctx, roots, SOURCE.matcher())?,
             FingerprintPolicy::PrimaryWithSiblings {
                 sibling_names: ROOCODE_SIBLINGS,
-                related_failure_policy: RelatedInputFailurePolicy::FailInput,
+                related_failure_policy: RelatedInputFailurePolicy::PreservePrimary,
             },
             DecoderKind::plain(DecoderId::RooCode),
         )
@@ -147,7 +147,7 @@ mod tests {
             units[0].fingerprint_policy,
             FingerprintPolicy::PrimaryWithSiblings {
                 sibling_names: ROOCODE_SIBLINGS,
-                related_failure_policy: RelatedInputFailurePolicy::FailInput,
+                related_failure_policy: RelatedInputFailurePolicy::PreservePrimary,
             }
         );
         assert_eq!(

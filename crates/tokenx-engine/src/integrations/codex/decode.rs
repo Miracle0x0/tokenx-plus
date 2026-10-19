@@ -373,6 +373,7 @@ fn response_record(
         0.0,
         Some(crate::records::dedup_hash_str(&key)),
     );
+    record.set_billing_provider(state.session_provider.as_deref());
     record.service_tier = payload
         .service_tier
         .as_deref()
@@ -422,6 +423,7 @@ pub(crate) struct ParsedCodexFile {
 
 #[derive(Clone)]
 struct PendingCodexMessage {
+    billing_provider: crate::BillingProvider,
     service_tier: Option<String>,
     provider: String,
     session_id: String,
@@ -448,6 +450,7 @@ impl PendingCodexMessage {
             0.0,
             self.agent,
         );
+        message.billing_provider = self.billing_provider;
         message.set_agent_instance(self.agent_instance);
         message.service_tier = self
             .service_tier
@@ -1053,6 +1056,9 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                         .to_string();
                     let is_turn_start = std::mem::take(&mut state.pending_turn_start);
                     let pending = PendingCodexMessage {
+                        billing_provider: crate::BillingProvider::from_observation(
+                            state.session_provider.as_deref(),
+                        ),
                         service_tier: request_tier
                             .map(|tier| tier.to_string())
                             .or_else(|| state.service_tier.clone()),

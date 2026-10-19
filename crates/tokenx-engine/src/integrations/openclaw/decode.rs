@@ -95,6 +95,7 @@ fn parse_openclaw_session(
     };
     let mut current_model: Option<String> = None;
     let mut current_provider: Option<String> = None;
+    let mut current_billing = crate::BillingProvider::Unknown;
     let mut buffer = Vec::with_capacity(4096);
 
     for (line_index, line) in reader.lines().enumerate() {
@@ -122,6 +123,7 @@ fn parse_openclaw_session(
             Err(_error) => {
                 current_model = None;
                 current_provider = None;
+                current_billing = crate::BillingProvider::Unknown;
                 scanned
                     .rejections
                     .record(RecordRejectionReason::MalformedRecord);
@@ -131,13 +133,15 @@ fn parse_openclaw_session(
 
         match entry.entry_type.as_str() {
             "model_change" => match explicit_openclaw_identity(entry.model_id, entry.provider) {
-                Ok((model, provider)) => {
+                Ok((model, provider, billing)) => {
+                    current_billing = billing;
                     current_model = Some(model);
                     current_provider = Some(provider);
                 }
                 Err(reason) => {
                     current_model = None;
                     current_provider = None;
+                    current_billing = crate::BillingProvider::Unknown;
                     scanned.rejections.record(reason);
                 }
             },
@@ -148,19 +152,22 @@ fn parse_openclaw_session(
 
                 match entry.data {
                     Some(data) => match explicit_openclaw_identity(data.model_id, data.provider) {
-                        Ok((model, provider)) => {
+                        Ok((model, provider, billing)) => {
+                            current_billing = billing;
                             current_model = Some(model);
                             current_provider = Some(provider);
                         }
                         Err(reason) => {
                             current_model = None;
                             current_provider = None;
+                            current_billing = crate::BillingProvider::Unknown;
                             scanned.rejections.record(reason);
                         }
                     },
                     None => {
                         current_model = None;
                         current_provider = None;
+                        current_billing = crate::BillingProvider::Unknown;
                         scanned
                             .rejections
                             .record(RecordRejectionReason::MalformedRecord);
@@ -201,6 +208,11 @@ fn parse_openclaw_session(
                     let model = explicit_model
                         .clone()
                         .or_else(|| current_model.clone().filter(|m| !m.is_empty()));
+                    let billing = if explicit_provider.is_some() || explicit_model.is_some() {
+                        crate::BillingProvider::from_observation(explicit_provider.as_deref())
+                    } else {
+                        current_billing.clone()
+                    };
                     let raw_provider = if explicit_model.is_some() {
                         explicit_provider
                     } else {
@@ -234,9 +246,11 @@ fn parse_openclaw_session(
                     current_model = Some(model.clone());
                     current_provider = Some(provider.clone());
 
-                    scanned.messages.push(UsageRecord::new(
-                        model, provider, session_id, timestamp, tokens, 0.0,
-                    ));
+                    let mut record =
+                        UsageRecord::new(model, provider, session_id, timestamp, tokens, 0.0);
+                    current_billing = billing.clone();
+                    record.billing_provider = billing;
+                    scanned.messages.push(record);
                 }
             }
             _ => {}
@@ -284,14 +298,15 @@ fn observed_openclaw_model(model: &str) -> String {
 fn explicit_openclaw_identity(
     model: Option<String>,
     provider: Option<String>,
-) -> Result<(String, String), RecordRejectionReason> {
+) -> Result<(String, String, crate::BillingProvider), RecordRejectionReason> {
     let model = model
         .filter(|model| !model.trim().is_empty())
         .map(|model| observed_openclaw_model(&model))
         .ok_or(RecordRejectionReason::MissingModel)?;
+    let billing = crate::BillingProvider::from_observation(provider.as_deref());
     let provider =
         provider_identity::observed_provider_id(provider.as_deref().unwrap_or_default(), &model);
-    Ok((model, provider))
+    Ok((model, provider, billing))
 }
 
 #[cfg(test)]

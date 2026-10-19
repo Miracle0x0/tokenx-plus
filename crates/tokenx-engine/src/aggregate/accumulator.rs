@@ -71,6 +71,9 @@ impl GenerationAccumulator {
         if let Some(error) = &msg.pricing_error {
             let key = format!("{}: {error}", msg.model_id);
             let kind = match error {
+                crate::pricing::PricingComputationError::MissingBillingRate { .. } => {
+                    crate::pricing::PricingDiagnosticKind::BillingRateUnavailable
+                }
                 crate::pricing::PricingComputationError::MissingCacheWrite1hRate => {
                     crate::pricing::PricingDiagnosticKind::CacheWrite1hUnavailable
                 }

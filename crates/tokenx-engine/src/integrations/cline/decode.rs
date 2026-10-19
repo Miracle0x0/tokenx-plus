@@ -330,6 +330,7 @@ pub fn parse_cline_file(path: &Path) -> SessionParseResult<ScannedInput> {
             0.0,
             Some(identity.agent.clone()),
         );
+        message.set_billing_provider(Some(raw_provider));
         message.is_main_session = identity.is_main_session;
         message.is_turn_start = true;
         message.set_agent_instance(identity.agent_instance.clone());

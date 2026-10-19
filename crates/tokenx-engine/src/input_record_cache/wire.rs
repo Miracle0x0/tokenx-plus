@@ -108,6 +108,7 @@ pub(super) struct CachedUsageRecord {
     pub(super) raw_model_id: Arc<str>,
     #[serde(deserialize_with = "intern::de_intern")]
     pub(super) provider_id: Arc<str>,
+    pub(super) billing_provider: crate::records::BillingProvider,
     #[serde(deserialize_with = "intern::de_intern_opt")]
     pub(super) service_tier: Option<Arc<str>>,
     #[serde(deserialize_with = "intern::de_intern")]
@@ -139,6 +140,7 @@ impl From<CachedUsageRecord> for UsageRecord {
             model_id: cached.model_id,
             raw_model_id: cached.raw_model_id,
             provider_id: cached.provider_id,
+            billing_provider: cached.billing_provider,
             service_tier: cached.service_tier,
             session_id: cached.session_id,
             is_main_session: cached.is_main_session,
@@ -166,6 +168,7 @@ pub(super) struct BorrowedCachedUsageRecord<'a> {
     pub(super) model_id: &'a str,
     pub(super) raw_model_id: &'a str,
     pub(super) provider_id: &'a str,
+    pub(super) billing_provider: &'a crate::records::BillingProvider,
     pub(super) service_tier: Option<&'a str>,
     pub(super) session_id: &'a str,
     pub(super) is_main_session: bool,
@@ -190,6 +193,7 @@ impl<'a> From<&'a UsageRecord> for BorrowedCachedUsageRecord<'a> {
             model_id: &record.model_id,
             raw_model_id: &record.raw_model_id,
             provider_id: &record.provider_id,
+            billing_provider: &record.billing_provider,
             service_tier: record.service_tier.as_deref(),
             session_id: &record.session_id,
             is_main_session: record.is_main_session,

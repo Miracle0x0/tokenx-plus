@@ -150,6 +150,7 @@ pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
                 .record(RecordRejectionReason::MissingTimestamp);
             continue;
         };
+        let billing = crate::BillingProvider::from_observation(billing_provider.as_deref());
         let provider = resolved_provider(billing_provider, &model_id);
         let mut msg = UsageRecord::new_with_agent(
             model_id,
@@ -160,6 +161,7 @@ pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
             0.0,
             Some(HERMES_AGENT_NAME.to_string()),
         );
+        msg.billing_provider = billing;
         msg.message_count = message_count;
         msg.dedup_key = Some(crate::records::dedup_hash_str(&session_id));
         scanned.messages.push(msg);
