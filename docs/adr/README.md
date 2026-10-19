@@ -27,6 +27,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0021](0021-opencode-sqlite-schemas-and-discovery.md) | OpenCode SQLite schemas, discovery, and accounting | Accepted |
 | [0022](0022-github-release-artifacts.md) | Version-triggered native GitHub Release assets | Accepted |
 | [0023](0023-claude-recorded-usage-and-catalog-identity.md) | Claude recorded usage and catalog identity | Accepted |
+| [0024](0024-copilot-cross-file-snapshots.md) | Copilot cross-file usage snapshots | Accepted |
 
 ## Conventions
 

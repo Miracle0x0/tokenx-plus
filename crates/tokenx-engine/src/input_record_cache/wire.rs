@@ -121,6 +121,7 @@ pub(super) struct CachedUsageRecord {
     pub(super) claude_is_cost_snapshot: bool,
     #[serde(deserialize_with = "intern::de_intern_opt")]
     pub(super) claude_session_id: Option<Arc<str>>,
+    pub(super) copilot_context: Option<crate::records::CopilotContext>,
     pub(super) message_count: i32,
     #[serde(deserialize_with = "intern::de_intern_opt")]
     pub(super) agent: Option<Arc<str>>,
@@ -146,6 +147,7 @@ impl From<CachedUsageRecord> for UsageRecord {
             claude_input_is_split: cached.claude_input_is_split,
             claude_is_cost_snapshot: cached.claude_is_cost_snapshot,
             claude_session_id: cached.claude_session_id,
+            copilot_context: cached.copilot_context,
             cost: 0.0,
             pricing_error: None,
             message_count: cached.message_count,
@@ -172,6 +174,7 @@ pub(super) struct BorrowedCachedUsageRecord<'a> {
     pub(super) claude_input_is_split: bool,
     pub(super) claude_is_cost_snapshot: bool,
     pub(super) claude_session_id: Option<&'a str>,
+    pub(super) copilot_context: Option<crate::records::CopilotContext>,
     pub(super) message_count: i32,
     pub(super) agent: Option<&'a str>,
     pub(super) agent_instance: Option<&'a str>,
@@ -195,6 +198,7 @@ impl<'a> From<&'a UsageRecord> for BorrowedCachedUsageRecord<'a> {
             claude_input_is_split: record.claude_input_is_split,
             claude_is_cost_snapshot: record.claude_is_cost_snapshot,
             claude_session_id: record.claude_session_id.as_deref(),
+            copilot_context: record.copilot_context,
             message_count: record.message_count,
             agent: record.agent.as_deref(),
             agent_instance: record.agent_instance.as_deref(),

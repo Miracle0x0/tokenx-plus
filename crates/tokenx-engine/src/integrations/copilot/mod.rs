@@ -1,4 +1,5 @@
 pub(crate) mod decode;
+mod merge;
 
 use std::collections::HashSet;
 
@@ -9,7 +10,7 @@ use crate::integrations::discover;
 use crate::integrations::{
     BoundUsageSink, CopilotWorkspaceScope, DecoderKind, DiscoveredInput, DiscoveryContext,
     FingerprintPolicy, FoldContext, InputDiscoveryError, InputPipelineError, IntegrationDriver,
-    ParseContext, ParsedUnit, SourceSpec,
+    ParseContext, ParsedBatchInput, ParsedUnit, SourceSpec,
 };
 
 const SOURCE: SourceSpec = SourceSpec::home(
@@ -89,7 +90,111 @@ impl IntegrationDriver for Driver {
         ctx: &mut FoldContext<'_>,
         sink: &mut BoundUsageSink<'_>,
     ) -> Result<(), InputPipelineError> {
-        cache::fold_units(parsed, ctx, sink)
+        if parsed.is_empty() {
+            return Ok(());
+        }
+        let mut fold = CopilotFold::new()?;
+        fold.consume(parsed, ctx)?;
+        fold.finish(ctx, sink)
+    }
+
+    fn fold_batches(
+        &self,
+        batches: &mut ParsedBatchInput,
+        ctx: &mut FoldContext<'_>,
+        sink: &mut BoundUsageSink<'_>,
+    ) -> Result<(), InputPipelineError> {
+        let Some(parsed) = batches.next(ctx)? else {
+            return Ok(());
+        };
+        let mut fold = CopilotFold::new()?;
+        fold.consume(parsed, ctx)?;
+        while let Some(parsed) = batches.next(ctx)? {
+            fold.consume(parsed, ctx)?;
+        }
+        fold.finish(ctx, sink)
+    }
+}
+
+struct CopilotFold {
+    merged: merge::CopilotMerge,
+    health: Vec<(
+        std::path::PathBuf,
+        crate::input_health::InputStatus,
+        crate::input_health::RejectionSummary,
+    )>,
+}
+
+impl CopilotFold {
+    fn new() -> Result<Self, InputPipelineError> {
+        Ok(Self {
+            merged: merge::CopilotMerge::new()
+                .map_err(InputPipelineError::CopilotReconciliation)?,
+            health: Vec::new(),
+        })
+    }
+
+    fn consume(
+        &mut self,
+        parsed: Vec<ParsedUnit>,
+        ctx: &mut FoldContext<'_>,
+    ) -> Result<(), InputPipelineError> {
+        for parsed in parsed {
+            let cache::ResolvedUnit {
+                unit,
+                mut messages,
+                cache_write,
+                invalidate_cache,
+                status,
+                mut rejections,
+            } = cache::resolve_unit(parsed, ctx)?;
+            rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+            let cache_write =
+                cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
+            let outcome = cache::write_cache(cache_write, ctx, &messages);
+            for message in messages {
+                ctx.cancellation()
+                    .check(crate::engine::AcquisitionPhase::Folding)?;
+                self.merged
+                    .push(self.health.len(), message)
+                    .map_err(InputPipelineError::CopilotReconciliation)?;
+            }
+            if outcome == cache::CacheWriteOutcome::NotPlanned && invalidate_cache {
+                ctx.input_cache.remove(&unit.path, unit.decoder.version());
+            }
+            self.health.push((unit.path, status, rejections));
+        }
+        Ok(())
+    }
+
+    fn finish(
+        mut self,
+        ctx: &mut FoldContext<'_>,
+        sink: &mut BoundUsageSink<'_>,
+    ) -> Result<(), InputPipelineError> {
+        let groups = self
+            .merged
+            .into_groups()
+            .map_err(InputPipelineError::CopilotReconciliation)?;
+        for group in groups {
+            ctx.cancellation()
+                .check(crate::engine::AcquisitionPhase::Folding)?;
+            for (owner, message) in group.map_err(InputPipelineError::CopilotReconciliation)? {
+                let mut messages = vec![message];
+                let rejections = &mut self.health[owner].2;
+                rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+                rejections.merge(&crate::price_source_eligible_messages(
+                    &mut messages,
+                    ctx.pricing,
+                    &ctx.model_mappings,
+                ));
+                rejections.merge(&cache::emit_messages(messages, sink));
+            }
+        }
+        for (path, status, rejections) in self.health {
+            ctx.record_health(path, status, rejections);
+        }
+        Ok(())
     }
 }
 

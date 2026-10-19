@@ -376,6 +376,7 @@ struct CopilotUsageCandidate {
     dedup_key: String,
     agent: Option<String>,
     workspace: Option<WorkspaceMetadata>,
+    context: crate::records::CopilotContext,
 }
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
@@ -398,6 +399,7 @@ impl CopilotUsageCandidate {
             self.agent,
         );
         message.dedup_key = Some(crate::records::dedup_hash_str(&self.dedup_key));
+        message.copilot_context = Some(self.context);
         if let Some(workspace) = self.workspace {
             message.set_workspace(Some(workspace.key), Some(workspace.label));
         }
@@ -648,10 +650,11 @@ fn candidate_from_attributes(
         .or_else(|| trace_context.and_then(|context| context.provider.as_deref()))
         .unwrap_or_default();
     let provider_id = observed_provider_id(raw_provider, &model);
-    let session_id = best_session_attr(attributes)
+    let observed_session = best_session_attr(attributes)
         .map(|(session_id, _)| session_id)
         .or_else(|| trace_context.and_then(|context| context.session_id.as_deref()))
-        .or(resource_session_id.as_deref())
+        .or(resource_session_id.as_deref());
+    let session_id = observed_session
         .or(trace_id.as_deref())
         .ok_or_else(|| {
             invalid_at_path(
@@ -670,7 +673,7 @@ fn candidate_from_attributes(
                 format!("usage record {index} is missing a valid positive timestamp"),
             )
         })?;
-    let dedup_key = dedup_key_for_record(
+    let mut dedup_key = dedup_key_for_record(
         origin,
         record,
         attributes,
@@ -679,6 +682,25 @@ fn candidate_from_attributes(
         timestamp_ms,
         index,
     );
+    let stable_identity = trace_id.is_some()
+        && match origin {
+            CopilotUsageOrigin::AgentTurnLog => ["turn.index", "copilot_chat.turn.index"]
+                .iter()
+                .any(|key| attributes.get(*key).and_then(value_as_i64).is_some()),
+            _ => span_id_from_record(record).is_some(),
+        };
+    if !stable_identity {
+        use sha2::Digest;
+        let scope = sha2::Sha256::digest(path.as_os_str().as_encoded_bytes());
+        dedup_key = format!("file:{scope:x}:{dedup_key}");
+    }
+    let agent = first_non_empty_attr(attributes, AGENT_NAME_ATTRS)
+        .map(crate::records::normalize_copilot_agent_name)
+        .or_else(|| trace_context.and_then(|tc| tc.agent_name.clone()));
+    let context = crate::records::CopilotContext {
+        session_observed: observed_session.is_some(),
+        agent_observed: agent.is_some(),
+    };
 
     Ok(Some(CopilotUsageCandidate {
         origin,
@@ -691,11 +713,9 @@ fn candidate_from_attributes(
         timestamp_ms,
         tokens,
         dedup_key,
-        agent: first_non_empty_attr(attributes, AGENT_NAME_ATTRS)
-            .map(crate::records::normalize_copilot_agent_name)
-            .or_else(|| trace_context.and_then(|tc| tc.agent_name.clone()))
-            .or_else(|| Some("Default".to_string())),
+        agent: Some(agent.unwrap_or_else(|| "Default".to_string())),
         workspace: None,
+        context,
     }))
 }
 
@@ -1747,15 +1767,10 @@ not-json
         let keys: Vec<u64> = messages.iter().filter_map(|m| m.dedup_key).collect();
         assert_eq!(keys.len(), 2);
         assert_ne!(keys[0], keys[1], "dedup keys must be unique: {keys:?}");
-        // Line-index fallback keys hash the legacy "agent-turn:<trace>:idx-<n>" format.
-        assert_eq!(
-            keys[0],
-            crate::records::dedup_hash_str("agent-turn:trace-noidx:idx-0")
-        );
-        assert_eq!(
-            keys[1],
-            crate::records::dedup_hash_str("agent-turn:trace-noidx:idx-1")
-        );
+        let second_file = create_test_file(content);
+        let other = parse_copilot_file(second_file.path());
+        assert_ne!(messages[0].dedup_key, other[0].dedup_key);
+        assert_ne!(messages[1].dedup_key, other[1].dedup_key);
     }
 
     #[test]
