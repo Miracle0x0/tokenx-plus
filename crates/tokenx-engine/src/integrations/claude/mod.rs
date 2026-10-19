@@ -1,5 +1,6 @@
 mod cost_state;
 pub(crate) mod decode;
+pub(crate) mod incremental;
 mod merge;
 
 use std::io::{BufRead, BufReader};
@@ -74,32 +75,9 @@ impl IntegrationDriver for Driver {
             });
         units
             .into_par_iter()
-            .map(|unit| {
-                let parent_session_fingerprinted = match &unit.fingerprint_policy {
-                    FingerprintPolicy::ClaudeCodeWithHome {
-                        parent_session_path,
-                        ..
-                    } => parent_session_path.is_some(),
-                    FingerprintPolicy::NoRecordCache => false,
-                    _ => unreachable!("unexpected Claude input fingerprint policy"),
-                };
-                pipeline_cache::load_or_scan_unit_with_cacheability(unit, ctx, |path| {
-                    decode::parse_claude_file_with_project_resolver_and_cancellation(
-                        path,
-                        project_resolver.as_ref(),
-                        Some(ctx.cancellation()),
-                    )
-                    .map(|(scanned, dependency)| {
-                        let cacheable = match dependency {
-                            decode::ClaudeProjectDependency::None => true,
-                            decode::ClaudeProjectDependency::ParentSession => {
-                                parent_session_fingerprinted
-                            }
-                            decode::ClaudeProjectDependency::ExternalMetadata => false,
-                        };
-                        (scanned, cacheable)
-                    })
-                })
+            .map(|mut unit| {
+                unit.set_claude_project_resolver(project_resolver.clone());
+                incremental::parse_unit(unit, project_resolver.as_ref(), ctx)
             })
             .collect()
     }
@@ -109,7 +87,7 @@ impl IntegrationDriver for Driver {
         unit: crate::integrations::PreparedInput,
         input_cache: &crate::input_record_cache::InputRecordShardStore,
     ) -> Result<crate::integrations::CacheHitPlan, crate::integrations::InputPlanningError> {
-        pipeline_cache::plan_cache_hit(unit, input_cache)
+        incremental::plan_cache_hit(unit, input_cache)
     }
 
     fn fold(
@@ -260,7 +238,7 @@ impl ClaudeFold {
                 invalidate_cache,
                 status,
                 mut rejections,
-            } = pipeline_cache::resolve_unit(parsed_unit, ctx)?;
+            } = incremental::resolve_unit(parsed_unit, ctx)?;
             let path = unit.path.clone();
             rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
             let cache_write =
@@ -1083,11 +1061,17 @@ mod tests {
     #[test]
     fn nested_tier2_parent_change_invalidates_child_then_hits_warm() {
         let home = tempfile::TempDir::new().unwrap();
-        let project = home.path().join(".claude/projects/project-a");
+        let project = home.path().join(".claude/projects/-workspace-project-a");
         let parent_path = project.join("parent-nested.jsonl");
         let child_path = project.join("parent-nested/subagents/agent-nested1.jsonl");
         write_file(&parent_path, "{not-json");
-        write_file(&child_path, &sidechain("parent-nested", "nested1"));
+        write_file(
+            &child_path,
+            &format!(
+                "{}\n",
+                sidechain("parent-nested", "nested1").replace(",\"cwd\":\"project-a\"", "")
+            ),
+        );
 
         let unit = discover_unit(home.path(), &child_path);
         assert!(unit.digest_paths().contains(&parent_path));
@@ -1097,7 +1081,13 @@ mod tests {
         assert_eq!(cold_messages[0].agent.as_deref(), Some("Claude Subagent"));
         assert_eq!(cold_health.rejections.total(), 1);
 
-        write_file(&parent_path, &explore_parent("nested1"));
+        write_file(
+            &parent_path,
+            &format!(
+                "{{\"type\":\"system\",\"cwd\":\"/workspace/project-a\"}}\n{}",
+                explore_parent("nested1")
+            ),
+        );
         let fresh_unit = discover_unit(home.path(), &child_path);
         let crate::integrations::CacheHitPlan::Miss(miss) = DRIVER
             .plan_cache_hit(
@@ -1112,8 +1102,16 @@ mod tests {
         assert_eq!(fresh_messages[0].agent.as_deref(), Some("Claude Explore"));
         assert_eq!(fresh_health.rejections.total(), 0);
 
+        assert!(cache
+            .get_meta(&child_path, fresh_unit.decoder.version())
+            .unwrap()
+            .unwrap()
+            .claude_checkpoint
+            .is_some());
+        let warm_unit = discover_unit(home.path(), &child_path);
+        let resolver = warm_unit.claude_project_resolver().unwrap().clone();
         let crate::integrations::CacheHitPlan::Hit(warm) = DRIVER
-            .plan_cache_hit(crate::integrations::test_prepare(fresh_unit), &cache)
+            .plan_cache_hit(crate::integrations::test_prepare(warm_unit), &cache)
             .unwrap()
         else {
             panic!("unchanged child and Tier 2 parent must hit the cache");
@@ -1121,6 +1119,7 @@ mod tests {
         let (warm_messages, warm_health) = fold_cache_hit(warm, &mut cache);
         assert_eq!(warm_messages[0].agent.as_deref(), Some("Claude Explore"));
         assert_eq!(warm_health.rejections.total(), 0);
+        assert_eq!(resolver.parent_metadata_load_count(), 0);
     }
 
     #[test]

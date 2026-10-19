@@ -8,6 +8,7 @@ use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRec
 use crate::{provider_identity, TokenBreakdown};
 use serde::Deserialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::io::{BufRead, BufReader};
@@ -54,7 +55,7 @@ struct AgentMetaFile {
     agent_type: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct ClaudeWorkspaceParts {
     key: String,
     label: Option<String>,
@@ -66,7 +67,7 @@ impl ClaudeWorkspaceParts {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct ClaudeProjectCandidates {
     project_paths: HashSet<String>,
     cwds: HashSet<String>,
@@ -152,7 +153,7 @@ enum CandidateMatch {
     Ambiguous,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum ClaudeProjectDependency {
     None,
     ParentSession,
@@ -475,7 +476,7 @@ fn resolve_subagent_name(
     Ok("Claude Subagent".to_string())
 }
 
-fn is_workflow_journal(path: &Path) -> bool {
+pub(super) fn is_workflow_journal(path: &Path) -> bool {
     path.file_name().and_then(|name| name.to_str()) == Some("journal.jsonl")
         && path.ancestors().any(|ancestor| {
             ancestor.file_name().and_then(|name| name.to_str()) == Some("subagents")
@@ -786,51 +787,199 @@ fn parse_claude_file_with_project_resolver(
         ));
     }
 
-    let project_key = claude_project_key_from_path(path);
-    let workspace_key = None;
-    let workspace_label = None;
-    let mut project_candidates = ClaudeProjectCandidates::default();
-    let mut parent_session_id = None;
-    let mut session_id = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| {
-            SessionParseError::at_path(
-                path,
-                "validate Claude session input path",
-                std::io::Error::new(
-                    ErrorKind::InvalidData,
-                    "input file stem is missing or not valid UTF-8",
-                ),
-            )
-        })?
-        .to_string();
     let file = std::fs::File::open(path)
         .map_err(|source| SessionParseError::at_path(path, "open Claude session", source))?;
+    let mut reader = BufReader::new(file);
+    let parsed = parse_claude_reader(
+        path,
+        &mut reader,
+        project_resolver,
+        ClaudeParseState::new(path)?,
+        Vec::new(),
+        0,
+        None,
+        cancellation,
+    )?;
+    Ok(parsed.finish(path, project_resolver))
+}
 
-    let reader = BufReader::new(file);
-    let mut messages: Vec<UsageRecord> = Vec::with_capacity(64);
-    let mut rejections = RejectionSummary::default();
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct CostSnapshot {
+    records: Vec<UsageRecord>,
+    rejections: RejectionSummary,
+}
+
+fn cost_snapshot(line: &str) -> CostSnapshot {
+    let mut snapshot = CostSnapshot::default();
+    super::cost_state::append_records(line, &mut snapshot.records, &mut snapshot.rejections);
+    snapshot
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ClaudeParseState {
+    project_candidates: ClaudeProjectCandidates,
+    parent_session_id: Option<String>,
+    session_id: String,
+    provider_confidences: Vec<u8>,
+    pending_turn_start: bool,
+    sidechain_agent: Option<String>,
+    sidechain_agent_instance: Option<String>,
+    sidechain_detected: bool,
+    is_main_session: bool,
+    last_cost_state: Option<CostSnapshot>,
+    rejections: RejectionSummary,
+    lines: usize,
+}
+
+impl ClaudeParseState {
+    pub(super) fn new(path: &Path) -> SessionParseResult<Self> {
+        let session_id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| {
+                SessionParseError::invalid(
+                    "validate Claude session input path",
+                    "input file stem is missing or not valid UTF-8",
+                )
+            })?
+            .to_string();
+        Ok(Self {
+            project_candidates: Default::default(),
+            parent_session_id: None,
+            session_id,
+            provider_confidences: Vec::new(),
+            pending_turn_start: false,
+            sidechain_agent: None,
+            sidechain_agent_instance: None,
+            sidechain_detected: false,
+            is_main_session: true,
+            last_cost_state: None,
+            rejections: Default::default(),
+            lines: 0,
+        })
+    }
+
+    pub(super) fn matches_records(&self, records: &[UsageRecord]) -> bool {
+        self.provider_confidences.len() == records.len()
+            && records.iter().all(|record| !record.claude_is_cost_snapshot)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct RawClaudeScan {
+    pub records: Vec<UsageRecord>,
+    pub state: ClaudeParseState,
+    pub interrupted: Option<InputFailure>,
+    pub consumed_offset: u64,
+    pub ends_with_newline: bool,
+    pub content_hash: Option<[u8; 32]>,
+}
+
+impl RawClaudeScan {
+    pub(super) fn health(&self) -> crate::integrations::UnitScanHealth {
+        let mut rejections = self.state.rejections.clone();
+        if let Some(snapshot) = &self.state.last_cost_state {
+            rejections.merge(&snapshot.rejections);
+        }
+        crate::integrations::UnitScanHealth {
+            status: self
+                .interrupted
+                .clone()
+                .map_or(crate::input_health::InputStatus::Complete, |failure| {
+                    crate::input_health::InputStatus::Partial { failure }
+                }),
+            rejections,
+        }
+    }
+    pub(super) fn project_context(
+        &self,
+        path: &Path,
+        resolver: &ClaudeProjectResolver,
+    ) -> ClaudeProjectContext {
+        resolve_project_workspace(
+            resolver,
+            claude_project_key_from_path(path).as_deref(),
+            &self.state.project_candidates,
+            path,
+            self.state.parent_session_id.as_deref(),
+        )
+    }
+
+    pub(super) fn finish(
+        self,
+        path: &Path,
+        resolver: &ClaudeProjectResolver,
+    ) -> (ScannedInput, ClaudeProjectDependency) {
+        let project = self.project_context(path, resolver);
+        let dependency = project.dependency;
+        (self.finish_with_project(&project), dependency)
+    }
+
+    pub(super) fn finish_with_project(self, project: &ClaudeProjectContext) -> ScannedInput {
+        let Self {
+            records: mut messages,
+            state,
+            interrupted,
+            ..
+        } = self;
+        let mut rejections = state.rejections;
+        for message in &mut messages {
+            message.tokens.cache_write_1h = message
+                .tokens
+                .cache_write_1h
+                .min(message.tokens.cache_write);
+        }
+        messages.retain(|message| crate::has_positive_tokens(&message.tokens));
+        if let Some(snapshot) = state.last_cost_state {
+            messages.extend(snapshot.records);
+            rejections.merge(&snapshot.rejections);
+        }
+        project.apply(&mut messages);
+        ScannedInput {
+            messages,
+            rejections,
+            interrupted,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn parse_claude_reader(
+    path: &Path,
+    reader: &mut impl BufRead,
+    project_resolver: &ClaudeProjectResolver,
+    state: ClaudeParseState,
+    mut messages: Vec<UsageRecord>,
+    mut consumed_offset: u64,
+    mut hasher: Option<Sha256>,
+    cancellation: Option<&crate::engine::AcquisitionCancellation>,
+) -> SessionParseResult<RawClaudeScan> {
+    let ClaudeParseState {
+        mut project_candidates,
+        mut parent_session_id,
+        mut session_id,
+        mut provider_confidences,
+        mut pending_turn_start,
+        mut sidechain_agent,
+        mut sidechain_agent_instance,
+        mut sidechain_detected,
+        mut is_main_session,
+        mut last_cost_state,
+        mut rejections,
+        mut lines,
+    } = state;
+    let workspace_key = None;
+    let workspace_label = None;
     let mut interrupted = None;
-    let mut provider_confidences: Vec<u8> = Vec::with_capacity(64);
-    // Maps dedup_key to the index in `messages` of the first occurrence.
-    // CC's streaming API writes the same messageId:requestId multiple times as the
-    // response streams in; later entries often carry more complete token counts.
-    // Merge per-field maxima, except that explicitly split input supersedes
-    // a bare whole-prompt snapshot regardless of record order.
-    let mut processed_hashes: HashMap<u64, usize> = HashMap::new();
+    let mut processed_hashes: HashMap<u64, usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| record.dedup_key.map(|key| (key, index)))
+        .collect();
     let mut buffer = Vec::with_capacity(4096);
-    // Tracks whether the previous entry was a user message,
-    // so the next assistant message can be marked as a turn start.
-    let mut pending_turn_start = false;
-    // Sidechain detection state (resolved lazily on first parseable entry)
-    let mut sidechain_agent: Option<String> = None;
-    let mut sidechain_agent_instance: Option<String> = None;
-    let mut sidechain_detected = false;
-    let mut is_main_session = true;
-    let mut last_cost_state = None;
-
-    for (line_index, line) in reader.lines().enumerate() {
+    let mut line = String::with_capacity(4096);
+    let mut ends_with_newline = consumed_offset > 0;
+    loop {
         if cancellation.is_some_and(crate::engine::AcquisitionCancellation::is_cancelled) {
             interrupted = Some(InputFailure::new(
                 "parse Claude session",
@@ -838,21 +987,32 @@ fn parse_claude_file_with_project_resolver(
             ));
             break;
         }
-        let line = match line {
-            Ok(line) => line,
+        line.clear();
+        let count = match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(count) => count,
             Err(source) => {
-                let error = SessionParseError::at_path(
+                interrupted = Some(InputFailure::from(&SessionParseError::at_path(
                     path,
                     "read Claude session line",
-                    std::io::Error::new(
-                        source.kind(),
-                        format!("line {}: {source}", line_index + 1),
-                    ),
-                );
-                interrupted = Some(InputFailure::from(&error));
+                    source,
+                )));
                 break;
             }
         };
+        consumed_offset = consumed_offset.checked_add(count as u64).ok_or_else(|| {
+            SessionParseError::invalid("track Claude input offset", "byte offset exceeds u64")
+        })?;
+        if let Some(hasher) = hasher.as_mut() {
+            hasher.update(line.as_bytes());
+        }
+        ends_with_newline = line.ends_with('\n');
+        let line_index = lines;
+        lines = lines.checked_add(1).ok_or_else(|| {
+            SessionParseError::invalid("track Claude input lines", "line count exceeds usize")
+        })?;
+        #[cfg(test)]
+        super::incremental::record_decoded_line(path);
 
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -867,7 +1027,7 @@ fn parse_claude_file_with_project_resolver(
                 if super::cost_state::is_snapshot(trimmed) {
                     // A malformed snapshot belongs to its own decoder. It must
                     // replace the previous snapshot and not stop later usage.
-                    last_cost_state = Some(line);
+                    last_cost_state = Some(cost_snapshot(&line));
                     continue;
                 }
                 let error = SessionParseError::at_path(
@@ -907,7 +1067,7 @@ fn parse_claude_file_with_project_resolver(
             if entry.entry_type == "cost-state" {
                 // Claude restores the last complete cost-state object, rather
                 // than summing snapshots or retaining removed model entries.
-                last_cost_state = Some(line);
+                last_cost_state = Some(cost_snapshot(&line));
                 continue;
             }
             project_candidates.record(entry.project_path.as_deref(), entry.cwd.as_deref());
@@ -1252,37 +1412,27 @@ fn parse_claude_file_with_project_resolver(
         }
     }
 
-    // Merge raw stream maxima before bounding the subset: a later duplicate
-    // can supply the total without repeating the one-hour split.
-    for message in &mut messages {
-        message.tokens.cache_write_1h = message
-            .tokens
-            .cache_write_1h
-            .min(message.tokens.cache_write);
-    }
-    messages.retain(|message| crate::has_positive_tokens(&message.tokens));
-
-    if let Some(line) = last_cost_state {
-        super::cost_state::append_records(&line, &mut messages, &mut rejections);
-    }
-
-    let project_dependency = apply_resolved_project_workspace(
-        project_resolver,
-        project_key.as_deref(),
-        &project_candidates,
-        path,
-        parent_session_id.as_deref(),
-        &mut messages,
-    );
-
-    Ok((
-        ScannedInput {
-            messages,
+    Ok(RawClaudeScan {
+        records: messages,
+        state: ClaudeParseState {
+            project_candidates,
+            parent_session_id,
+            session_id,
+            provider_confidences,
+            pending_turn_start,
+            sidechain_agent,
+            sidechain_agent_instance,
+            sidechain_detected,
+            is_main_session,
+            last_cost_state,
             rejections,
-            interrupted,
+            lines,
         },
-        project_dependency,
-    ))
+        interrupted,
+        consumed_offset,
+        ends_with_newline,
+        content_hash: hasher.map(|hasher| hasher.finalize().into()),
+    })
 }
 
 fn record_claude_rejection(
@@ -1337,18 +1487,46 @@ fn workspace_options_for_entry(
     }
 }
 
-fn apply_resolved_project_workspace(
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+enum ProjectWorkspace {
+    PerRecord,
+    Shared(Option<ClaudeWorkspaceParts>),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ClaudeProjectContext {
+    workspace: ProjectWorkspace,
+    pub(super) dependency: ClaudeProjectDependency,
+}
+
+impl ClaudeProjectContext {
+    fn apply(&self, messages: &mut [UsageRecord]) {
+        let ProjectWorkspace::Shared(workspace) = &self.workspace else {
+            return;
+        };
+        for message in messages {
+            if let Some(workspace) = workspace {
+                set_message_workspace(message, workspace);
+            } else {
+                message.set_workspace(None, None);
+            }
+        }
+    }
+}
+
+fn resolve_project_workspace(
     resolver: &ClaudeProjectResolver,
     project_key: Option<&str>,
     candidates: &ClaudeProjectCandidates,
     input_path: &Path,
     parent_session_id: Option<&str>,
-    messages: &mut [UsageRecord],
-) -> ClaudeProjectDependency {
+) -> ClaudeProjectContext {
     let Some(project_key) = project_key else {
-        return ClaudeProjectDependency::None;
+        return ClaudeProjectContext {
+            workspace: ProjectWorkspace::PerRecord,
+            dependency: ClaudeProjectDependency::None,
+        };
     };
-
     let (resolution, dependency) =
         resolver.resolve(project_key, candidates, input_path, parent_session_id);
     let workspace = match resolution {
@@ -1357,14 +1535,10 @@ fn apply_resolved_project_workspace(
             workspace_parts_from_key(project_key)
         }
     };
-    for message in messages {
-        if let Some(workspace) = &workspace {
-            set_message_workspace(message, workspace);
-        } else {
-            message.set_workspace(None, None);
-        }
+    ClaudeProjectContext {
+        workspace: ProjectWorkspace::Shared(workspace),
+        dependency,
     }
-    dependency
 }
 
 fn resolved_workspace(path: &str) -> ClaudeProjectResolution {

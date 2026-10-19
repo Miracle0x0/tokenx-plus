@@ -1573,6 +1573,7 @@ fn test_get_meta_reports_and_preserves_future_shard_format_version() {
         path: CachedPath::from_path(input.path()),
         fingerprint: InputFingerprint::from_path(input.path()).unwrap(),
         codex_incremental: None,
+        claude_checkpoint: None,
         record_count: 0,
         rejections: Default::default(),
     };

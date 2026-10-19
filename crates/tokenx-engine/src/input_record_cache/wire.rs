@@ -80,6 +80,8 @@ pub(super) struct CachedShardHeader {
     pub(super) path: CachedPath,
     pub(super) fingerprint: InputFingerprint,
     pub(super) codex_incremental: Option<CodexIncrementalCache>,
+    pub(super) claude_checkpoint:
+        Option<Box<crate::integrations::claude::incremental::ClaudeCheckpoint>>,
     pub(super) record_count: usize,
     pub(super) rejections: crate::input_health::RejectionSummary,
 }
@@ -237,6 +239,7 @@ pub(super) fn meta_from_entry(entry: &CachedInputEntry) -> CachedInputMeta {
     CachedInputMeta {
         fingerprint: entry.fingerprint.clone(),
         codex_incremental: entry.codex_incremental.clone(),
+        claude_checkpoint: entry.claude_checkpoint.clone(),
         rejections: entry.rejections.clone(),
     }
 }
@@ -245,6 +248,7 @@ pub(super) fn meta_from_header(header: CachedShardHeader) -> CachedInputMeta {
     CachedInputMeta {
         fingerprint: header.fingerprint,
         codex_incremental: header.codex_incremental,
+        claude_checkpoint: header.claude_checkpoint,
         rejections: header.rejections,
     }
 }
@@ -437,6 +441,7 @@ pub(super) fn header_from_plan(plan: &CacheWritePlan, record_count: usize) -> Ca
         path: plan.path.clone(),
         fingerprint: plan.fingerprint.clone(),
         codex_incremental: plan.codex_incremental.clone(),
+        claude_checkpoint: plan.claude_checkpoint.clone(),
         record_count,
         rejections: plan.rejections.clone(),
     }
@@ -526,6 +531,7 @@ pub(super) fn read_shard_entry_with_plan(
         records: body.records.into_iter().map(UsageRecord::from).collect(),
         rejections: header.rejections,
         codex_incremental: header.codex_incremental,
+        claude_checkpoint: header.claude_checkpoint,
     })
 }
 

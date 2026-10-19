@@ -609,7 +609,7 @@ fn resolve_codex_messages(
             recovery_requires_removal: false,
             health_override: None,
         }),
-        UnitRecordPayload::PendingFinalization(_) => {
+        UnitRecordPayload::Claude(_) | UnitRecordPayload::PendingFinalization(_) => {
             unreachable!("codex does not use generic pending-finalization payloads")
         }
         UnitRecordPayload::CodexFresh(messages) => Ok(CodexResolvedMessages {

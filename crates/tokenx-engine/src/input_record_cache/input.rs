@@ -109,6 +109,20 @@ pub(crate) struct InputStamp {
 }
 
 impl InputStamp {
+    pub(crate) fn is_append_of(&self, previous: &Self) -> bool {
+        match (self.files.first(), previous.files.first()) {
+            (Some(current), Some(old)) => {
+                current.present
+                    && old.present
+                    && current.path == old.path
+                    && current.identity == old.identity
+                    && current.size > old.size
+                    && self.files[1..] == previous.files[1..]
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn primary_size(&self) -> Option<u64> {
         self.files
             .first()
