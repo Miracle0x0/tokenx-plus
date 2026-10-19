@@ -37,6 +37,10 @@ pub struct CodexPayload {
     pub model_name: Option<String>,
     pub model_info: Option<CodexModelInfo>,
     pub info: Option<CodexInfo>,
+    pub usage: Option<CodexTokenUsage>,
+    pub response_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub service_tier: Option<String>,
     pub turn_id: Option<String>,
     pub thread_settings: Option<CodexThreadSettings>,
     pub source: Option<Value>,
@@ -277,6 +281,131 @@ pub(crate) struct CodexParseState {
     /// accepted token_count as a turn start, including across appended chunks.
     #[serde(default)]
     pub pending_turn_start: bool,
+    pub current_turn_id: Option<String>,
+    pending_response: Option<PendingResponse>,
+    settled_responses: Vec<ResponseSignature>,
+    seen_responses: std::sync::Arc<std::collections::BTreeSet<u64>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ResponseSignature {
+    usage: CodexTotals,
+    turn_id: Option<String>,
+    model: String,
+}
+
+impl ResponseSignature {
+    fn same_context(&self, turn: Option<&str>, model: Option<&str>) -> bool {
+        turn.is_none_or(|turn| self.turn_id.as_deref().is_none_or(|id| id == turn))
+            && model.is_none_or(|model| model == self.model)
+    }
+
+    fn matches(&self, usage: CodexTotals, turn: Option<&str>, model: Option<&str>) -> bool {
+        self.usage.input == usage.input
+            && self.usage.output == usage.output
+            && self.same_context(turn, model)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PendingResponse {
+    record: UsageRecord,
+    signature: ResponseSignature,
+    after_compacted: bool,
+}
+
+fn settle_response(state: &mut CodexParseState, messages: &mut Vec<UsageRecord>) {
+    let Some(mut pending) = state.pending_response.take() else {
+        return;
+    };
+    pending.record.is_turn_start &= state.pending_turn_start;
+    if pending.record.is_turn_start {
+        state.pending_turn_start = false;
+    }
+    state.settled_responses.push(pending.signature);
+    messages.push(pending.record);
+}
+
+fn response_record(
+    payload: &CodexPayload,
+    timestamp: Option<&str>,
+    session_id: &str,
+    state: &CodexParseState,
+) -> Result<PendingResponse, RecordRejectionReason> {
+    let usage = payload
+        .usage
+        .as_ref()
+        .ok_or(RecordRejectionReason::MalformedRecord)?;
+    if usage.input_tokens.is_none() && usage.output_tokens.is_none() {
+        return Err(RecordRejectionReason::MalformedRecord);
+    }
+    let usage =
+        validate_codex_token_usage(usage).map_err(|_| RecordRejectionReason::MalformedRecord)?;
+    let model = extract_model(payload)
+        .or_else(|| state.current_model.clone())
+        .filter(|m| !m.trim().is_empty())
+        .ok_or(RecordRejectionReason::MissingModel)?;
+    let timestamp = parse_codex_entry_timestamp(timestamp)
+        .map_err(|_| RecordRejectionReason::MissingTimestamp)?
+        .ok_or(RecordRejectionReason::MissingTimestamp)?;
+    let scope = state
+        .session_forked_from_id
+        .as_deref()
+        .or(state.session_id_from_meta.as_deref())
+        .unwrap_or(session_id);
+    let key = match payload
+        .response_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+    {
+        Some(id) => format!("codex:usage-record:{scope}:{id}"),
+        None => format!(
+            "codex:usage-record:{scope}:{timestamp}:{}:{}:{}:{}:{}",
+            usage.input, usage.output, usage.cached, usage.cache_write, usage.reasoning
+        ),
+    };
+    let mut record = UsageRecord::new_with_dedup(
+        &model,
+        state.session_provider.as_deref().unwrap_or("openai"),
+        session_id,
+        timestamp,
+        usage.into_tokens(),
+        0.0,
+        Some(crate::records::dedup_hash_str(&key)),
+    );
+    record.service_tier = payload
+        .service_tier
+        .as_deref()
+        .or(state.service_tier.as_deref())
+        .map(crate::records::intern::intern);
+    record.agent = state
+        .session_agent
+        .as_deref()
+        .map(crate::records::intern::intern);
+    record.set_agent_instance(
+        state
+            .session_agent_instance
+            .clone()
+            .or_else(|| state.session_id_from_meta.clone()),
+    );
+    record.set_workspace(
+        state.session_workspace_key.clone(),
+        state.session_workspace_label.clone(),
+    );
+    record.is_main_session = !state.session_is_child;
+    record.is_turn_start = state.pending_turn_start;
+    Ok(PendingResponse {
+        record,
+        signature: ResponseSignature {
+            usage,
+            turn_id: payload
+                .turn_id
+                .clone()
+                .or_else(|| state.current_turn_id.clone()),
+            model,
+        },
+        after_compacted: false,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -493,6 +622,12 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
             Err(error) => (None, Some(error)),
         };
         if let Some(entry) = entry {
+            if entry.entry_type == "compacted" && !state.forked_child_waiting_for_turn_context {
+                if let Some(pending) = &mut state.pending_response {
+                    pending.after_compacted = true;
+                }
+                handled = true;
+            }
             if entry.payload.is_none() {
                 let error = match entry.entry_type.as_str() {
                     "session_meta" => Some(SessionParseError::invalid(
@@ -503,7 +638,7 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                         "validate Codex turn_context event",
                         "payload is missing",
                     )),
-                    "event_msg" => Some(SessionParseError::invalid(
+                    "event_msg" | "token_usage_record" => Some(SessionParseError::invalid(
                         "validate Codex event message",
                         "payload is missing",
                     )),
@@ -572,6 +707,62 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                         }
                         continue;
                     }
+                }
+
+                if entry.entry_type == "token_usage_record" {
+                    let foreign = payload
+                        .thread_id
+                        .as_deref()
+                        .zip(state.session_id_from_meta.as_deref())
+                        .is_some_and(|(thread, own)| thread != own);
+                    if foreign {
+                        continue;
+                    }
+                    let pending = match response_record(
+                        &payload,
+                        entry.timestamp.as_deref(),
+                        session_id,
+                        &state,
+                    ) {
+                        Ok(record) => record,
+                        Err(reason) => reject_record!(reason),
+                    };
+                    if pending.record.tokens.total() == 0 {
+                        continue;
+                    }
+                    let key = pending
+                        .record
+                        .dedup_key
+                        .expect("response records have a dedup identity");
+                    if state.seen_responses.contains(&key) {
+                        continue;
+                    }
+                    // Commit this validated record before mutating the persistent
+                    // set, so the transaction snapshot does not force a full copy.
+                    drop(state_before);
+                    std::sync::Arc::make_mut(&mut state.seen_responses).insert(key);
+                    settle_response(&mut state, &mut messages);
+                    state.pending_response = Some(pending);
+                    continue;
+                }
+                let begins_turn =
+                    entry.entry_type == "turn_context" || event_type == Some("task_started");
+                let starts_other_turn = begins_turn
+                    && state.pending_response.as_ref().is_some_and(|pending| {
+                        pending.signature.turn_id != payload.turn_id
+                            || (event_type == Some("task_started") && payload.turn_id.is_none())
+                    });
+                let ends_pending_turn =
+                    matches!(event_type, Some("turn_aborted" | "task_complete"))
+                        && state.pending_response.as_ref().is_some_and(|pending| {
+                            payload.turn_id.is_none()
+                                || pending.signature.turn_id == payload.turn_id
+                        });
+                if starts_other_turn || ends_pending_turn {
+                    settle_response(&mut state, &mut messages);
+                }
+                if begins_turn {
+                    state.current_turn_id = payload.turn_id.clone();
                 }
 
                 if !pending_model_messages.is_empty()
@@ -691,6 +882,12 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                 if let Some(info) = token_info {
                     let model = payload_model
                         .or(info_model)
+                        .or_else(|| {
+                            state
+                                .pending_response
+                                .as_ref()
+                                .map(|p| p.signature.model.clone())
+                        })
                         .or_else(|| state.current_model.clone());
                     if let Some(ref model) = model {
                         state.current_model = Some(model.clone());
@@ -730,6 +927,7 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                         total_usage_record,
                         total_usage,
                     ) {
+                        state.pending_response = None;
                         continue;
                     }
                     state.forked_child_inherited_baseline = None;
@@ -737,11 +935,25 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
 
                     if let Some(previous) = state.previous_totals {
                         if total_usage == previous {
+                            if state
+                                .pending_response
+                                .as_ref()
+                                .is_some_and(|p| p.after_compacted)
+                            {
+                                settle_response(&mut state, &mut messages);
+                            }
                             continue;
                         }
                         if total_usage.delta_from(previous).is_none()
                             && total_usage.looks_like_stale_regression(previous, last_usage)
                         {
+                            if state
+                                .pending_response
+                                .as_ref()
+                                .is_some_and(|p| p.after_compacted)
+                            {
+                                settle_response(&mut state, &mut messages);
+                            }
                             continue;
                         }
                     }
@@ -755,10 +967,55 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                         && tokens.cache_write == 0
                         && tokens.reasoning == 0
                     {
+                        if state
+                            .pending_response
+                            .as_ref()
+                            .is_some_and(|p| p.after_compacted)
+                        {
+                            settle_response(&mut state, &mut messages);
+                        }
                         continue;
                     }
 
                     state.previous_totals = Some(total_usage);
+
+                    let reports_pending = state.pending_response.as_ref().is_some_and(|p| {
+                        p.signature.matches(
+                            last_usage,
+                            payload.turn_id.as_deref(),
+                            model.as_deref(),
+                        )
+                    });
+                    let mut request_tier = None;
+                    if reports_pending {
+                        request_tier = state
+                            .pending_response
+                            .take()
+                            .and_then(|p| p.record.service_tier);
+                    } else if let Some(index) = state.settled_responses.iter().position(|p| {
+                        p.matches(
+                            last_usage,
+                            payload.turn_id.as_deref(),
+                            event_model.as_deref(),
+                        )
+                    }) {
+                        state.settled_responses.remove(index);
+                        continue;
+                    } else if state.pending_response.as_ref().is_some_and(|p| {
+                        p.after_compacted
+                            || !p
+                                .signature
+                                .same_context(payload.turn_id.as_deref(), event_model.as_deref())
+                    }) {
+                        settle_response(&mut state, &mut messages);
+                    } else {
+                        // Outside compaction the adjacent token_count is the
+                        // authoritative report, even if its bucket split differs.
+                        request_tier = state
+                            .pending_response
+                            .take()
+                            .and_then(|p| p.record.service_tier);
+                    }
 
                     let parsed_timestamp =
                         match parse_codex_entry_timestamp(entry.timestamp.as_deref()) {
@@ -796,7 +1053,9 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                         .to_string();
                     let is_turn_start = std::mem::take(&mut state.pending_turn_start);
                     let pending = PendingCodexMessage {
-                        service_tier: state.service_tier.clone(),
+                        service_tier: request_tier
+                            .map(|tier| tier.to_string())
+                            .or_else(|| state.service_tier.clone()),
                         provider: provider.to_string(),
                         session_id: session_id.to_string(),
                         timestamp,
@@ -1335,7 +1594,10 @@ fn codex_schema_invalid_value_may_affect_state(value: &Value) -> bool {
         .get("type")
         .and_then(Value::as_str)
         .is_some_and(|entry_type| {
-            matches!(entry_type, "session_meta" | "turn_context" | "event_msg")
+            matches!(
+                entry_type,
+                "session_meta" | "turn_context" | "event_msg" | "token_usage_record"
+            )
         })
 }
 
@@ -3217,3 +3479,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/responses.rs"]
+mod response_tests;
