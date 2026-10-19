@@ -29,6 +29,7 @@ pub(crate) enum SubscriptionIssueCode {
     ClaudeRequestFailed,
     ClaudeNoOauth,
     ClaudeNoAccessToken,
+    ClaudeCredentialExpired,
     CodexNoHome,
     CodexReadAuth,
     CodexParseAuth,
