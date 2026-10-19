@@ -123,12 +123,14 @@ displayed before their background inventory check; missing generations require
 background acquisition. Due input-integrity retries and acquisition-context
 changes still rebuild even when inventory metadata is unchanged.
 
-Plain Codex JSONL is the exception because incremental append validation
-requires content identity. Its decoder computes the digest during the same pass
+Plain Claude and Codex JSONL are exceptions because incremental append validation
+requires content identity. Each decoder computes the digest during the same pass
 that parses the input, and the shard retains that parser-produced digest with
 the incremental state. Append handling verifies the previous full digest as the
 expected prefix, then continues the same hasher across the tail. Exact hits
 require stamp and cached-digest consistency without another input-byte pass.
+ADR 0026 defines Claude's raw checkpoint records, streaming-message updates,
+and deferred finalization.
 Codex `.jsonl.zst` archives use a distinct decoder variant and ordinary
 metadata-stamped record shards, including complete empty results. Unchanged
 archives require no source reads or decompression; changed archives are streamed

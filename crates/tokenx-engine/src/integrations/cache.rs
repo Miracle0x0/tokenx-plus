@@ -73,17 +73,6 @@ where
     })
 }
 
-pub(crate) fn load_or_scan_unit_with_cacheability<F>(
-    unit: ExecutionInput,
-    ctx: &ParseContext<'_>,
-    scan: F,
-) -> ParsedUnit
-where
-    F: Fn(&Path) -> crate::records::error::SessionParseResult<(ScannedInput, bool)>,
-{
-    load_or_scan_unit_cacheable(unit, ctx, ScanCacheOptions::default(), scan)
-}
-
 /// Complete immutable inputs can legitimately contain no usage. Cache that
 /// result too, so empty archives do not need decoding on every acquisition.
 pub(crate) fn load_or_scan_unit_including_empty<F>(
@@ -547,10 +536,11 @@ pub(crate) fn resolve_messages(
             messages
         }
         UnitRecordPayload::CacheHit(plan) => ctx.input_cache.take_records(&plan)?,
-        UnitRecordPayload::CodexFresh(_)
+        UnitRecordPayload::Claude(_)
+        | UnitRecordPayload::CodexFresh(_)
         | UnitRecordPayload::CodexCacheHit(_)
         | UnitRecordPayload::CodexAppend(_) => {
-            unreachable!("codex deferred messages must be resolved by Driver")
+            unreachable!("client-specific deferred messages must be resolved by their driver")
         }
     };
     Ok(messages)

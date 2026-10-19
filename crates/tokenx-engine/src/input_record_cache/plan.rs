@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub(crate) struct CachedInputMeta {
     pub fingerprint: InputFingerprint,
     pub codex_incremental: Option<CodexIncrementalCache>,
+    pub claude_checkpoint: Option<Box<crate::integrations::claude::incremental::ClaudeCheckpoint>>,
     pub rejections: crate::input_health::RejectionSummary,
 }
 
@@ -296,6 +297,10 @@ impl CacheReadFailure {
 }
 
 impl CacheReadPlan {
+    pub(crate) fn primary_size(&self) -> Option<u64> {
+        self.fingerprint.stamp.primary_size()
+    }
+
     pub(crate) fn new(
         path: &Path,
         decoder_version: DecoderVersion,
@@ -323,6 +328,7 @@ pub(crate) struct CachedInputEntry {
     pub fingerprint: InputFingerprint,
     pub records: Vec<UsageRecord>,
     pub codex_incremental: Option<CodexIncrementalCache>,
+    pub claude_checkpoint: Option<Box<crate::integrations::claude::incremental::ClaudeCheckpoint>>,
     pub rejections: crate::input_health::RejectionSummary,
 }
 
@@ -368,6 +374,7 @@ impl CachedInputEntry {
             fingerprint,
             records,
             codex_incremental,
+            claude_checkpoint: None,
             rejections: Default::default(),
         }
     }
@@ -378,6 +385,7 @@ impl CachedInputEntry {
             decoder_version: self.decoder_version,
             fingerprint: self.fingerprint.clone(),
             codex_incremental: self.codex_incremental.clone(),
+            claude_checkpoint: self.claude_checkpoint.clone(),
             rejections: self.rejections.clone(),
         }
     }
@@ -397,6 +405,8 @@ pub(crate) struct CacheWritePlan {
     pub(super) decoder_version: DecoderVersion,
     pub(super) fingerprint: InputFingerprint,
     pub(super) codex_incremental: Option<CodexIncrementalCache>,
+    pub(super) claude_checkpoint:
+        Option<Box<crate::integrations::claude::incremental::ClaudeCheckpoint>>,
     pub(super) rejections: crate::input_health::RejectionSummary,
 }
 
@@ -412,8 +422,17 @@ impl CacheWritePlan {
             decoder_version,
             fingerprint,
             codex_incremental,
+            claude_checkpoint: None,
             rejections: Default::default(),
         }
+    }
+
+    pub(crate) fn with_claude_checkpoint(
+        mut self,
+        checkpoint: crate::integrations::claude::incremental::ClaudeCheckpoint,
+    ) -> Self {
+        self.claude_checkpoint = Some(Box::new(checkpoint));
+        self
     }
 
     /// Attach the scan's rejection summary so it persists with the shard and

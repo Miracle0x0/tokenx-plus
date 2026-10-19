@@ -228,6 +228,13 @@ impl DiscoveredInput {
         self
     }
 
+    pub(crate) fn set_claude_project_resolver(
+        &mut self,
+        resolver: Arc<claude::decode::ClaudeProjectResolver>,
+    ) {
+        self.claude_project_resolver = Some(resolver);
+    }
+
     pub(crate) fn claude_project_resolver(
         &self,
     ) -> Option<&Arc<claude::decode::ClaudeProjectResolver>> {
@@ -636,6 +643,7 @@ pub(crate) enum FingerprintPolicy {
 
 #[derive(Debug)]
 pub(crate) enum UnitRecordPayload {
+    Claude(Box<claude::incremental::ClaudeInput>),
     /// Immediately available records. The fold still applies the common
     /// eligibility, cache, canonicalization, and pricing boundary.
     Fresh(Vec<UsageRecord>),
