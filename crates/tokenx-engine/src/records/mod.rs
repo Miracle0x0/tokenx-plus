@@ -12,6 +12,15 @@ use std::ops::{Deref, DerefMut};
 
 use crate::{clients::ClientId, TokenBreakdown};
 
+/// Observed Copilot attribution, distinct from display/trace identity defaults.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub(crate) struct CopilotContext {
+    pub session_observed: bool,
+    pub agent_observed: bool,
+}
+
 /// Source-neutral runtime usage payload produced by session parsers.
 ///
 /// Input-record shards persist an explicit cost-free wire DTO rather than
@@ -50,6 +59,7 @@ pub struct UsageRecord {
     /// the legacy filename-based session grouping key.
     #[serde(deserialize_with = "intern::de_intern_opt")]
     pub(crate) claude_session_id: Option<std::sync::Arc<str>>,
+    pub(crate) copilot_context: Option<CopilotContext>,
     pub cost: f64,
     /// Derived pricing failure; never persisted in source-record shards.
     #[serde(skip)]
@@ -365,6 +375,7 @@ impl UsageRecord {
             claude_input_is_split: false,
             claude_is_cost_snapshot: false,
             claude_session_id: None,
+            copilot_context: None,
             message_count: default_message_count(),
             agent: agent.as_deref().map(intern::intern),
             agent_instance: None,
