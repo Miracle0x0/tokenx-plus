@@ -102,6 +102,15 @@ or credential persistence.
 Codex quota lookup reads exactly `~/.codex/auth.json`. Only the access token
 and account id required by the request are consumed.
 
+Claude quota lookup prefers the usable macOS `Claude Code-credentials`
+Keychain item over `~/.claude/.credentials.json`, regardless of which token has
+a longer lifetime. The file is considered only when the Keychain item is
+confirmed absent or its `expiresAt` is known to have passed. Other platforms
+read the file directly. Store I/O failures, malformed credentials, and blank
+access tokens are explicit errors; they do not select another store. Missing
+expiry means unknown lifetime, not proof of expiration. Known expired
+credentials never trigger OAuth refresh or persistence in Tokenx.
+
 Grok Build quota lookup reads exactly `~/.grok/auth.json`. The file must contain
 exactly one usable `https://auth.x.ai::*` account entry; absence and ambiguity
 are explicit provider errors. Tokenx reads only the access key and the

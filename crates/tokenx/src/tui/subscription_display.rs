@@ -279,6 +279,11 @@ fn issue_message_for_locale(issue: &SubscriptionIssue, locale: &str) -> String {
         SubscriptionIssueCode::ClaudeNoAccessToken => {
             rust_i18n::t!("subscription.error.claude_no_access_token", locale = locale).into_owned()
         }
+        SubscriptionIssueCode::ClaudeCredentialExpired => rust_i18n::t!(
+            "subscription.error.claude_credential_expired",
+            locale = locale
+        )
+        .into_owned(),
         SubscriptionIssueCode::CodexNoHome => {
             rust_i18n::t!("subscription.error.codex_no_home", locale = locale).into_owned()
         }

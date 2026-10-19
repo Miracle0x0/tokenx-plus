@@ -50,6 +50,7 @@ subscription:
     claude_request_failed: "Claude 用量请求失败（HTTP %{status}）"
     claude_no_oauth: "没有 Claude OAuth 凭据。请运行 'claude' 登录。"
     claude_no_access_token: "没有 Claude 访问令牌。"
+    claude_credential_expired: "Claude 凭据已过期。请运行 `claude` 刷新由客户端管理的身份验证信息。"
     codex_no_home: "无法定位 Codex 凭据所需的主目录。"
     codex_read_auth: "无法从 %{path} 读取 Codex 认证信息"
     codex_parse_auth: "无法解析 %{path} 中的 Codex 认证信息"

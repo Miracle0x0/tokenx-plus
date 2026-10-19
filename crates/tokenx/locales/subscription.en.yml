@@ -50,6 +50,7 @@ subscription:
     claude_request_failed: "Claude usage request failed (HTTP %{status})"
     claude_no_oauth: "No Claude OAuth credentials. Run 'claude' to log in."
     claude_no_access_token: "No Claude access token."
+    claude_credential_expired: "Claude credentials have expired. Run `claude` to refresh the provider-owned authentication."
     codex_no_home: "Cannot locate the home directory for Codex credentials."
     codex_read_auth: "Failed to read Codex auth from %{path}"
     codex_parse_auth: "Failed to parse Codex auth from %{path}"
