@@ -14,7 +14,7 @@ use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
 use crate::{provider_identity, TokenBreakdown};
 
-const USAGE_OPERATION: &str = "validate Pi assistant message";
+const USAGE_OPERATION: &str = "validate Pi usage";
 
 #[derive(Debug, Deserialize)]
 struct SessionHeader {
@@ -30,6 +30,9 @@ struct Entry {
     entry_type: String,
     timestamp: Option<String>,
     message: Option<Message>,
+    usage: Option<Usage>,
+    model: Option<String>,
+    provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +50,7 @@ struct Usage {
     output: Option<i64>,
     cache_read: Option<i64>,
     cache_write: Option<i64>,
+    cache_write_1h: Option<i64>,
     reasoning: Option<i64>,
     total_tokens: Option<i64>,
     // These fields belong to OMP. Keeping their presence observable lets Pi
@@ -117,15 +121,23 @@ pub(crate) fn parse_pi_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 continue;
             }
         };
-        if entry.entry_type != "message" {
-            continue;
-        }
-        let Some(message) = entry.message else {
-            continue;
+        let message = match entry.entry_type.as_str() {
+            "message" => match entry.message {
+                Some(message)
+                    if matches!(message.role.as_deref(), Some("assistant" | "toolResult")) =>
+                {
+                    message
+                }
+                _ => continue,
+            },
+            "compaction" | "branch_summary" | "usage" => Message {
+                role: None,
+                usage: entry.usage,
+                model: entry.model,
+                provider: entry.provider,
+            },
+            _ => continue,
         };
-        if message.role.as_deref() != Some("assistant") {
-            continue;
-        }
         let Some(usage) = message.usage else {
             continue;
         };
@@ -203,6 +215,7 @@ fn token_breakdown(usage: &Usage) -> SessionParseResult<TokenBreakdown> {
     let raw_output = required(usage.output, "output")?;
     let cache_read = required(usage.cache_read, "cacheRead")?;
     let cache_write = required(usage.cache_write, "cacheWrite")?;
+    let cache_write_1h = usage.cache_write_1h.unwrap_or_default();
     let reported_total = required(usage.total_tokens, "totalTokens")?;
     let reasoning = usage.reasoning.unwrap_or_default();
 
@@ -211,6 +224,7 @@ fn token_breakdown(usage: &Usage) -> SessionParseResult<TokenBreakdown> {
         ("output", raw_output),
         ("cacheRead", cache_read),
         ("cacheWrite", cache_write),
+        ("cacheWrite1h", cache_write_1h),
         ("reasoning", reasoning),
         ("totalTokens", reported_total),
     ] {
@@ -244,7 +258,8 @@ fn token_breakdown(usage: &Usage) -> SessionParseResult<TokenBreakdown> {
         output: raw_output - reasoning,
         cache_read,
         cache_write,
-        cache_write_1h: 0,
+        // Retention duration is detail within the authoritative write total.
+        cache_write_1h: cache_write_1h.min(cache_write),
         reasoning,
     };
     if tokens.checked_total() != Some(reported_total) {
@@ -340,5 +355,86 @@ mod tests {
 
         let error = parse_pi_file(file.path()).unwrap_err();
         assert!(error.to_string().contains("session header is missing"));
+    }
+    fn operation(kind: &str, model: Option<&str>) -> serde_json::Value {
+        let fields = serde_json::json!({"model":model,"provider":"openrouter","usage":{
+            "input":10,"output":7,"cacheRead":2,"cacheWrite":3,"cacheWrite1h":2,
+            "reasoning":3,"totalTokens":22,"cost":{"total":999}
+        }});
+        let mut row = serde_json::json!({"type":kind,"timestamp":"2026-10-18T00:00:00Z"});
+        if matches!(kind, "assistant" | "toolResult" | "user") {
+            row["type"] = serde_json::json!("message");
+            row["message"] = fields;
+            row["message"]["role"] = serde_json::json!(kind);
+        } else {
+            row.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+        }
+        row
+    }
+
+    fn parse_operations(rows: &[serde_json::Value]) -> ScannedInput {
+        let content = std::iter::once(serde_json::json!({"type":"session","id":"pi-operations"}))
+            .chain(rows.iter().cloned())
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        parse(&content)
+    }
+
+    #[test]
+    fn bills_supported_operations_with_recorded_models_and_catalog_costs() {
+        let rows = [
+            "assistant",
+            "toolResult",
+            "usage",
+            "compaction",
+            "branch_summary",
+            "user",
+        ]
+        .map(|kind| operation(kind, Some("gpt-5")));
+        let scanned = parse_operations(&rows);
+        assert_eq!(scanned.messages.len(), 5);
+        assert_eq!(scanned.rejections.total(), 0);
+        for record in scanned.messages {
+            assert_eq!(record.tokens.total(), 22);
+            assert_eq!(record.tokens.reasoning, 3);
+            assert_eq!(record.tokens.output, 4);
+            assert_eq!(record.tokens.cache_write_1h, 2);
+            assert_eq!(record.provider_id.as_ref(), "openrouter");
+            assert_eq!(record.cost, 0.0);
+        }
+    }
+
+    #[test]
+    fn missing_operation_models_are_reported_without_inheriting_the_chat_model() {
+        let mut rows = vec![operation("assistant", Some("gpt-5"))];
+        rows.extend(
+            ["usage", "compaction", "branch_summary", "toolResult"]
+                .map(|kind| operation(kind, None)),
+        );
+        rows.push(operation("usage", Some("private-model")));
+        let scanned = parse_operations(&rows);
+        assert_eq!(scanned.messages.len(), 2);
+        assert_eq!(scanned.messages[1].model_id.as_ref(), "private-model");
+        assert_eq!(scanned.rejections.total(), 4);
+        assert_eq!(
+            scanned.rejections.entries().next().unwrap().key,
+            "missing-model"
+        );
+    }
+
+    #[test]
+    fn malformed_operation_detail_is_rejected_and_later_operations_survive() {
+        let mut bad = operation("usage", Some("gpt-5"));
+        bad["usage"]["cacheWrite1h"] = serde_json::json!(-1);
+        let mut oversize = operation("usage", Some("gpt-5"));
+        oversize["usage"]["cacheWrite1h"] = serde_json::json!(100);
+        let scanned = parse_operations(&[bad, oversize]);
+        assert_eq!(scanned.rejections.total(), 1);
+        assert_eq!(scanned.messages.len(), 1);
+        assert_eq!(scanned.messages[0].tokens.cache_write_1h, 3);
+        assert_eq!(scanned.messages[0].tokens.total(), 22);
     }
 }
