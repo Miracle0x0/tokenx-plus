@@ -49,7 +49,33 @@ pub(crate) fn format_cost_per_million(cost: f64, total_tokens: u64) -> String {
     }
 
     let per_million = cost / (total_tokens as f64) * 1_000_000.0;
-    format!("${:.2}", per_million)
+    if cost > 0.0 && per_million < 0.01 {
+        "<$0.01".to_string()
+    } else {
+        format!("${:.2}", per_million)
+    }
+}
+
+#[cfg(test)]
+mod cost_per_million_tests {
+    use super::format_cost_per_million;
+
+    #[test]
+    fn distinguishes_free_sub_cent_and_unavailable_rates() {
+        for (cost, tokens, expected) in [
+            (0.0, 1_000_000, "$0.00"),
+            (0.00013, 1_000_000, "<$0.01"),
+            (0.0099, 1_000_000, "<$0.01"),
+            (0.01, 1_000_000, "$0.01"),
+            (0.000004, 1_000, "<$0.01"),
+            (15.5, 1_000_000, "$15.50"),
+            (1.0, 0, "—"),
+            (-1.0, 1_000, "—"),
+            (f64::NAN, 1_000, "—"),
+        ] {
+            assert_eq!(format_cost_per_million(cost, tokens), expected);
+        }
+    }
 }
 
 /// Cache reuse multiplier: cached reads per full-price input token.
