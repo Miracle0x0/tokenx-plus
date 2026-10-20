@@ -37,6 +37,7 @@ enum ClientColumn {
     Main,
     Total,
     Workspaces,
+    Duration,
     Active,
     Space,
 }
@@ -50,6 +51,7 @@ enum SessionColumn {
     Turns,
     Tokens,
     Cost,
+    Duration,
     Active,
 }
 
@@ -69,9 +71,10 @@ fn client_table_layout(
             ),
             ResponsiveColumn::fixed_required(ClientColumn::Main, 10, 6),
             ResponsiveColumn::fixed_required(ClientColumn::Total, 20, 6),
-            ResponsiveColumn::fixed_optional(ClientColumn::Space, 10, 40, 10),
-            ResponsiveColumn::fixed_optional(ClientColumn::Active, 20, 30, 12),
-            ResponsiveColumn::fixed_optional(ClientColumn::Workspaces, 30, 20, 10),
+            ResponsiveColumn::fixed_optional(ClientColumn::Duration, 10, 35, 12),
+            ResponsiveColumn::fixed_optional(ClientColumn::Space, 20, 50, 10),
+            ResponsiveColumn::fixed_optional(ClientColumn::Active, 30, 40, 12),
+            ResponsiveColumn::fixed_optional(ClientColumn::Workspaces, 40, 30, 10),
         ],
     )
 }
@@ -93,11 +96,12 @@ fn session_table_layout(
                 SESSION_MAX_WIDTH,
             ),
             ResponsiveColumn::fixed_required(SessionColumn::Tokens, 50, 10),
-            ResponsiveColumn::fixed_required(SessionColumn::Active, 70, 12),
-            ResponsiveColumn::fixed_optional(SessionColumn::Cost, 10, 60, 10),
+            ResponsiveColumn::fixed_required(SessionColumn::Active, 80, 12),
+            ResponsiveColumn::fixed_optional(SessionColumn::Duration, 10, 70, 12),
+            ResponsiveColumn::fixed_optional(SessionColumn::Cost, 20, 60, 10),
             ResponsiveColumn::measured_atomic_optional(
                 SessionColumn::Workspace,
-                20,
+                30,
                 10,
                 WORKSPACE_MIN_WIDTH,
                 workspace_content_width,
@@ -105,14 +109,14 @@ fn session_table_layout(
             ),
             ResponsiveColumn::measured_atomic_optional(
                 SessionColumn::Models,
-                30,
+                40,
                 20,
                 MODELS_MIN_WIDTH,
                 models_content_width,
                 MODELS_MAX_WIDTH,
             ),
-            ResponsiveColumn::fixed_optional(SessionColumn::Messages, 40, 30, 6),
-            ResponsiveColumn::fixed_optional(SessionColumn::Turns, 50, 40, 7),
+            ResponsiveColumn::fixed_optional(SessionColumn::Messages, 50, 30, 6),
+            ResponsiveColumn::fixed_optional(SessionColumn::Turns, 60, 40, 7),
         ],
     )
 }
@@ -131,6 +135,7 @@ fn client_column_label(column: ClientColumn) -> std::borrow::Cow<'static, str> {
         ClientColumn::Main => rust_i18n::t!("tui.ui.sessions.header.main"),
         ClientColumn::Total => rust_i18n::t!("tui.ui.sessions.header.total"),
         ClientColumn::Workspaces => rust_i18n::t!("tui.ui.sessions.header.workspaces"),
+        ClientColumn::Duration => rust_i18n::t!("tui.ui.sessions.header.duration"),
         ClientColumn::Active => rust_i18n::t!("tui.ui.sessions.header.active"),
         ClientColumn::Space => rust_i18n::t!("tui.ui.sessions.header.space"),
     }
@@ -253,6 +258,9 @@ fn render_clients(
                         }
                         ClientColumn::Workspaces => {
                             right_aligned_cell(row.workspace_count.to_string(), width)
+                        }
+                        ClientColumn::Duration => {
+                            right_aligned_cell(format_duration(row.duration_seconds), width)
                         }
                         ClientColumn::Active => right_aligned_cell(
                             format_timestamp(row.last_seen, app.calendar_context()),
@@ -403,6 +411,10 @@ fn render_session_details(
                             right_aligned_cell(format_tokens(row.tokens.total()), width)
                         }
                         SessionColumn::Cost => right_aligned_cell(format_cost(row.cost), width),
+                        SessionColumn::Duration => right_aligned_cell(
+                            format_duration(row.last_seen - row.first_seen),
+                            width,
+                        ),
                         SessionColumn::Active => right_aligned_cell(
                             format_timestamp(row.last_seen, app.calendar_context()),
                             width,
@@ -426,6 +438,7 @@ fn render_session_details(
                     SessionColumn::Turns => rust_i18n::t!("tui.ui.sessions.header.turns"),
                     SessionColumn::Tokens => rust_i18n::t!("tui.ui.sessions.header.tokens"),
                     SessionColumn::Cost => rust_i18n::t!("tui.ui.sessions.header.cost"),
+                    SessionColumn::Duration => rust_i18n::t!("tui.ui.sessions.header.duration"),
                     SessionColumn::Active => rust_i18n::t!("tui.ui.sessions.header.active"),
                 };
                 match column {
@@ -546,6 +559,26 @@ fn format_timestamp(timestamp: i64, calendar: tokenx_engine::CalendarContext) ->
         .unwrap_or_else(|| "—".to_string())
 }
 
+fn format_duration(seconds: i64) -> String {
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    if days > 0 {
+        rust_i18n::t!("tui.ui.sessions.duration.days", days = days, hours = hours).into_owned()
+    } else if hours > 0 {
+        rust_i18n::t!(
+            "tui.ui.sessions.duration.hours",
+            hours = hours,
+            minutes = minutes
+        )
+        .into_owned()
+    } else if minutes > 0 {
+        rust_i18n::t!("tui.ui.sessions.duration.minutes", minutes = minutes).into_owned()
+    } else {
+        rust_i18n::t!("tui.ui.sessions.duration.seconds", seconds = seconds).into_owned()
+    }
+}
+
 pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = bytes as f64;
@@ -653,6 +686,7 @@ mod tests {
                 ClientColumn::Main,
                 ClientColumn::Total,
                 ClientColumn::Workspaces,
+                ClientColumn::Duration,
                 ClientColumn::Active,
                 ClientColumn::Space,
             ]
@@ -689,6 +723,7 @@ mod tests {
                 SessionColumn::Turns,
                 SessionColumn::Tokens,
                 SessionColumn::Cost,
+                SessionColumn::Duration,
                 SessionColumn::Active,
             ]
         );
