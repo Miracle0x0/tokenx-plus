@@ -8,6 +8,7 @@ tui:
         main: "Main"
         total: "Total"
         workspaces: "Workspaces"
+        duration: "Duration"
         active: "Active"
         space: "Space"
         session: "  Session"
@@ -17,6 +18,11 @@ tui:
         turns: "Turns"
         tokens: "Token"
         cost: "Cost"
+      duration:
+        days: "%{days}d %{hours}h"
+        hours: "%{hours}h %{minutes}m"
+        minutes: "%{minutes}m"
+        seconds: "%{seconds}s"
       status:
         degraded: "Degraded"
         degraded_message: "last refresh failed; showing last successful data"

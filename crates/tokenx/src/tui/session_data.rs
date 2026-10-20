@@ -15,6 +15,7 @@ pub(crate) struct ClientSummary {
     pub main_session_count: usize,
     pub session_count: usize,
     pub workspace_count: usize,
+    pub duration_seconds: i64,
     pub last_seen: i64,
     pub space_bytes: u64,
 }
@@ -52,7 +53,8 @@ impl SessionSnapshot {
         input_footprint: &InputFootprint,
     ) -> Self {
         let sessions = sessions.into();
-        let mut summaries = BTreeMap::<ClientId, (usize, usize, BTreeSet<Arc<str>>, i64)>::new();
+        let mut summaries =
+            BTreeMap::<ClientId, (usize, usize, BTreeSet<Arc<str>>, i64, i64)>::new();
         let mut session_indices_by_client = BTreeMap::<ClientId, Vec<usize>>::new();
         let mut display_widths_by_client = BTreeMap::<ClientId, SessionDisplayWidths>::new();
 
@@ -75,7 +77,7 @@ impl SessionSnapshot {
                 .max(models_display_width(session.models.iter()));
             let entry = summaries
                 .entry(session.client)
-                .or_insert_with(|| (0, 0, BTreeSet::new(), 0));
+                .or_insert_with(|| (0, 0, BTreeSet::new(), 0, 0));
             entry.0 = entry.0.saturating_add(1);
             if session.is_main_session {
                 entry.1 = entry.1.saturating_add(1);
@@ -94,24 +96,29 @@ impl SessionSnapshot {
                 entry.2.insert(Arc::clone(workspace));
             }
             entry.3 = entry.3.max(session.last_seen);
+            entry.4 += session.last_seen - session.first_seen;
         }
 
         for (client, _) in input_footprint.iter() {
             summaries
                 .entry(client)
-                .or_insert_with(|| (0, 0, BTreeSet::new(), 0));
+                .or_insert_with(|| (0, 0, BTreeSet::new(), 0, 0));
         }
 
         let client_summaries = summaries
             .into_iter()
             .map(
-                |(client, (session_count, main_session_count, workspaces, last_seen))| {
+                |(
+                    client,
+                    (session_count, main_session_count, workspaces, last_seen, duration_seconds),
+                )| {
                     ClientSummary {
                         space_bytes: input_footprint.bytes_for(client),
                         client,
                         main_session_count,
                         session_count,
                         workspace_count: workspaces.len(),
+                        duration_seconds,
                         last_seen,
                     }
                 },
@@ -202,6 +209,7 @@ mod tests {
         session.is_main_session = is_main_session;
         session.workspace_key = workspace_key.map(Arc::from);
         session.workspace_label = workspace_label.map(Arc::from);
+        session.first_seen = last_seen;
         session.last_seen = last_seen;
         session
     }
@@ -247,10 +255,14 @@ mod tests {
             (ClientId::OpenCode, 99),
         ])
         .unwrap();
+        let mut first = session(ClientId::Codex, "c-1", true, Some("repo-a"), None, 10);
+        first.first_seen = 1;
+        let mut second = session(ClientId::Codex, "c-2", false, Some("repo-a"), None, 30);
+        second.first_seen = 20;
         let snapshot = SessionSnapshot::new(
             vec![
-                session(ClientId::Codex, "c-1", true, Some("repo-a"), None, 10),
-                session(ClientId::Codex, "c-2", false, Some("repo-a"), None, 30),
+                first,
+                second,
                 session(
                     ClientId::OpenCode,
                     "o-1",
@@ -271,6 +283,7 @@ mod tests {
         assert_eq!(codex.session_count, 2);
         assert_eq!(codex.main_session_count, 1);
         assert_eq!(codex.workspace_count, 1);
+        assert_eq!(codex.duration_seconds, 19);
         assert_eq!(codex.last_seen, 30);
         assert_eq!(codex.space_bytes, 42);
 
@@ -280,6 +293,7 @@ mod tests {
             .find(|summary| summary.client == ClientId::OpenCode)
             .expect("opencode summary should be present");
         assert_eq!(opencode.workspace_count, 1);
+        assert_eq!(opencode.duration_seconds, 0);
 
         let claude = snapshot
             .client_summaries()
@@ -289,6 +303,7 @@ mod tests {
         assert_eq!(claude.session_count, 0);
         assert_eq!(claude.main_session_count, 0);
         assert_eq!(claude.workspace_count, 0);
+        assert_eq!(claude.duration_seconds, 0);
         assert_eq!(claude.last_seen, 0);
         assert_eq!(claude.space_bytes, 7);
 

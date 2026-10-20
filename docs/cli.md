@@ -52,6 +52,10 @@ Monthly, Weekly, Daily, Hourly, Stats, Agents, and Sessions are intentionally
 TUI-only. Their richer interactions and cross-tab state are not duplicated in
 parallel CLI projection implementations.
 
+Sessions shows Duration as the last usage-record timestamp minus the first
+within the selected date range. Each client row sums its session durations;
+session details show the individual spans, including idle time.
+
 The Subscription tab is the interactive plan and quota surface. Open it
 with `tokenx tui --tab subscription`.
 

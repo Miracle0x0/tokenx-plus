@@ -8,6 +8,7 @@ tui:
         main: "主会话"
         total: "总计"
         workspaces: "工作区"
+        duration: "时长"
         active: "活跃时间"
         space: "空间"
         session: "  会话"
@@ -17,6 +18,11 @@ tui:
         turns: "轮次"
         tokens: "词元"
         cost: "费用"
+      duration:
+        days: "%{days}天 %{hours}时"
+        hours: "%{hours}时 %{minutes}分"
+        minutes: "%{minutes}分"
+        seconds: "%{seconds}秒"
       status:
         degraded: "已降级"
         degraded_message: "上次刷新失败；正在显示最近一次成功的数据"
