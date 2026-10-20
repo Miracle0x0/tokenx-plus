@@ -1,6 +1,6 @@
 {
   "name": "@juya-ai/tokenx-linux-x64-gnu",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Tokenx native binary for Linux x64 with glibc.",
   "license": "MIT",
   "type": "module",
