@@ -29,7 +29,7 @@ env:
 jobs:
   rust:
     name: CodSpeed / Rust
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       # CodSpeed exchanges this OIDC token for benchmark upload access.
