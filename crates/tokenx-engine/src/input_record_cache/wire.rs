@@ -132,6 +132,7 @@ pub(super) struct CachedUsageRecord {
     pub(super) agent_instance: Option<Arc<str>>,
     pub(super) dedup_key: Option<u64>,
     pub(super) is_turn_start: bool,
+    pub(super) is_aggregate: bool,
 }
 
 impl From<CachedUsageRecord> for UsageRecord {
@@ -159,6 +160,7 @@ impl From<CachedUsageRecord> for UsageRecord {
             agent_instance: cached.agent_instance,
             dedup_key: cached.dedup_key,
             is_turn_start: cached.is_turn_start,
+            is_aggregate: cached.is_aggregate,
         }
     }
 }
@@ -185,6 +187,7 @@ pub(super) struct BorrowedCachedUsageRecord<'a> {
     pub(super) agent_instance: Option<&'a str>,
     pub(super) dedup_key: Option<u64>,
     pub(super) is_turn_start: bool,
+    pub(super) is_aggregate: bool,
 }
 
 impl<'a> From<&'a UsageRecord> for BorrowedCachedUsageRecord<'a> {
@@ -210,6 +213,7 @@ impl<'a> From<&'a UsageRecord> for BorrowedCachedUsageRecord<'a> {
             agent_instance: record.agent_instance.as_deref(),
             dedup_key: record.dedup_key,
             is_turn_start: record.is_turn_start,
+            is_aggregate: record.is_aggregate,
         }
     }
 }

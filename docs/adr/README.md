@@ -31,6 +31,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0025](0025-codex-response-usage-settlement.md) | Codex response usage settlement | Accepted |
 | [0026](0026-claude-verified-append-parsing.md) | Claude verified append parsing | Accepted |
 | [0027](0027-billing-provider-custom-pricing.md) | Billing-provider custom pricing | Accepted |
+| [0028](0028-request-usage-and-pricing.md) | Disjoint usage buckets and request-level pricing | Accepted |
 
 ## Conventions
 

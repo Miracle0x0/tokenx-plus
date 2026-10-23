@@ -2,9 +2,8 @@
 //!
 //! Grok Build writes JSON-RPC session updates under
 //! `~/.grok/sessions/<urlencoded-workspace>/<session-id>/updates.jsonl`.
-//! Current logs expose cumulative `totalTokens` counters without a stable
-//! input/output split, so this parser records per-turn positive total-token
-//! deltas with the fixed local-history token bucket allocation.
+//! Completed turns carry authoritative token buckets. Cumulative-only turns
+//! retain the documented total-only allocation; they never duplicate a completed turn.
 
 use crate::input_health::{InputFailure, RecordRejectionReason, RejectionSummary, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
@@ -12,6 +11,9 @@ use crate::records::utils::{extract_string, parse_timestamp_value};
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
 use crate::token_imputation;
 use serde_json::Value;
+use std::collections::{BTreeMap, HashSet};
+
+use super::completion;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
@@ -125,6 +127,9 @@ pub fn parse_grok_updates_file(path: &Path) -> SessionParseResult<ScannedInput> 
         ..ScannedInput::default()
     };
     let mut aggregate_replay_allowed = true;
+    let mut completions = BTreeMap::<(String, String), Vec<UsageRecord>>::new();
+    let mut covered_turns = HashSet::new();
+    let mut completion_turns = BTreeMap::new();
 
     for (line_index, line) in BufReader::new(file).lines().enumerate() {
         let line_number = line_index + 1;
@@ -155,6 +160,27 @@ pub fn parse_grok_updates_file(path: &Path) -> SessionParseResult<ScannedInput> 
 
         let record_model = extract_model_id(&value);
         let record_session = extract_session_id(&value);
+        let modern =
+            match completion::parse(&value, record_model.as_deref().or(current_model.as_deref())) {
+                Ok(modern) => modern,
+                Err(reason) => {
+                    scanned.rejections.record(reason);
+                    let session = record_session.as_ref().or(session_id.as_ref());
+                    let known_owner =
+                        session
+                            .zip(completion::prompt_id(&value))
+                            .and_then(|(session, prompt)| {
+                                completion_turns.get(&(session.clone(), prompt.to_owned()))
+                            });
+                    if known_owner.is_none() {
+                        if let Some(turn) = &active_turn {
+                            covered_turns.insert(turn.turn_index);
+                        }
+                    }
+                    aggregate_replay_allowed = false;
+                    continue;
+                }
+            };
         let is_user_chunk = is_user_message_chunk(&value);
         let total_tokens = match extract_total_tokens(&value) {
             Ok(total_tokens) => total_tokens,
@@ -169,7 +195,7 @@ pub fn parse_grok_updates_file(path: &Path) -> SessionParseResult<ScannedInput> 
                 break;
             }
         };
-        if !is_user_chunk && total_tokens.is_none() {
+        if !is_user_chunk && total_tokens.is_none() && modern.is_none() {
             continue;
         }
         let Some(timestamp) = extract_timestamp_ms(&value).filter(|timestamp| *timestamp > 0)
@@ -229,6 +255,57 @@ pub fn parse_grok_updates_file(path: &Path) -> SessionParseResult<ScannedInput> 
                 turn_index,
             ));
             turn_index = turn_index.saturating_add(1);
+        }
+
+        if let Some(usages) = modern {
+            aggregate_replay_allowed = false;
+            let Some(session) = &session_id else {
+                scanned
+                    .rejections
+                    .record(RecordRejectionReason::MalformedRecord);
+                continue;
+            };
+            let identity = completion::prompt_id(&value)
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("line-{line_number}"));
+            let key = (session.clone(), identity);
+            let owner = completion_turns
+                .entry(key.clone())
+                .or_insert_with(|| active_turn.as_ref().map(|turn| turn.turn_index));
+            if let Some(owner) = owner {
+                covered_turns.insert(*owner);
+            }
+            let messages: Vec<_> = usages
+                .into_iter()
+                .enumerate()
+                .map(|(index, usage)| {
+                    let dedup =
+                        crate::records::dedup_hash_str(&format!("grok:{key:?}:{}", usage.model));
+                    let mut message = UsageRecord::new_with_dedup(
+                        usage.model,
+                        PROVIDER_ID,
+                        session,
+                        timestamp,
+                        usage.tokens,
+                        0.0,
+                        Some(dedup),
+                    );
+                    message.message_count = usage.calls.unwrap_or(0);
+                    message.is_aggregate = usage.calls != Some(1);
+                    message.is_turn_start = index == 0;
+                    message.set_workspace(
+                        metadata.workspace_key.clone(),
+                        metadata.workspace_label.clone(),
+                    );
+                    message
+                })
+                .collect();
+            let total: i64 = messages.iter().map(|message| message.tokens.total()).sum();
+            let previous = completions.entry(key).or_default();
+            let previous_total: i64 = previous.iter().map(|message| message.tokens.total()).sum();
+            if total >= previous_total {
+                *previous = messages;
+            }
         }
 
         let Some(total_tokens) = total_tokens else {
@@ -347,7 +424,9 @@ pub fn parse_grok_updates_file(path: &Path) -> SessionParseResult<ScannedInput> 
         scanned.interrupted = related_interruption;
     }
 
+    pending_messages.retain(|message| !covered_turns.contains(&message.turn_index));
     if pending_messages.is_empty() {
+        scanned.messages = completions.into_values().flatten().collect();
         return Ok(scanned);
     }
     let Some(session_id) = session_id else {
@@ -359,6 +438,7 @@ pub fn parse_grok_updates_file(path: &Path) -> SessionParseResult<ScannedInput> 
         return Ok(scanned);
     };
     scanned.messages = build_messages(metadata, session_id, pending_messages)?;
+    scanned.messages.extend(completions.into_values().flatten());
     Ok(scanned)
 }
 
@@ -415,6 +495,7 @@ fn build_messages(
                 metadata.workspace_label.clone(),
             );
             message.is_turn_start = true;
+            message.is_aggregate = true;
             Ok(message)
         })
         .collect::<SessionParseResult<Vec<_>>>()?;
@@ -696,6 +777,180 @@ mod tests {
         let (temp, updates_path) = write_fixture(updates_jsonl, None);
         std::fs::write(updates_path.with_file_name("events.jsonl"), events_jsonl).unwrap();
         (temp, updates_path)
+    }
+
+    fn completion_row(prompt: &str, usage: Value) -> Value {
+        serde_json::json!({"params":{"sessionId":"probe","modelId":"grok-4.5",
+            "update":{"sessionUpdate":"turn_completed","promptId":prompt,"usage":usage},
+            "_meta":{"eventId":"reused-event","agentTimestampMs":1790900001000i64}}})
+    }
+
+    fn parse_rows(rows: &[Value]) -> ScannedInput {
+        let text = rows
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (_temp, path) = write_fixture(&text, None);
+        super::parse_grok_updates_file(&path).unwrap()
+    }
+
+    #[test]
+    fn completion_usage_preserves_disjoint_buckets_and_recorded_call_count() {
+        let row = completion_row(
+            "prompt",
+            serde_json::json!({
+                "inputTokens":372794,"outputTokens":8021,"totalTokens":380815,
+                "cachedReadTokens":314112,"reasoningTokens":4144,"modelCalls":8,"costUsdTicks":12345000000i64
+            }),
+        );
+        let scanned = parse_rows(&[row]);
+        assert_eq!(scanned.rejections.total(), 0);
+        let message = &scanned.messages[0];
+        assert_eq!(message.tokens.total(), 380815);
+        assert_eq!(
+            (
+                message.tokens.input,
+                message.tokens.output,
+                message.tokens.cache_read,
+                message.tokens.reasoning
+            ),
+            (58682, 3877, 314112, 4144)
+        );
+        assert_eq!(message.message_count, 8);
+        assert!(message.is_aggregate);
+        assert_eq!(message.cost, 0.0);
+    }
+
+    #[test]
+    fn prompt_snapshots_replace_older_counts_and_reused_event_ids_do_not_merge_turns() {
+        let row = |id, input| {
+            completion_row(
+                id,
+                serde_json::json!({"inputTokens":input,"outputTokens":20,"modelCalls":1}),
+            )
+        };
+        let scanned = parse_rows(&[
+            row("one", 100),
+            row("one", 120),
+            row("one", 110),
+            row("two", 100),
+        ]);
+        assert_eq!(scanned.messages.len(), 2);
+        assert_eq!(
+            scanned
+                .messages
+                .iter()
+                .map(|m| m.tokens.total())
+                .sum::<i64>(),
+            260
+        );
+        assert!(scanned.messages.iter().all(|m| !m.is_aggregate));
+    }
+
+    #[test]
+    fn model_breakdowns_keep_model_identity_and_count_the_turn_once() {
+        let scanned = parse_rows(&[completion_row(
+            "one",
+            serde_json::json!({
+                "inputTokens":300,"outputTokens":30,
+                "modelUsage":{"grok-4.5":{"inputTokens":100,"outputTokens":10,"modelCalls":1},
+                              "grok-4.6":{"inputTokens":200,"outputTokens":20,"modelCalls":2}}
+            }),
+        )]);
+        assert_eq!(scanned.messages.len(), 2);
+        assert_eq!(
+            scanned.messages.iter().filter(|m| m.is_turn_start).count(),
+            1
+        );
+        assert_eq!(
+            scanned
+                .messages
+                .iter()
+                .map(|m| m.message_count)
+                .sum::<i32>(),
+            3
+        );
+        assert_eq!(scanned.messages[1].model_id.as_ref(), "grok-4.6");
+    }
+
+    #[test]
+    fn invalid_completion_does_not_erase_other_completed_turns() {
+        let scanned = parse_rows(&[
+            completion_row(
+                "bad",
+                serde_json::json!({"inputTokens":10,"outputTokens":-1}),
+            ),
+            completion_row(
+                "bad-total",
+                serde_json::json!({"inputTokens":10,"totalTokens":20}),
+            ),
+            completion_row(
+                "bad-overflow",
+                serde_json::json!({"inputTokens":i64::MAX,"outputTokens":1}),
+            ),
+            completion_row(
+                "good",
+                serde_json::json!({"inputTokens":10,"outputTokens":2}),
+            ),
+        ]);
+        assert_eq!(scanned.rejections.total(), 3);
+        assert_eq!(scanned.messages.len(), 1);
+        assert_eq!(scanned.messages[0].tokens.total(), 12);
+        assert!(scanned.messages[0].is_aggregate);
+    }
+
+    #[test]
+    fn late_prompt_retransmission_does_not_cover_the_next_user_turn() {
+        let complete = completion_row(
+            "first",
+            serde_json::json!({"inputTokens":100,"modelCalls":1}),
+        );
+        let user = serde_json::json!({"params":{"sessionId":"probe","modelId":"grok-4.5",
+            "update":{"sessionUpdate":"user_message_chunk"},"_meta":{"agentTimestampMs":1790900002000i64}}});
+        let count = |total| serde_json::json!({"timestamp":1790900003000i64,"totalTokens":total});
+        let scanned = parse_rows(&[count(100), complete.clone(), user, complete, count(150)]);
+        assert_eq!(
+            scanned
+                .messages
+                .iter()
+                .map(|m| m.tokens.total())
+                .sum::<i64>(),
+            150
+        );
+    }
+
+    #[test]
+    fn detailed_turn_replaces_only_its_own_cumulative_counts() {
+        let user = |time| {
+            serde_json::json!({"params":{"sessionId":"probe","modelId":"grok-4.5",
+            "update":{"sessionUpdate":"user_message_chunk"},"_meta":{"agentTimestampMs":time}}})
+        };
+        let count = |time, total| serde_json::json!({"timestamp":time,"totalTokens":total});
+        let mut complete = completion_row(
+            "two",
+            serde_json::json!({"inputTokens":100,"outputTokens":20,"modelCalls":2}),
+        );
+        complete["params"]["_meta"]["agentTimestampMs"] = serde_json::json!(1700000004000i64);
+        let scanned = parse_rows(&[
+            user(1700000000000i64),
+            count(1700000001000i64, 50),
+            user(1700000002000i64),
+            count(1700000003000i64, 170),
+            complete,
+            user(1700000005000i64),
+            count(1700000006000i64, 200),
+        ]);
+        assert_eq!(scanned.rejections.total(), 0);
+        assert_eq!(scanned.messages.len(), 3);
+        assert_eq!(
+            scanned
+                .messages
+                .iter()
+                .map(|m| m.tokens.total())
+                .sum::<i64>(),
+            200
+        );
     }
 
     #[test]

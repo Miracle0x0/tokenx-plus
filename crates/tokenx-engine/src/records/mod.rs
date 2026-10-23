@@ -97,6 +97,8 @@ pub struct UsageRecord {
     #[serde(deserialize_with = "intern::de_intern_opt")]
     pub(crate) claude_session_id: Option<std::sync::Arc<str>>,
     pub(crate) copilot_context: Option<CopilotContext>,
+    /// This row combines calls whose individual prompt lengths are unavailable.
+    pub is_aggregate: bool,
     pub cost: f64,
     /// Derived pricing failure; never persisted in source-record shards.
     #[serde(skip)]
@@ -409,6 +411,7 @@ impl UsageRecord {
             timestamp,
             tokens,
             cost,
+            is_aggregate: false,
             pricing_error: None,
             claude_input_is_split: false,
             claude_is_cost_snapshot: false,

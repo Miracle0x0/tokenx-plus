@@ -62,6 +62,10 @@ pub enum PricingComputationError {
     },
     #[error("one-hour cache writes have no valid rate in the selected pricing row")]
     MissingCacheWrite1hRate,
+    #[error(
+        "aggregate usage cannot establish per-request pricing above {threshold} prompt tokens"
+    )]
+    AmbiguousRequestTier { threshold: i64 },
     #[error("custom pricing for billing provider `{provider}` has no {component} rate")]
     MissingBillingRate {
         provider: String,
@@ -363,7 +367,10 @@ impl PricingLookup {
             Cow::Borrowed(&result.pricing)
         };
 
-        let pricing = super::service_tier::effective_service_tier(&pricing, service_tier, usage)?;
+        let pricing =
+            super::service_tier::effective_service_tier(&pricing, service_tier, usage, false)?;
+        let pricing =
+            super::service_tier::effective_xai_request_rates(&pricing, provider_id, usage, false)?;
         compute_cost(&pricing, usage)
     }
 }
@@ -547,7 +554,7 @@ fn time_period_matches(period: &TimePeriodPrice, timestamp: &chrono::DateTime<Ut
     }
 }
 
-fn effective_pricing_at(
+pub(super) fn effective_pricing_at(
     pricing: &ModelPricing,
     timestamp_ms: Option<i64>,
 ) -> Result<Cow<'_, ModelPricing>, PricingComputationError> {

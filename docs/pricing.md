@@ -84,7 +84,7 @@ LiteLLM's per-token input, output, cache-read, and cache-creation tier fields ar
 retained, including `_above_272k_tokens_priority` and
 `_above_272k_tokens_flex`. When long-context pricing is present, tier selection
 uses inclusive prompt size (ordinary input plus cache reads and writes). Above
-272,000 prompt tokens, the long-context rates apply to the whole request.
+272,000 prompt tokens, the long-context rates apply to the whole request, including ordinary/default pricing. Output volume alone cannot select a long-context tier.
 No fixed multiplier is inferred. Custom rows can provide the same per-token
 suffix fields; for example, `input_cost_per_token_priority`. Custom overrides
 and configured catalog order keep their existing authority: rates are not
@@ -101,6 +101,12 @@ billing tier. [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/f
 can serve a request at the standard tier; the inspected Codex token events do
 not record that response tier. Local costs remain catalog estimates, separate
 from invoices and [ChatGPT credit consumption](https://learn.chatgpt.com/docs/agent-configuration/speed).
+
+### Request-level tiers and aggregate usage
+
+For xAI rows with explicit 200k rates, ordinary input plus cache reads selects the whole-request rate at 200,000 prompt tokens. OpenAI 272k rates use ordinary input plus both cache buckets and apply strictly above 272,000 tokens. All rates come from the selected row; missing required rates exclude cost with a diagnostic.
+
+Grok completion records retain `modelCalls`. Only an explicit count of one establishes a single request; multiple calls, missing counts, and cumulative-only usage are aggregates. When such an aggregate reaches a request-tier boundary, its constituents cannot be priced from their sum or arithmetic mean. Tokens remain reportable, cost is excluded, and `requestTierUnavailable` identifies the uncertainty. Below the boundary, the aggregate cannot contain a request that crosses it and uses the ordinary rates. See [request usage and pricing](adr/0028-request-usage-and-pricing.md).
 
 ### Claude Code cache durations
 

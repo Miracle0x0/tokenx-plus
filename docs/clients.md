@@ -34,7 +34,7 @@ means recursive discovery under the stated root.
 | `pi` | Pi | `~/.pi/agent/sessions/**/*.jsonl` | Reads assistant/tool-result usage and standalone usage, compaction, and branch-summary calls. Missing models are reported; costs use Tokenx pricing. |
 | `omp` | OMP | `~/.omp/agent/sessions/**/*.jsonl` | Reads OMP agent usage, deduplicates copied responses across forked sessions, and identifies child sessions from parent transcripts or standard session directory names. See [OMP identity semantics](adr/0020-omp-message-and-session-identity.md). |
 | `kimi` | Kimi | `~/.kimi-code/sessions/**/agents/*/wire.jsonl` | Reads ordered per-agent `usage.record` events and reconciles each model alias with its applicable `llm.request` or current config entry. |
-| `qwen` | Qwen | `~/.qwen/projects/**/*.jsonl` | Reads assistant records carrying Qwen usage metadata. |
+| `qwen` | Qwen | `~/.qwen/projects/**/*.jsonl` | Splits cached tokens out of the inclusive prompt; recorded totals distinguish inclusive OpenAI-compatible reasoning from additive Gemini reasoning. |
 | `roocode` | Roo Code | `~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/**/ui_messages.json`; `~/.vscode-server/data/User/globalStorage/rooveterinaryinc.roo-cline/tasks/**/ui_messages.json` | Reads task UI messages together with the required `api_conversation_history.json` sibling. |
 | `mux` | Mux | `~/.mux/sessions/**/session-usage.json` | Reads per-session model usage summaries and applies stable record deduplication. |
 | `kilo` | Kilo | `~/.local/share/kilo/kilo.db` | Reads the Kilo SQLite store with committed WAL state for all Kilo frontends using that data environment. |
@@ -51,7 +51,7 @@ means recursive discovery under the stated root.
 | `warp` | Warp | Platform `warp.sqlite` roots listed under [Warp local token parsing](#warp-local-token-parsing) | Reads local conversation/model token totals from SQLite with committed WAL state. |
 | `cline` | Cline | `~/.cline/data/sessions/**/*.messages.json` | Reads the SDK v1 messages envelope and optional root manifest workspace metadata. |
 | `commandcode` | Command Code | `~/.commandcode/projects/**/*.jsonl` with optional same-stem `.meta.json` sidecars | Estimates transcript tokens. A non-empty session metadata model is authoritative; otherwise the record uses the explicit unpriced `commandcode-model-unknown` identity. The current global config never relabels historical sessions. |
-| `grok` | Grok | `~/.grok/sessions/**/updates.jsonl` with optional `summary.json` and `events.jsonl` siblings | Reads positive total-token deltas and optional session metadata. |
+| `grok` | Grok | `~/.grok/sessions/**/updates.jsonl` with optional `summary.json` and `events.jsonl` siblings | Reads completed-turn token and per-model breakdowns, deduplicates prompt snapshots, and preserves cumulative-only turns without counting completed turns twice. Unknown or multiple call counts retain aggregate pricing scope. |
 | `dsh` | DeepSeek Harness | `$DSH_HOME/sessions/**` when `DSH_HOME` is non-empty, otherwise `~/.dsh/sessions/**`; `session.v4.jsonl[.zstd]`, `session.v3.jsonl[.zstd]`, and `session.jsonl[.zstd]` | Reads assistant settlements, reported retry usage, and compaction summaries; selects the newest supported generation, separates reasoning from inclusive output, and excludes inherited fork usage. |
 
 ## DeepSeek Harness local token parsing
