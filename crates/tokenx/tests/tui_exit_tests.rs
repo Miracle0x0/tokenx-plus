@@ -133,6 +133,7 @@ fn run_tui_with_input(input: &[u8], block_local_pricing: bool) -> (ExitStatus, V
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("ALL_PROXY", "http://127.0.0.1:9")
         .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
         .stdin(Stdio::from(stdin))
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))

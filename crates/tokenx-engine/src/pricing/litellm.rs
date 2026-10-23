@@ -68,7 +68,14 @@ pub fn load_cached_any_age(cache_dir: &Path) -> Option<PricingDataset> {
 
 pub async fn fetch(cache_dir: &Path) -> Result<PricingDataset, reqwest::Error> {
     let mut diagnostics = None;
-    fetch_inner(cache_dir, PRICING_URL, true, &mut diagnostics).await
+    fetch_inner(
+        reqwest::Client::builder(),
+        cache_dir,
+        PRICING_URL,
+        true,
+        &mut diagnostics,
+    )
+    .await
 }
 
 pub(crate) async fn fetch_with_diagnostics(
@@ -76,7 +83,14 @@ pub(crate) async fn fetch_with_diagnostics(
     diagnostics: &mut PricingDiagnostics,
 ) -> Result<PricingDataset, reqwest::Error> {
     let mut diagnostics = Some(diagnostics);
-    fetch_inner(cache_dir, PRICING_URL, true, &mut diagnostics).await
+    fetch_inner(
+        reqwest::Client::builder(),
+        cache_dir,
+        PRICING_URL,
+        true,
+        &mut diagnostics,
+    )
+    .await
 }
 
 pub(crate) async fn refresh_with_diagnostics(
@@ -84,12 +98,19 @@ pub(crate) async fn refresh_with_diagnostics(
     diagnostics: &mut PricingDiagnostics,
 ) -> Result<PricingDataset, String> {
     let mut diagnostics = Some(diagnostics);
-    fetch_inner(cache_dir, PRICING_URL, false, &mut diagnostics)
-        .await
-        .map_err(|error| error.to_string())
+    fetch_inner(
+        reqwest::Client::builder(),
+        cache_dir,
+        PRICING_URL,
+        false,
+        &mut diagnostics,
+    )
+    .await
+    .map_err(|error| error.to_string())
 }
 
 async fn fetch_inner(
+    client_builder: reqwest::ClientBuilder,
     cache_dir: &Path,
     url: &str,
     use_cache: bool,
@@ -101,7 +122,7 @@ async fn fetch_inner(
         }
     }
 
-    let client = reqwest::Client::builder()
+    let client = client_builder
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
@@ -224,7 +245,14 @@ mod tests {
         let mut diagnostics = None;
         let cache_dir = tempfile::TempDir::new().unwrap();
 
-        let result = fetch_inner(cache_dir.path(), &url, false, &mut diagnostics).await;
+        let result = fetch_inner(
+            reqwest::Client::builder().no_proxy(),
+            cache_dir.path(),
+            &url,
+            false,
+            &mut diagnostics,
+        )
+        .await;
 
         assert!(result.is_err());
     }
@@ -236,7 +264,14 @@ mod tests {
         let mut sink = Some(&mut diagnostics);
         let cache_dir = tempfile::TempDir::new().unwrap();
 
-        let result = fetch_inner(cache_dir.path(), &url, false, &mut sink).await;
+        let result = fetch_inner(
+            reqwest::Client::builder().no_proxy(),
+            cache_dir.path(),
+            &url,
+            false,
+            &mut sink,
+        )
+        .await;
 
         assert!(result.is_err());
         assert!(
@@ -271,9 +306,15 @@ mod tests {
         let mut diagnostics = Vec::new();
         let mut sink = Some(&mut diagnostics);
 
-        let result = fetch_inner(&cache_dir, &url, false, &mut sink)
-            .await
-            .unwrap();
+        let result = fetch_inner(
+            reqwest::Client::builder().no_proxy(),
+            &cache_dir,
+            &url,
+            false,
+            &mut sink,
+        )
+        .await
+        .unwrap();
 
         assert!(result.contains_key("snapshot-model"));
         assert!(diagnostics

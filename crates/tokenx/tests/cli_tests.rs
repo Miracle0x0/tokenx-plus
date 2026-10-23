@@ -507,6 +507,8 @@ fn offline_cmd_with_home(tmp: &Path) -> Command {
         .env("HTTP_PROXY", "http://127.0.0.1:9")
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("ALL_PROXY", "http://127.0.0.1:9")
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
         .env_remove("TOKENX_CONFIG_DIR")
         .env_remove("DSH_HOME")
         .env_remove("XDG_DATA_HOME");
