@@ -1,3 +1,4 @@
+mod completion;
 pub(crate) mod decode;
 
 use crate::input_record_cache::DecoderId;

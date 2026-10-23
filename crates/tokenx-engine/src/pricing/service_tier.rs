@@ -45,9 +45,10 @@ pub(super) fn effective_service_tier<'a>(
     pricing: &'a ModelPricing,
     tier: Option<&str>,
     usage: &TokenBreakdown,
+    is_aggregate: bool,
 ) -> Result<Cow<'a, ModelPricing>, PricingComputationError> {
     let tier = match tier {
-        None | Some("default") => return Ok(Cow::Borrowed(pricing)),
+        None | Some("default") => "default",
         Some("fast" | "priority") => "priority",
         Some("flex") => "flex",
         Some(tier) => {
@@ -58,7 +59,8 @@ pub(super) fn effective_service_tier<'a>(
     };
     let rates = &pricing.service_tiers;
     let selected = match tier {
-        "priority" => ModelPricing {
+        "default" => Cow::Borrowed(pricing),
+        "priority" => Cow::Owned(ModelPricing {
             input_cost_per_token: rates.input_cost_per_token_priority,
             input_cost_per_token_above_272k_tokens: rates
                 .input_cost_per_token_above_272k_tokens_priority,
@@ -72,8 +74,8 @@ pub(super) fn effective_service_tier<'a>(
             cache_creation_input_token_cost_above_272k_tokens: rates
                 .cache_creation_input_token_cost_above_272k_tokens_priority,
             ..Default::default()
-        },
-        "flex" => ModelPricing {
+        }),
+        "flex" => Cow::Owned(ModelPricing {
             input_cost_per_token: rates.input_cost_per_token_flex,
             input_cost_per_token_above_272k_tokens: rates
                 .input_cost_per_token_above_272k_tokens_flex,
@@ -87,7 +89,7 @@ pub(super) fn effective_service_tier<'a>(
             cache_creation_input_token_cost_above_272k_tokens: rates
                 .cache_creation_input_token_cost_above_272k_tokens_flex,
             ..Default::default()
-        },
+        }),
         _ => unreachable!("tier was normalized above"),
     };
     // OpenAI long-context rates apply to the whole request, using inclusive
@@ -101,9 +103,37 @@ pub(super) fn effective_service_tier<'a>(
         .output
         .checked_add(usage.reasoning)
         .ok_or(PricingComputationError::OutputReasoningTokenOverflow)?;
-    let long_context = prompt_tokens > 272_000
-        && (pricing.input_cost_per_token_above_272k_tokens.is_some()
-            || selected.input_cost_per_token_above_272k_tokens.is_some());
+    let has_long_context = pricing.input_cost_per_token_above_272k_tokens.is_some()
+        || pricing.output_cost_per_token_above_272k_tokens.is_some()
+        || pricing
+            .cache_read_input_token_cost_above_272k_tokens
+            .is_some()
+        || pricing
+            .cache_creation_input_token_cost_above_272k_tokens
+            .is_some()
+        || selected.input_cost_per_token_above_272k_tokens.is_some()
+        || selected.output_cost_per_token_above_272k_tokens.is_some()
+        || selected
+            .cache_read_input_token_cost_above_272k_tokens
+            .is_some()
+        || selected
+            .cache_creation_input_token_cost_above_272k_tokens
+            .is_some();
+    if tier == "default" && !has_long_context {
+        return Ok(Cow::Borrowed(pricing));
+    }
+    let long_context = prompt_tokens > 272_000 && has_long_context;
+    if is_aggregate && long_context {
+        return Err(PricingComputationError::AmbiguousRequestTier { threshold: 272_000 });
+    }
+    if tier == "default" && !long_context {
+        let mut ordinary = pricing.clone();
+        ordinary.input_cost_per_token_above_272k_tokens = None;
+        ordinary.output_cost_per_token_above_272k_tokens = None;
+        ordinary.cache_read_input_token_cost_above_272k_tokens = None;
+        ordinary.cache_creation_input_token_cost_above_272k_tokens = None;
+        return Ok(Cow::Owned(ordinary));
+    }
     let rate = |component, tokens, base: Option<f64>, long: Option<f64>| {
         let price = if long_context { long } else { base };
         if tokens > 0 && !price.is_some_and(valid_price) {
@@ -145,6 +175,65 @@ pub(super) fn effective_service_tier<'a>(
     Ok(Cow::Owned(selected))
 }
 
+pub(super) fn effective_xai_request_rates<'a>(
+    pricing: &'a ModelPricing,
+    provider: Option<&str>,
+    usage: &TokenBreakdown,
+    is_aggregate: bool,
+) -> Result<Cow<'a, ModelPricing>, PricingComputationError> {
+    let has_tier = pricing.input_cost_per_token_above_200k_tokens.is_some()
+        || pricing.output_cost_per_token_above_200k_tokens.is_some()
+        || pricing
+            .cache_read_input_token_cost_above_200k_tokens
+            .is_some();
+    if provider != Some("xai") || !has_tier {
+        return Ok(Cow::Borrowed(pricing));
+    }
+    let prompt = usage
+        .input
+        .checked_add(usage.cache_read)
+        .ok_or(PricingComputationError::TokenCountOverflow)?;
+    let high = prompt >= 200_000;
+    if high && is_aggregate {
+        return Err(PricingComputationError::AmbiguousRequestTier { threshold: 200_000 });
+    }
+    let mut effective = pricing.clone();
+    if high {
+        for (used, base, long, component) in [
+            (
+                usage.input > 0,
+                &mut effective.input_cost_per_token,
+                pricing.input_cost_per_token_above_200k_tokens,
+                "input",
+            ),
+            (
+                usage.output > 0 || usage.reasoning > 0,
+                &mut effective.output_cost_per_token,
+                pricing.output_cost_per_token_above_200k_tokens,
+                "output",
+            ),
+            (
+                usage.cache_read > 0,
+                &mut effective.cache_read_input_token_cost,
+                pricing.cache_read_input_token_cost_above_200k_tokens,
+                "cache-read",
+            ),
+        ] {
+            if used && !long.is_some_and(valid_price) {
+                return Err(PricingComputationError::MissingServiceTierRate {
+                    tier: "default".into(),
+                    component,
+                });
+            }
+            *base = long;
+        }
+    }
+    effective.input_cost_per_token_above_200k_tokens = None;
+    effective.output_cost_per_token_above_200k_tokens = None;
+    effective.cache_read_input_token_cost_above_200k_tokens = None;
+    Ok(Cow::Owned(effective))
+}
+
 fn valid_price(price: f64) -> bool {
     price.is_finite() && price >= 0.0
 }
@@ -175,8 +264,69 @@ mod tests {
     }
 
     fn cost(pricing: &ModelPricing, tier: Option<&str>, usage: &TokenBreakdown) -> f64 {
-        let selected = effective_service_tier(pricing, tier, usage).unwrap();
+        let selected = effective_service_tier(pricing, tier, usage, false).unwrap();
         compute_cost(&selected, usage).unwrap()
+    }
+
+    #[test]
+    fn ordinary_and_priority_share_request_threshold_semantics() {
+        let row: ModelPricing = serde_json::from_value(serde_json::json!({
+            "input_cost_per_token":1.0,"output_cost_per_token":2.0,
+            "input_cost_per_token_above_272k_tokens":3.0,"output_cost_per_token_above_272k_tokens":4.0,
+            "cache_read_input_token_cost":0.1,"cache_read_input_token_cost_above_272k_tokens":0.3,
+            "input_cost_per_token_priority":1.0,"output_cost_per_token_priority":2.0,
+            "input_cost_per_token_above_272k_tokens_priority":3.0,"output_cost_per_token_above_272k_tokens_priority":4.0,
+            "cache_read_input_token_cost_priority":0.1,"cache_read_input_token_cost_above_272k_tokens_priority":0.3
+        })).unwrap();
+        for (input, cached, output, expected) in [
+            (300000, 0, 10000, 940000.0),
+            (2000, 270000, 10, 29020.0),
+            (2001, 270000, 10, 87043.0),
+            (1, 0, 300000, 600001.0),
+        ] {
+            let usage = TokenBreakdown {
+                input,
+                cache_read: cached,
+                output,
+                ..Default::default()
+            };
+            for tier in [None, Some("default"), Some("priority")] {
+                assert!((cost(&row, tier, &usage) - expected).abs() < 1e-8);
+            }
+        }
+        let usage = TokenBreakdown {
+            input: 300000,
+            ..Default::default()
+        };
+        assert!(matches!(
+            effective_service_tier(&row, None, &usage, true),
+            Err(PricingComputationError::AmbiguousRequestTier { threshold: 272000 })
+        ));
+    }
+
+    #[test]
+    fn xai_threshold_uses_inclusive_prompt_and_requires_request_evidence() {
+        let row = ModelPricing {
+            input_cost_per_token: Some(1.0),
+            output_cost_per_token: Some(2.0),
+            cache_read_input_token_cost: Some(0.1),
+            input_cost_per_token_above_200k_tokens: Some(3.0),
+            output_cost_per_token_above_200k_tokens: Some(4.0),
+            cache_read_input_token_cost_above_200k_tokens: Some(0.3),
+            ..Default::default()
+        };
+        let usage = TokenBreakdown {
+            input: 1000,
+            cache_read: 199000,
+            output: 10,
+            ..Default::default()
+        };
+        let effective = effective_xai_request_rates(&row, Some("xai"), &usage, false).unwrap();
+        assert_eq!(compute_cost(&effective, &usage).unwrap(), 62740.0);
+        assert!(matches!(
+            effective_xai_request_rates(&row, Some("xai"), &usage, true),
+            Err(PricingComputationError::AmbiguousRequestTier { threshold: 200000 })
+        ));
     }
 
     #[test]
@@ -233,7 +383,7 @@ mod tests {
         for price in [None, Some(-1.0), Some(f64::NAN)] {
             row.service_tiers.input_cost_per_token_priority = price;
             assert!(matches!(
-                effective_service_tier(&row, Some("priority"), &usage),
+                effective_service_tier(&row, Some("priority"), &usage, false),
                 Err(PricingComputationError::MissingServiceTierRate {
                     component: "input",
                     ..
@@ -244,7 +394,7 @@ mod tests {
         assert_eq!(cost(&row, Some("priority"), &usage), 0.0);
         for tier in ["auto", "unknown", ""] {
             assert!(matches!(
-                effective_service_tier(&row, Some(tier), &usage),
+                effective_service_tier(&row, Some(tier), &usage, false),
                 Err(PricingComputationError::UnsupportedServiceTier { .. })
             ));
         }
@@ -254,7 +404,7 @@ mod tests {
         };
         row.service_tiers
             .input_cost_per_token_above_272k_tokens_priority = None;
-        assert!(effective_service_tier(&row, Some("priority"), &long).is_err());
+        assert!(effective_service_tier(&row, Some("priority"), &long, false).is_err());
     }
 
     #[test]

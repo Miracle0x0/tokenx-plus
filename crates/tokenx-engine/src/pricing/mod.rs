@@ -32,6 +32,14 @@ const CACHED_CATALOG_FILES: [&str; 3] = [
 const MAX_CUSTOM_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CATALOG_SNAPSHOT_BYTES: u64 = 32 * 1024 * 1024;
 
+#[derive(Default)]
+pub(crate) struct UsagePricingContext<'a> {
+    pub timestamp_ms: Option<i64>,
+    pub service_tier: Option<&'a str>,
+    pub billing_provider: Option<&'a str>,
+    pub is_aggregate: bool,
+}
+
 pub type PricingDiagnostics = Vec<PricingDiagnostic>;
 pub(crate) type PricingDiagnosticSink<'a> = Option<&'a mut PricingDiagnostics>;
 
@@ -48,6 +56,7 @@ pub enum PricingDiagnosticKind {
     /// Usage-derived failure for an observed one-hour cache write.
     CacheWrite1hUnavailable,
     BillingRateUnavailable,
+    RequestTierUnavailable,
     CachedFallback,
     Unavailable,
 }
@@ -527,9 +536,10 @@ impl PricingService {
             &canonical_model_id,
             provider_id,
             usage,
-            timestamp_ms,
-            None,
-            None,
+            UsagePricingContext {
+                timestamp_ms,
+                ..Default::default()
+            },
         )
     }
 
@@ -538,58 +548,72 @@ impl PricingService {
         canonical_model_id: &str,
         provider_id: Option<&str>,
         usage: &TokenBreakdown,
-        timestamp_ms: Option<i64>,
-        service_tier: Option<&str>,
-        billing_provider: Option<&str>,
+        context: UsagePricingContext<'_>,
     ) -> Result<f64, PricingComputationError> {
-        if let Some(result) = self
-            .custom
-            .lookup_with_billing_provider(canonical_model_id, billing_provider)
-        {
-            let pricing =
-                service_tier::effective_service_tier(result.pricing, service_tier, usage)?;
-            if let Some(provider) = result.billing_provider {
-                for (used, rate, component) in [
-                    (usage.input > 0, pricing.input_cost_per_token, "input"),
-                    (
-                        usage.output > 0 || usage.reasoning > 0,
-                        pricing.output_cost_per_token,
-                        "output",
-                    ),
-                    (
-                        usage.cache_read > 0,
-                        pricing.cache_read_input_token_cost,
-                        "cache read",
-                    ),
-                    (
-                        usage.cache_write > usage.cache_write_1h,
-                        pricing.cache_creation_input_token_cost,
-                        "cache write",
-                    ),
-                    (
-                        usage.cache_write_1h > 0,
-                        pricing.cache_creation_input_token_cost_above_1hr,
-                        "one-hour cache write",
-                    ),
-                ] {
-                    if used && rate.is_none() {
-                        return Err(PricingComputationError::MissingBillingRate {
-                            provider: provider.to_owned(),
-                            component,
-                        });
-                    }
+        let Some(result) = self.lookup_canonical_with_billing_provider(
+            canonical_model_id,
+            None,
+            provider_id,
+            context.billing_provider,
+        ) else {
+            return self.lookup.calculate_canonical_cost_with_provider_and_time(
+                canonical_model_id,
+                provider_id,
+                usage,
+                context.timestamp_ms,
+                context.service_tier,
+            );
+        };
+        let pricing = if model_aliases::is_deepseek_v4_model(canonical_model_id) {
+            lookup::effective_pricing_at(&result.pricing, context.timestamp_ms)?
+        } else {
+            std::borrow::Cow::Borrowed(&result.pricing)
+        };
+        let pricing = service_tier::effective_service_tier(
+            &pricing,
+            context.service_tier,
+            usage,
+            context.is_aggregate,
+        )?;
+        if let Some(provider) = &result.billing_provider {
+            for (used, rate, component) in [
+                (usage.input > 0, pricing.input_cost_per_token, "input"),
+                (
+                    usage.output > 0 || usage.reasoning > 0,
+                    pricing.output_cost_per_token,
+                    "output",
+                ),
+                (
+                    usage.cache_read > 0,
+                    pricing.cache_read_input_token_cost,
+                    "cache read",
+                ),
+                (
+                    usage.cache_write > usage.cache_write_1h,
+                    pricing.cache_creation_input_token_cost,
+                    "cache write",
+                ),
+                (
+                    usage.cache_write_1h > 0,
+                    pricing.cache_creation_input_token_cost_above_1hr,
+                    "one-hour cache write",
+                ),
+            ] {
+                if used && rate.is_none() {
+                    return Err(PricingComputationError::MissingBillingRate {
+                        provider: provider.clone(),
+                        component,
+                    });
                 }
             }
-            return compute_cost(&pricing, usage);
         }
-
-        self.lookup.calculate_canonical_cost_with_provider_and_time(
-            canonical_model_id,
+        let pricing = service_tier::effective_xai_request_rates(
+            &pricing,
             provider_id,
             usage,
-            timestamp_ms,
-            service_tier,
-        )
+            context.is_aggregate,
+        )?;
+        compute_cost(&pricing, usage)
     }
 
     fn lookup_custom(
@@ -1383,9 +1407,10 @@ mod tests {
                 "gpt-5.6-sol",
                 Some("openai"),
                 &usage,
-                None,
-                Some("priority"),
-                None,
+                UsagePricingContext {
+                    service_tier: Some("priority"),
+                    ..Default::default()
+                },
             )
         };
         for tier_price in [Some(7.0), None] {

@@ -697,9 +697,12 @@ fn apply_canonical_token_pricing(
         &message.model_id,
         Some(message.provider_id.as_ref()),
         &message.tokens,
-        Some(message.timestamp),
-        message.service_tier.as_deref(),
-        message.billing_provider.as_deref(),
+        pricing::UsagePricingContext {
+            timestamp_ms: Some(message.timestamp),
+            service_tier: message.service_tier.as_deref(),
+            billing_provider: message.billing_provider.as_deref(),
+            is_aggregate: message.is_aggregate,
+        },
     )?;
 
     if calculated_cost > 0.0 {
@@ -846,7 +849,8 @@ fn price_source_eligible_messages<M: AsMut<records::UsageRecord>>(
                 pricing::PricingComputationError::UnsupportedServiceTier { .. }
                 | pricing::PricingComputationError::MissingServiceTierRate { .. }
                 | pricing::PricingComputationError::MissingCacheWrite1hRate
-                | pricing::PricingComputationError::MissingBillingRate { .. } => {
+                | pricing::PricingComputationError::MissingBillingRate { .. }
+                | pricing::PricingComputationError::AmbiguousRequestTier { .. } => {
                     message.pricing_error = Some(error);
                 }
                 _ => {

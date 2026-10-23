@@ -36,9 +36,57 @@ struct UsageMetadata {
     thoughts_token_count: Option<i64>,
     #[serde(rename = "cachedContentTokenCount")]
     cached_content_token_count: Option<i64>,
+    #[serde(rename = "totalTokenCount")]
+    total_token_count: Option<i64>,
 }
 
 const DEFAULT_PROVIDER: &str = "qwen";
+
+fn token_breakdown(usage: &UsageMetadata) -> Option<TokenBreakdown> {
+    let prompt = usage.prompt_token_count.unwrap_or(0);
+    let candidates = usage.candidates_token_count.unwrap_or(0);
+    let thoughts = usage.thoughts_token_count.unwrap_or(0);
+    let cache_read = usage.cached_content_token_count.unwrap_or(0);
+    if [
+        prompt,
+        candidates,
+        thoughts,
+        cache_read,
+        usage.total_token_count.unwrap_or(0),
+    ]
+    .into_iter()
+    .any(|value| value < 0)
+    {
+        return None;
+    }
+    let inclusive_total = prompt.checked_add(candidates)?;
+    // OpenAI-compatible providers include reasoning in completion tokens;
+    // Gemini reports it beside the candidates. The recorded total distinguishes them.
+    let inclusive_reasoning = thoughts > 0 && usage.total_token_count == Some(inclusive_total);
+    let reasoning = if inclusive_reasoning {
+        thoughts.min(candidates)
+    } else {
+        thoughts
+    };
+    let tokens = TokenBreakdown {
+        // Only a valid subset can be split out of the prompt.
+        input: if cache_read <= prompt {
+            prompt - cache_read
+        } else {
+            prompt
+        },
+        output: if inclusive_reasoning {
+            candidates - reasoning
+        } else {
+            candidates
+        },
+        reasoning,
+        cache_read,
+        ..Default::default()
+    };
+    tokens.checked_total()?;
+    Some(tokens)
+}
 
 /// Parse a Qwen CLI JSONL file.
 ///
@@ -93,19 +141,11 @@ pub fn parse_qwen_file(path: &Path) -> SessionParseResult<ScannedInput> {
             None => continue,
         };
 
-        // Null token fields are equivalent to zero in Qwen's usage payload.
-        let input = usage.prompt_token_count.unwrap_or(0);
-        let output = usage.candidates_token_count.unwrap_or(0);
-        let reasoning = usage.thoughts_token_count.unwrap_or(0);
-        let cache_read = usage.cached_content_token_count.unwrap_or(0);
-        let cache_write = 0; // Qwen CLI doesn't report cache write tokens
-        let token_breakdown = TokenBreakdown {
-            input,
-            output,
-            cache_read,
-            cache_write,
-            cache_write_1h: 0,
-            reasoning,
+        let Some(token_breakdown) = token_breakdown(&usage) else {
+            scanned
+                .rejections
+                .record(RecordRejectionReason::MalformedRecord);
+            continue;
         };
         match crate::positive_token_total(&token_breakdown) {
             Some(0) => continue,
@@ -244,6 +284,30 @@ mod tests {
     }
 
     #[test]
+    fn cached_and_reasoning_subsets_count_once_for_both_provider_shapes() {
+        for (total, output, expected_total) in [(10300, 180, 10300), (10420, 300, 10420)] {
+            let row = serde_json::json!({"type":"assistant","model":"qwen3.5-plus",
+                "timestamp":"2026-10-18T00:00:00Z","sessionId":"subsets",
+                "usageMetadata":{"promptTokenCount":10000,"candidatesTokenCount":300,
+                    "cachedContentTokenCount":9000,"thoughtsTokenCount":120,"totalTokenCount":total}});
+            let file = create_test_file(&row.to_string());
+            let scanned = super::parse_qwen_file(file.path()).unwrap();
+            assert_eq!(scanned.rejections.total(), 0);
+            let tokens = &scanned.messages[0].tokens;
+            assert_eq!(
+                (
+                    tokens.input,
+                    tokens.cache_read,
+                    tokens.output,
+                    tokens.reasoning
+                ),
+                (1000, 9000, output, 120)
+            );
+            assert_eq!(tokens.total(), expected_total);
+        }
+    }
+
+    #[test]
     fn test_parse_qwen_valid_assistant_message() {
         let content = r#"{"type": "assistant", "model": "qwen3.5-plus", "timestamp": "2026-02-23T14:24:56.857Z", "sessionId": "d96bf338", "usageMetadata": {"promptTokenCount": 12414, "candidatesTokenCount": 76, "thoughtsTokenCount": 39, "cachedContentTokenCount": 0}}"#;
         let file = create_test_file(content);
@@ -274,12 +338,12 @@ mod tests {
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].model_id.as_ref(), "qwen3.5-plus");
-        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[0].tokens.input, 95);
         assert_eq!(messages[0].tokens.output, 200);
         assert_eq!(messages[0].tokens.reasoning, 10);
         assert_eq!(messages[0].tokens.cache_read, 5);
         assert_eq!(messages[1].model_id.as_ref(), "qwen3-coder-plus");
-        assert_eq!(messages[1].tokens.input, 300);
+        assert_eq!(messages[1].tokens.input, 290);
         assert_eq!(messages[1].tokens.output, 400);
         assert_eq!(messages[1].tokens.reasoning, 20);
         assert_eq!(messages[1].tokens.cache_read, 10);
@@ -357,8 +421,8 @@ not valid json at all
         let scanned = super::parse_qwen_file(file.path()).unwrap();
 
         assert_eq!(scanned.messages.len(), 2);
-        assert_eq!(scanned.messages[0].tokens.input, 100);
-        assert_eq!(scanned.messages[1].tokens.input, 300);
+        assert_eq!(scanned.messages[0].tokens.input, 95);
+        assert_eq!(scanned.messages[1].tokens.input, 290);
         assert!(scanned.interrupted.is_none());
         let rejection = scanned.rejections.entries().next().unwrap();
         assert_eq!(rejection.key, "malformed-record");
