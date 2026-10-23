@@ -330,9 +330,15 @@ fn select_models_for_author_pricing(model_ids: Vec<String>) -> Vec<(String, &'st
 /// Fetch all models and get author pricing for each
 pub async fn fetch_all_models(cache_dir: &Path) -> HashMap<String, ModelPricing> {
     let mut diagnostics = None;
-    fetch_all_models_with_sink(cache_dir, MODELS_URL, true, &mut diagnostics)
-        .await
-        .unwrap_or_default()
+    fetch_all_models_with_sink(
+        reqwest::Client::builder(),
+        cache_dir,
+        MODELS_URL,
+        true,
+        &mut diagnostics,
+    )
+    .await
+    .unwrap_or_default()
 }
 
 pub(crate) async fn fetch_all_models_with_diagnostics(
@@ -340,9 +346,15 @@ pub(crate) async fn fetch_all_models_with_diagnostics(
     diagnostics: &mut PricingDiagnostics,
 ) -> HashMap<String, ModelPricing> {
     let mut diagnostics = Some(diagnostics);
-    fetch_all_models_with_sink(cache_dir, MODELS_URL, true, &mut diagnostics)
-        .await
-        .unwrap_or_default()
+    fetch_all_models_with_sink(
+        reqwest::Client::builder(),
+        cache_dir,
+        MODELS_URL,
+        true,
+        &mut diagnostics,
+    )
+    .await
+    .unwrap_or_default()
 }
 
 pub(crate) async fn refresh_with_diagnostics(
@@ -350,10 +362,18 @@ pub(crate) async fn refresh_with_diagnostics(
     diagnostics: &mut PricingDiagnostics,
 ) -> Result<HashMap<String, ModelPricing>, String> {
     let mut diagnostics = Some(diagnostics);
-    fetch_all_models_with_sink(cache_dir, MODELS_URL, false, &mut diagnostics).await
+    fetch_all_models_with_sink(
+        reqwest::Client::builder(),
+        cache_dir,
+        MODELS_URL,
+        false,
+        &mut diagnostics,
+    )
+    .await
 }
 
 async fn fetch_all_models_with_sink(
+    client_builder: reqwest::ClientBuilder,
     cache_dir: &Path,
     models_url: &str,
     use_cache: bool,
@@ -366,7 +386,7 @@ async fn fetch_all_models_with_sink(
     }
 
     let client = Arc::new(
-        reqwest::Client::builder()
+        client_builder
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
@@ -560,7 +580,14 @@ mod tests {
         let mut diagnostics = Vec::new();
         let mut sink = Some(&mut diagnostics);
 
-        let result = fetch_all_models_with_sink(cache_dir.path(), &url, false, &mut sink).await;
+        let result = fetch_all_models_with_sink(
+            reqwest::Client::builder().no_proxy(),
+            cache_dir.path(),
+            &url,
+            false,
+            &mut sink,
+        )
+        .await;
 
         assert!(result.is_err());
         assert!(diagnostics
