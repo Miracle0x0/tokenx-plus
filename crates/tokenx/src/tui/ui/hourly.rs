@@ -186,9 +186,10 @@ fn hourly_table_layout(
     }
 }
 
-fn hourly_column_header(column: HourlyColumn) -> Cow<'static, str> {
+fn hourly_column_header(column: HourlyColumn, machine: bool) -> Cow<'static, str> {
     match column {
         HourlyColumn::Hour => rust_i18n::t!("tui.ui.hourly.header.hour"),
+        HourlyColumn::Client if machine => rust_i18n::t!("tui.ui.hourly.header.machine"),
         HourlyColumn::Client => rust_i18n::t!("tui.ui.hourly.header.client"),
         HourlyColumn::Turn => rust_i18n::t!("tui.ui.hourly.header.turn"),
         HourlyColumn::Messages => rust_i18n::t!("tui.ui.hourly.header.messages"),
@@ -266,7 +267,7 @@ fn render_table(
     };
     let has_turn_data = ordered_hourly().any(|hour| hour.turn_count > 0);
     let client_content_width = ordered_hourly()
-        .map(|hour| display_width(&hourly_client_text(hour.clients.iter())))
+        .map(|hour| display_width(&hourly_source_text(hour, app.group_by())))
         .max()
         .unwrap_or(0);
     let hour_content_width = ordered_hourly()
@@ -314,7 +315,10 @@ fn render_table(
         columns
             .iter()
             .map(|column| {
-                let h = hourly_column_header(*column);
+                let h = hourly_column_header(
+                    *column,
+                    app.group_by() == tokenx_engine::GroupBy::MachineModel,
+                );
                 let indicator = hourly_column_sort_field(*column)
                     .map(sort_indicator)
                     .unwrap_or("");
@@ -364,7 +368,7 @@ fn render_table(
         let is_striped = idx % 2 == 1;
         let is_current = hour.datetime == current_hour;
 
-        let clients_str = hourly_client_text(hour.clients.iter());
+        let clients_str = hourly_source_text(hour, app.group_by());
         let hour_label = format_hour_label(hour.datetime);
         let hour_style = if is_current {
             Style::default()
@@ -466,6 +470,23 @@ fn render_table(
             }),
             &mut scrollbar_state,
         );
+    }
+}
+
+fn hourly_source_text(
+    hour: &crate::tui::data::HourlyUsage,
+    group_by: tokenx_engine::GroupBy,
+) -> String {
+    if group_by == tokenx_engine::GroupBy::MachineModel {
+        hour.models
+            .iter()
+            .map(|model| model.machine.as_deref().expect("machine label"))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        hourly_client_text(hour.clients.iter())
     }
 }
 
@@ -777,6 +798,7 @@ mod tests {
 
     fn hourly_model(provider: &str, model_id: &str, tokens: u64) -> HourlyModelInfo {
         HourlyModelInfo {
+            machine: None,
             provider: provider.into(),
             model_id: model_id.into(),
             display_name: model_id.into(),

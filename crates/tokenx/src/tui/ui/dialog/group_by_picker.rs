@@ -65,6 +65,13 @@ impl GroupByPickerDialog {
                     "tui.ui.dialog.group_by.option.workspace_model.description"
                 ),
             },
+            GroupByOption {
+                value: GroupBy::MachineModel,
+                label: rust_i18n::t!("tui.ui.dialog.group_by.option.machine_model.label"),
+                description: rust_i18n::t!(
+                    "tui.ui.dialog.group_by.option.machine_model.description"
+                ),
+            },
         ];
 
         let cursor = options.iter().position(|o| o.value == current).unwrap_or(0);
@@ -346,7 +353,7 @@ mod tests {
         let area = Rect::new(0, 0, 54, 14);
         let list = group_by_picker_areas(area).list;
 
-        let result = dialog.handle_mouse(click(list.x, list.y + 8), area);
+        let result = dialog.handle_mouse(click(list.x, list.y + list.height), area);
 
         assert!(matches!(
             result,
@@ -370,6 +377,7 @@ mod tests {
                 GroupBy::ClientModel,
                 GroupBy::ClientProviderModel,
                 GroupBy::WorkspaceModel,
+                GroupBy::MachineModel,
             ]
         );
     }

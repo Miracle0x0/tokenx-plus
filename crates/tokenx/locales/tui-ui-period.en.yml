@@ -9,6 +9,7 @@ tui:
         title_default: " Period Detail "
         header:
           workspace: "Workspace"
+          machine: "Machine"
           model: "Model"
           provider: "Provider"
           client: "Client"

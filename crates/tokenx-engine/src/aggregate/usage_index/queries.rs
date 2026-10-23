@@ -59,6 +59,10 @@ enum PeriodWorkspaceIdentity {
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 enum PeriodModelIdentity {
+    MachineModel {
+        machine: Option<Arc<str>>,
+        model: Arc<str>,
+    },
     Model(Arc<str>),
     ProviderModel {
         provider: Arc<str>,
@@ -73,6 +77,10 @@ enum PeriodModelIdentity {
 impl PeriodModelIdentity {
     fn from_model(model: &DailyModelInfo, group_by: GroupBy) -> Self {
         match group_by {
+            GroupBy::MachineModel => Self::MachineModel {
+                machine: model.machine.clone(),
+                model: Arc::clone(&model.model_id),
+            },
             GroupBy::Model | GroupBy::ClientModel => Self::Model(Arc::clone(&model.model_id)),
             GroupBy::ClientProviderModel => Self::ProviderModel {
                 provider: Arc::clone(&model.provider),
@@ -115,6 +123,7 @@ impl PeriodClientBucket {
                 .models
                 .entry(PeriodModelIdentity::from_model(model, group_by))
                 .or_insert_with(|| DailyModelInfo {
+                    machine: model.machine.clone(),
                     provider: Arc::clone(&model.provider),
                     model_id: Arc::clone(&model.model_id),
                     display_name: Arc::clone(&model.display_name),

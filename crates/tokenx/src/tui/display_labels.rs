@@ -14,6 +14,7 @@ fn group_by_label_for_locale(value: GroupBy, locale: &str) -> Cow<'static, str> 
         GroupBy::ClientModel => "tui.model.display.group_by.client_model",
         GroupBy::ClientProviderModel => "tui.model.display.group_by.client_provider_model",
         GroupBy::WorkspaceModel => "tui.model.display.group_by.workspace_model",
+        GroupBy::MachineModel => "tui.model.display.group_by.machine_model",
     };
     rust_i18n::t!(key, locale = locale)
 }

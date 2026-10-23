@@ -28,6 +28,9 @@ tui:
           workspace_model:
             label: "Workspace + Model"
             description: "Group local usage by workspace, then model"
+          machine_model:
+            label: "Machine + Model"
+            description: "Group usage by input machine and model"
       pricing_sources:
         title: " Pricing source order "
         hint: "Up/Down select | k/j move | Enter apply | Esc cancel"

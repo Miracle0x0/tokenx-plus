@@ -30,6 +30,7 @@ tokenx tui --tab models
 tokenx models --no-spinner
 tokenx models --json --no-spinner
 tokenx models --client codex --group-by client,provider,model --no-spinner
+tokenx models --group-by machine,model --json --no-spinner
 
 # 日期过滤
 tokenx tui --client opencode,claude --week
@@ -50,7 +51,7 @@ tokenx config init-model-mappings --no-spinner
 - **本地用量留在本地。** Token 统计只从已接受的本地记录派生；供应商花费、积分、余额和只有金额的记录不会混入本地 token 成本。
 - **失败保持可见。** 无法读取的输入、被拒绝的记录、未知归属和无法匹配的价格会作为错误或 Data Health 诊断显示，而不是伪装成成功。
 - **身份保持稳定。** 同一份生成式客户端 catalog 定义命令 ID、展示名称、integration 绑定、缓存和投影。
-- **视图共享同一 generation。** CLI Models 与 TUI 视图投影同一份不可变采集结果；切换视图不会重新扫描输入。
+- **视图共享同一 generation。** CLI Models 与 TUI 视图投影同一份不可变采集结果；切换视图或按配置的机器标签分组不会重新扫描输入。
 - **缓存可随时丢弃。** 输入 shard 和 generation cache 只用于加速读取，不会替代权威客户端数据。
 
 ## 支持的客户端
@@ -59,7 +60,7 @@ Tokenx 支持 OpenCode、Claude Code、Codex、Gemini CLI、Amp 等多种编码�
 
 ## 定价
 
-Tokenx 在分组和定价前会规范化模型 ID，并支持通过可选的 [`model-mappings.toml`](docs/configuration.md#model-mappings) 自定义覆写。它先检查映射后名称对应的精确自定义价格，再检查已配置公共目录中的精确匹配；不会按前缀、子串或模糊匹配猜测价格。Codex 记录的 service tier 会选择目录中对应的费率。缺少模型或 tier 费率时保留 token 用量，不计入派生成本；tier 无法定价时会明确显示警告。
+Tokenx 在分组和定价前会规范化模型 ID，并支持通过可选的 [`model-mappings.toml`](docs/configuration.md#model-mappings) 自定义覆写。它先检查映射后名称对应的精确自定义价格，再检查已配置公共目录中的精确匹配；不会按前缀、子串或模糊匹配猜测价格。Codex 记录的 service tier 会选择目录中对应的费率。缺少模型或 tier 费率时保留 token 用量，不计入派生成本；tier 无法定价时会明确显示警告。JSON 报告保留实际价格来源，并区分完整的零价估算与未定价用量。
 
 目录优先级、只有总量的 token 分配方式和成本边界见[定价语义](docs/pricing.md)。
 

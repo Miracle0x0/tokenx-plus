@@ -17,6 +17,7 @@ pub(crate) struct FoldContext<'a> {
     pub input_cache: &'a mut input_record_cache::InputRecordShardStore,
     pub pricing: Option<&'a pricing::PricingService>,
     pub model_mappings: crate::ModelMappings,
+    pub machine_labels: std::sync::Arc<crate::machine_labels::MachineLabels>,
     calendar: crate::CalendarContext,
     cancellation: crate::engine::AcquisitionCancellation,
     health: DataHealth,
@@ -52,9 +53,17 @@ impl<'a> FoldContext<'a> {
             input_cache,
             pricing,
             model_mappings,
+            machine_labels: std::sync::Arc::default(),
             calendar,
             cancellation,
             health: DataHealth::default(),
+        }
+    }
+
+    pub(crate) fn label_records(&self, path: &std::path::Path, records: &mut [UsageRecord]) {
+        let label = self.machine_labels.label(path);
+        for record in records {
+            record.machine = std::sync::Arc::clone(&label);
         }
     }
 

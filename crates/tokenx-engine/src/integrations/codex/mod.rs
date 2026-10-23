@@ -225,6 +225,7 @@ fn fold_codex_units(
                 continue;
             }
         };
+        ctx.label_records(&path, &mut messages);
         if let Some(health) = health_override {
             status = health.status;
             rejections = health.rejections;

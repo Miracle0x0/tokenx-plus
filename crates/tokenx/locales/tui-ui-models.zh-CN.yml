@@ -7,6 +7,7 @@ tui:
         client_model_detail: " 模型详情 · %{client} · %{model} "
       header:
         workspace: "工作区"
+        machine: "机器"
         model: "模型"
         messages: "消息"
         provider: "提供商"

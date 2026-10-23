@@ -28,6 +28,9 @@ tui:
           workspace_model:
             label: "工作区 + 模型"
             description: "先按工作区、再按模型分组本地用量"
+          machine_model:
+            label: "机器+模型"
+            description: "按输入来源机器和模型分组"
       pricing_sources:
         title: " 价格来源顺序 "
         hint: "上下选择 | k/j 移动 | Enter 应用 | Esc 取消"

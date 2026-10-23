@@ -451,7 +451,8 @@ pub(crate) fn resolve_unit(
         } = parsed;
         let UnitScanHealth { status, rejections } = *health;
         match resolve_messages(messages, ctx) {
-            Ok(messages) => {
+            Ok(mut messages) => {
+                ctx.label_records(&unit.path, &mut messages);
                 return Ok(ResolvedUnit {
                     unit,
                     messages,

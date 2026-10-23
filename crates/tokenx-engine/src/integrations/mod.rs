@@ -760,6 +760,7 @@ pub(crate) fn selected_integrations(clients: &ClientUniverse) -> Vec<Integration
 }
 
 pub(crate) struct PreparedIntegrationInputs {
+    pub machine_labels: std::sync::Arc<crate::machine_labels::MachineLabels>,
     pub binding: IntegrationBinding,
     pub units: Vec<PreparedInput>,
 }
@@ -969,7 +970,12 @@ pub(crate) fn run_prepared_integrations(
 ) -> Result<DataHealth, InputPipelineError> {
     let mut health = DataHealth::default();
     cancellation.check(crate::engine::AcquisitionPhase::Planning)?;
-    for PreparedIntegrationInputs { binding, units } in prepared {
+    for PreparedIntegrationInputs {
+        binding,
+        units,
+        machine_labels,
+    } in prepared
+    {
         cancellation.check(crate::engine::AcquisitionPhase::Planning)?;
         let mut batches = ParsedBatchInput::with_cancellation(binding, units, cancellation.clone());
         let mut fold_ctx = FoldContext::new_with_cancellation(
@@ -980,6 +986,7 @@ pub(crate) fn run_prepared_integrations(
             cancellation.clone(),
             model_mappings.clone(),
         );
+        fold_ctx.machine_labels = machine_labels;
         let mut bound_sink = BoundUsageSink::new(binding, sink);
         cancellation.check(crate::engine::AcquisitionPhase::Folding)?;
         binding

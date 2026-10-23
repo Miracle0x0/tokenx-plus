@@ -42,6 +42,7 @@ pub(crate) struct DetailRow {
     pub(crate) provider: Arc<str>,
     pub(crate) model: Arc<str>,
     pub(crate) model_id: Arc<str>,
+    pub(crate) machine: Option<Arc<str>>,
     pub(crate) workspace: Option<Arc<str>>,
     pub(crate) tokens: UsageTokenBreakdown,
     pub(crate) cost: f64,
@@ -72,6 +73,7 @@ enum DetailModelIdentity {
     ClientModel(ClientId, Arc<str>),
     ClientProviderModel(ClientId, Arc<str>, Arc<str>),
     WorkspaceModel(Option<Arc<str>>, Arc<str>),
+    MachineModel(Option<Arc<str>>, Arc<str>),
 }
 
 struct DetailRowAccumulator {
@@ -79,6 +81,7 @@ struct DetailRowAccumulator {
     providers: Vec<Arc<str>>,
     model: Arc<str>,
     model_id: Arc<str>,
+    machine: Option<Arc<str>>,
     workspace: Option<Arc<str>>,
     tokens: UsageTokenBreakdown,
     cost: f64,
@@ -187,6 +190,9 @@ fn detail_model_identity(
     group_by: GroupBy,
 ) -> DetailModelIdentity {
     match group_by {
+        GroupBy::MachineModel => {
+            DetailModelIdentity::MachineModel(model.machine.clone(), Arc::clone(&model.model_id))
+        }
         GroupBy::Model => DetailModelIdentity::Model(Arc::clone(&model.model_id)),
         GroupBy::ClientModel => {
             DetailModelIdentity::ClientModel(client, Arc::clone(&model.model_id))
@@ -248,6 +254,7 @@ fn build_detail_rows(
             let row = rows_by_key
                 .entry(detail_model_identity(*client, model_info, group_by))
                 .or_insert_with(|| DetailRowAccumulator {
+                    machine: model_info.machine.clone(),
                     client_totals: HashMap::new(),
                     providers: Vec::new(),
                     model: if model_info.display_name.is_empty() {
@@ -339,6 +346,7 @@ fn build_detail_rows(
     Ok(rows_by_key
         .into_values()
         .map(|row| DetailRow {
+            machine: row.machine,
             clients: ordered_clients_by_token_contribution(&row.client_totals),
             provider: provider_label(&row.providers),
             model: row.model,
@@ -808,6 +816,7 @@ mod tests {
 
     fn daily_usage(date: chrono::NaiveDate, tokens: UsageTokenBreakdown) -> DailyUsage {
         DailyUsage {
+            cost_provenance: Default::default(),
             date,
             tokens,
             cost: 0.0,
@@ -826,6 +835,7 @@ mod tests {
             tokens: tokens.clone(),
             cost: 0.0,
             models: vec![DailyModelInfo {
+                machine: None,
                 provider: "openai".into(),
                 model_id: Arc::clone(&model_id),
                 display_name: Arc::clone(&model_id),
@@ -932,6 +942,7 @@ mod tests {
         let view = UsageProjection {
             group_by: GroupBy::Model,
             daily: vec![DailyUsage {
+                cost_provenance: Default::default(),
                 date,
                 tokens: UsageTokenBreakdown {
                     input: 42,

@@ -910,6 +910,7 @@ mod tests {
             ..UsageTokenBreakdown::default()
         };
         let model = DailyModelInfo {
+            machine: None,
             provider: "openai".into(),
             model_id: "gpt-5.4".into(),
             display_name: "gpt-5.4".into(),
@@ -925,6 +926,7 @@ mod tests {
             models: vec![model],
         };
         let day = DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::from_ymd_opt(2026, 7, 16).unwrap(),
             tokens,
             cost: 1.0,

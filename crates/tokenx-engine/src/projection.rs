@@ -65,6 +65,8 @@ impl UsageTokenBreakdown {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UsageModelEntry {
+    pub cost_provenance: crate::pricing::CostProvenance,
+    pub machine: Option<Arc<str>>,
     /// Bare canonical semantic identity used for grouping, ranking, pricing,
     /// detail selection, and model color.
     pub model_id: Arc<str>,
@@ -87,6 +89,7 @@ pub struct UsageModelEntry {
 /// [`UsageProjection`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelProjection {
+    pub cost_provenance: crate::pricing::CostProvenance,
     pub models: Vec<UsageModelEntry>,
     pub total_tokens: u64,
     pub total_cost: f64,
@@ -94,6 +97,7 @@ pub struct ModelProjection {
 
 #[derive(Debug, Clone)]
 pub struct AgentEntry {
+    pub cost_provenance: crate::pricing::CostProvenance,
     pub agent: Arc<str>,
     pub client: ClientId,
     pub tokens: UsageTokenBreakdown,
@@ -104,6 +108,7 @@ pub struct AgentEntry {
 
 #[derive(Debug, Clone)]
 pub struct DailyModelInfo {
+    pub machine: Option<Arc<str>>,
     /// API provider identifier (e.g. "anthropic", "openai").
     ///
     /// **Caveat**: For `GroupBy::Model`, `GroupBy::ClientModel`, and
@@ -133,6 +138,7 @@ pub struct DailyClientInfo {
 
 #[derive(Debug, Clone)]
 pub struct DailyUsage {
+    pub cost_provenance: crate::pricing::CostProvenance,
     pub date: NaiveDate,
     pub tokens: UsageTokenBreakdown,
     pub cost: f64,
@@ -143,6 +149,7 @@ pub struct DailyUsage {
 
 #[derive(Debug, Clone)]
 pub struct HourlyModelInfo {
+    pub machine: Option<Arc<str>>,
     pub provider: Arc<str>,
     /// Bare canonical model ID: the authoritative model identity (ADR 0004).
     pub model_id: Arc<str>,
@@ -212,6 +219,7 @@ pub struct UsageGraphData {
 
 #[derive(Debug, Clone, Default)]
 pub struct UsageProjection {
+    pub cost_provenance: crate::pricing::CostProvenance,
     /// Grouping authority used to materialize every group-sensitive field in
     /// this projection, including daily and hourly model vectors.
     pub group_by: GroupBy,

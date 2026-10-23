@@ -22,7 +22,7 @@ cli:
     json: "Output as JSON"
     benchmark: "Write processing time to stderr"
     no_spinner: "Disable progress animation"
-    group_by: "Use the same grouping as the TUI Models view: model, client,model, client,provider,model, or workspace,model"
+    group_by: "Use the same grouping as the TUI Models view: model, client,model, client,provider,model, workspace,model, or machine,model"
     home: "Read local session data from this existing home directory"
     client: "Filter by client. Repeatable or comma-separated"
     today: "Show only today's usage"

@@ -479,6 +479,7 @@ fn fold_omp_cache_hits(
         }
         match pipeline_cache::resolve_messages(messages, ctx) {
             Ok(mut messages) => {
+                ctx.label_records(&unit.path, &mut messages);
                 let crate::integrations::UnitScanHealth {
                     status,
                     mut rejections,

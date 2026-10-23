@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::clients::ClientId;
 
 /// User-controlled scanner settings loaded from a config file.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScannerSettings {
     /// Authoritative OpenCode SQLite paths outside its fixed data directory.
@@ -15,10 +15,39 @@ pub struct ScannerSettings {
     /// Additional per-client roots keyed by typed public client identity.
     #[serde(default)]
     pub extra_scan_paths: BTreeMap<ClientId, Vec<PathBuf>>,
+    pub machine_labels: BTreeMap<PathBuf, String>,
+    pub local_machine_label: String,
+}
+
+impl Default for ScannerSettings {
+    fn default() -> Self {
+        Self {
+            opencode_db_paths: Vec::new(),
+            extra_scan_paths: BTreeMap::new(),
+            machine_labels: BTreeMap::new(),
+            local_machine_label: "local".into(),
+        }
+    }
 }
 
 impl ScannerSettings {
     pub fn validate(&self) -> Result<(), ScannerSettingsError> {
+        if self.local_machine_label.trim().is_empty()
+            || self
+                .machine_labels
+                .values()
+                .any(|label| label.trim().is_empty())
+        {
+            return Err(ScannerSettingsError::EmptyMachineLabel);
+        }
+        for path in self.machine_labels.keys() {
+            if !path.is_absolute() {
+                return Err(ScannerSettingsError::RelativePath {
+                    setting: "machineLabels".into(),
+                    path: path.clone(),
+                });
+            }
+        }
         for path in &self.opencode_db_paths {
             if path.as_os_str().is_empty() {
                 return Err(ScannerSettingsError::EmptyPath {
@@ -59,6 +88,16 @@ impl ScannerSettings {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScannerSettingsError {
+    #[error("scanner machine labels must not be blank")]
+    EmptyMachineLabel,
+    #[error("cannot resolve machine root `{path}`: {source}")]
+    MachinePath {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("machine root `{path}` has conflicting labels")]
+    ConflictingMachineRoot { path: PathBuf },
     #[error("scanner.extraScanPaths client `{client}` does not support extra scan roots")]
     UnsupportedClient { client: String },
     #[error("scanner.{setting} contains an empty path")]

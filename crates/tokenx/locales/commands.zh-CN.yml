@@ -11,6 +11,7 @@ commands:
     processing_time: "处理耗时：%{ms}ms（Rust 原生）"
     header:
       workspace: "工作区"
+      machine: "机器"
       model: "模型"
       client: "客户端"
       provider: "提供商"

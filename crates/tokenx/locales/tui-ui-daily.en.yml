@@ -10,6 +10,7 @@ tui:
       header:
         date: "Date"
         workspace: "Workspace"
+        machine: "Machine"
         model: "Model"
         provider: "Provider"
         client: "Client"

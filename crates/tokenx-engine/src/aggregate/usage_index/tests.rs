@@ -201,6 +201,7 @@ fn make_message_with_tokens(
 
 fn daily_usage(date: NaiveDate, tokens: u64, cost: f64) -> DailyUsage {
     DailyUsage {
+        cost_provenance: Default::default(),
         date,
         tokens: UsageTokenBreakdown {
             input: tokens,
@@ -290,6 +291,7 @@ fn projection_uses_the_explicit_effective_date() {
             clients: HashMap::from([(
                 ClientId::Amp,
                 DailyClientBucket {
+                    cost_provenance: Default::default(),
                     tokens,
                     cost: 0.0,
                     message_count: 1,
@@ -628,6 +630,7 @@ fn projection_identity_clones_canonical_arcs_without_copying_payloads() {
 fn period_projection_uses_explicit_grouping_identity() {
     fn day(date: NaiveDate, provider: &str) -> DailyUsage {
         DailyUsage {
+            cost_provenance: Default::default(),
             date,
             tokens: UsageTokenBreakdown {
                 input: 1,
@@ -643,6 +646,7 @@ fn period_projection_uses_explicit_grouping_identity() {
                     },
                     cost: 1.0,
                     models: vec![DailyModelInfo {
+                        machine: None,
                         provider: Arc::from(provider),
                         model_id: Arc::from("gpt-5.5"),
                         display_name: Arc::from("gpt-5.5"),
@@ -3288,6 +3292,7 @@ fn period_helpers_return_typed_overflow_errors() {
     let daily = [(10, u64::MAX), (11, 1)]
         .into_iter()
         .map(|(day, input)| DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::from_ymd_opt(2024, 6, day).unwrap(),
             tokens: UsageTokenBreakdown {
                 input,

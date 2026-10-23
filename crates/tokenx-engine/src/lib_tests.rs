@@ -1898,6 +1898,7 @@ fn prepared_test_group(
     units: Vec<crate::integrations::PreparedInput>,
 ) -> crate::integrations::PreparedIntegrationInputs {
     crate::integrations::PreparedIntegrationInputs {
+        machine_labels: Default::default(),
         binding: crate::integrations::integration_for(client),
         units,
     }
@@ -2178,6 +2179,7 @@ fn selected_integrations_prepare_concurrently_and_restore_catalog_order() {
                 barrier.wait();
                 Ok(super::PreparedIntegrationOutcome {
                     group: super::integrations::PreparedIntegrationInputs {
+                        machine_labels: Default::default(),
                         binding,
                         units: Vec::new(),
                     },

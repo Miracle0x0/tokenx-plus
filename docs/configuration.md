@@ -23,6 +23,10 @@ cross-platform product root:
     "opencodeDbPaths": [
       "/Users/me/Library/Application Support/opencode/opencode-stable.db"
     ],
+    "localMachineLabel": "laptop",
+    "machineLabels": {
+      "/Users/me/workspace/project-a": "workstation"
+    },
     "extraScanPaths": {
       "codex": [
         "/Users/me/workspace/project-a/.codex/sessions"
@@ -56,6 +60,8 @@ cross-platform product root:
 | `pricingSourceOrder` | string[] | Complete priority order for `litellm`, `openrouter`, and `models.dev`, each exactly once. Custom overrides remain highest priority. DeepSeek V4 OpenRouter time-period pricing remains a special first choice. |
 | `scanner.opencodeDbPaths` | string[] | Authoritative absolute paths to additional current-format OpenCode SQLite database files. Missing, unreadable, relative, or invalid entries fail explicitly. This is the only custom OpenCode scan setting. |
 | `scanner.extraScanPaths` | object | Persistent absolute extra scan roots by client id. Relative paths are rejected so acquisition identity cannot depend on the process working directory. |
+| `scanner.machineLabels` | object | Maps absolute input-root paths to nonblank machine labels. The longest containing path wins, matching whole path components and resolved symlinks; Windows comparisons ignore ASCII case. Conflicting labels for the same resolved root are errors. Labels do not add scan roots. |
+| `scanner.localMachineLabel` | string | Label for inputs outside every machine root; defaults to `local`. Labels are trimmed and must not be blank. |
 
 CLI flags override matching config values for a single invocation. TUI settings
 changed interactively, including the language selected with `Shift+L`, are

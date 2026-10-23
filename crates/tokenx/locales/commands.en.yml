@@ -11,6 +11,7 @@ commands:
     processing_time: "Processing time: %{ms}ms (Rust native)"
     header:
       workspace: "Workspace"
+      machine: "Machine"
       model: "Model"
       client: "Client"
       provider: "Provider"

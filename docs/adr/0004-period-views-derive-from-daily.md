@@ -14,7 +14,7 @@ pipeline loses its benefit.
 
 This ADR defines the complete local-usage projection, identity, pricing, and
 contribution-graph contract. ADR 0003 owns input execution and storage; ADR
-0028 owns TUI generation and interaction.
+0007 owns TUI generation and interaction.
 
 ## Decision
 
@@ -82,6 +82,7 @@ model
 client,model
 client,provider,model
 workspace,model
+machine,model
 ```
 
 Models defaults to `model`. Sessions is an independent generation-scoped view,
@@ -130,7 +131,7 @@ Models detail is reversible and generation-scoped:
   scope, otherwise the detail closes with an explicit status; and
 - generation refresh invalidates the detail projection.
 
-Groupings already exposing Provider or Workspace do not offer that transition.
+Groupings already exposing Provider, Workspace, or Machine do not offer that transition.
 
 ### Canonical model and pricing authority
 

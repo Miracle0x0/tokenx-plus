@@ -240,6 +240,7 @@ impl ClaudeFold {
                 mut rejections,
             } = incremental::resolve_unit(parsed_unit, ctx)?;
             let path = unit.path.clone();
+            ctx.label_records(&path, &mut messages);
             rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
             let cache_write =
                 cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));

@@ -13,6 +13,7 @@ mod integrations;
 mod model_aliases;
 mod model_mappings;
 pub use model_mappings::{ModelMappingRule, ModelMappings, ModelMappingsParseError};
+mod machine_labels;
 pub mod pricing;
 mod provider_identity;
 mod records;
@@ -92,6 +93,7 @@ pub enum GroupBy {
     ClientModel,
     ClientProviderModel,
     WorkspaceModel,
+    MachineModel,
 }
 
 impl std::fmt::Display for GroupBy {
@@ -101,6 +103,7 @@ impl std::fmt::Display for GroupBy {
             GroupBy::ClientModel => write!(f, "client,model"),
             GroupBy::ClientProviderModel => write!(f, "client,provider,model"),
             GroupBy::WorkspaceModel => write!(f, "workspace,model"),
+            GroupBy::MachineModel => write!(f, "machine,model"),
         }
     }
 }
@@ -115,8 +118,9 @@ impl std::str::FromStr for GroupBy {
             "client,model" => Ok(GroupBy::ClientModel),
             "client,provider,model" => Ok(GroupBy::ClientProviderModel),
             "workspace,model" => Ok(GroupBy::WorkspaceModel),
+            "machine,model" => Ok(GroupBy::MachineModel),
             _ => Err(format!(
-                "Invalid group-by value: '{}'. Valid options: model, client,model, client,provider,model, workspace,model",
+                "Invalid group-by value: '{}'. Valid options: model, client,model, client,provider,model, workspace,model, machine,model",
                 s
             )),
         }
@@ -460,6 +464,10 @@ fn prepare_inventory(
     scanner_settings
         .validate()
         .map_err(AcquisitionError::invalid_environment)?;
+    let machine_labels = Arc::new(
+        machine_labels::MachineLabels::resolve(scanner_settings)
+            .map_err(AcquisitionError::invalid_environment)?,
+    );
     let selected_integrations = integrations::selected_integrations(&clients);
     let prepared = prepare_selected_integrations(selected_integrations, |binding| {
         prepare_integration(
@@ -472,7 +480,8 @@ fn prepare_inventory(
     })?;
     let mut health = DataHealth::default();
     let mut groups = Vec::with_capacity(prepared.len());
-    for outcome in prepared {
+    for mut outcome in prepared {
+        outcome.group.machine_labels = Arc::clone(&machine_labels);
         groups.push(outcome.group);
         health.merge(outcome.health);
     }
@@ -544,6 +553,7 @@ fn prepare_integration(
             });
             return Ok(PreparedIntegrationOutcome {
                 group: integrations::PreparedIntegrationInputs {
+                    machine_labels: Arc::default(),
                     binding,
                     units: Vec::new(),
                 },
@@ -579,7 +589,11 @@ fn prepare_integration(
         }
     }
     Ok(PreparedIntegrationOutcome {
-        group: integrations::PreparedIntegrationInputs { binding, units },
+        group: integrations::PreparedIntegrationInputs {
+            binding,
+            units,
+            machine_labels: Arc::default(),
+        },
         health,
     })
 }
@@ -612,7 +626,7 @@ fn prepare_test_inventory(
     )
 }
 
-const SOURCE_FINGERPRINT_VERSION: u32 = 1;
+const SOURCE_FINGERPRINT_VERSION: u32 = 2;
 
 fn source_fingerprint(
     clients: &ClientUniverse,
@@ -634,6 +648,10 @@ fn source_fingerprint(
         input_record_cache::hash_inventory_len(&mut hasher, group.units.len());
         for unit in &group.units {
             hasher.update(unit.inventory_signature_digest());
+            input_record_cache::hash_inventory_bytes(
+                &mut hasher,
+                group.machine_labels.label(&unit.path).as_bytes(),
+            );
         }
     }
     SourceFingerprint(hasher.finalize().into())
@@ -685,6 +703,8 @@ fn apply_canonical_token_pricing(
 ) -> Result<(), pricing::PricingComputationError> {
     message.cost = 0.0;
     message.pricing_error = None;
+    message.price_origin = None;
+    message.cost_is_complete = false;
 
     let Some(pricing) = pricing else {
         return Ok(());
@@ -693,7 +713,7 @@ fn apply_canonical_token_pricing(
         return Ok(());
     }
 
-    let calculated_cost = pricing.calculate_canonical_cost_with_provider_and_time(
+    let estimate = pricing.estimate_canonical_usage(
         &message.model_id,
         Some(message.provider_id.as_ref()),
         &message.tokens,
@@ -705,9 +725,9 @@ fn apply_canonical_token_pricing(
         },
     )?;
 
-    if calculated_cost > 0.0 {
-        message.cost = calculated_cost;
-    }
+    message.cost = estimate.cost;
+    message.price_origin = estimate.origin;
+    message.cost_is_complete = estimate.complete;
     Ok(())
 }
 

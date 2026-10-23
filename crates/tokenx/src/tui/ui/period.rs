@@ -5,10 +5,8 @@ use std::collections::BTreeMap;
 
 use super::empty_state;
 use super::model_usage_layout::{
-    model_subscription_table_layout, ModelUsageColumn as PeriodDetailColumn,
-    ModelUsageLayoutSchema, ModelUsageTableDensity as PeriodDetailTableDensity,
-    ModelUsageTableLayout as PeriodDetailTableLayout, DETAIL_CLIENT_WIDTH, DETAIL_PROVIDER_WIDTH,
-    MODEL_MIN_WIDTH, WORKSPACE_MIN_WIDTH,
+    measured_detail_table_layout, ModelUsageColumn as PeriodDetailColumn,
+    ModelUsageTableDensity as PeriodDetailTableDensity,
 };
 use super::table_layout::{
     display_width, distributed_table_area, responsive_table_layout, width_for_column,
@@ -28,6 +26,7 @@ use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
 #[cfg(test)]
 use tokenx_engine::ClientId;
+#[cfg(test)]
 use tokenx_engine::GroupBy;
 
 const PERIOD_MIN_WIDTH: u16 = 6;
@@ -353,29 +352,6 @@ fn period_table_layout(
     }
 }
 
-fn period_detail_table_layout(
-    table_width: u16,
-    model_content_width: u16,
-    provider_content_width: u16,
-    client_content_width: u16,
-    workspace_content_width: u16,
-    group_by: &GroupBy,
-) -> PeriodDetailTableLayout {
-    let schema = if *group_by == GroupBy::WorkspaceModel {
-        ModelUsageLayoutSchema::WorkspaceDetail
-    } else {
-        ModelUsageLayoutSchema::Detail
-    };
-    model_subscription_table_layout(
-        table_width,
-        model_content_width,
-        provider_content_width,
-        client_content_width,
-        workspace_content_width,
-        schema,
-    )
-}
-
 fn period_column_header(column: PeriodColumn, density: PeriodTableDensity) -> Cow<'static, str> {
     match column {
         PeriodColumn::Period => rust_i18n::t!("tui.ui.period.header.period"),
@@ -403,6 +379,7 @@ fn period_detail_column_header(
     density: PeriodDetailTableDensity,
 ) -> Cow<'static, str> {
     match column {
+        PeriodDetailColumn::Machine => rust_i18n::t!("tui.ui.period.detail.header.machine"),
         PeriodDetailColumn::Workspace => rust_i18n::t!("tui.ui.period.detail.header.workspace"),
         PeriodDetailColumn::Model => rust_i18n::t!("tui.ui.period.detail.header.model"),
         PeriodDetailColumn::Provider => rust_i18n::t!("tui.ui.period.detail.header.provider"),
@@ -584,39 +561,8 @@ fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifa
         }
     };
 
-    let model_content_width = rows_data
-        .iter()
-        .map(|row| display_width(&row.model))
-        .max()
-        .unwrap_or(MODEL_MIN_WIDTH);
-    let provider_content_width = rows_data
-        .iter()
-        .map(|row| display_width(&get_provider_display_name(&row.provider)))
-        .max()
-        .unwrap_or(DETAIL_PROVIDER_WIDTH);
-    let client_content_width = rows_data
-        .iter()
-        .map(|row| display_width(&get_client_display_names(&row.clients)))
-        .max()
-        .unwrap_or(DETAIL_CLIENT_WIDTH);
-    let group_by = app.group_by();
-    let workspace_content_width = if group_by == GroupBy::WorkspaceModel {
-        rows_data
-            .iter()
-            .map(|row| display_width(workspace_label_or_unknown(row.workspace.as_deref()).as_ref()))
-            .max()
-            .unwrap_or(WORKSPACE_MIN_WIDTH)
-    } else {
-        0
-    };
-    let table_layout = period_detail_table_layout(
-        table_area.width,
-        model_content_width,
-        provider_content_width,
-        client_content_width,
-        workspace_content_width,
-        &group_by,
-    );
+    let table_layout =
+        measured_detail_table_layout(table_area.width, rows_data.iter(), app.group_by());
     let columns = table_layout.columns.clone();
 
     let header = Row::new(
@@ -659,6 +605,10 @@ fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifa
 
             let cell_for_column = |column: PeriodDetailColumn| -> Cell {
                 match column {
+                    PeriodDetailColumn::Machine => Cell::from(truncate_display_width(
+                        row.machine.as_deref().expect("machine label"),
+                        table_layout.width_for(PeriodDetailColumn::Machine),
+                    )),
                     PeriodDetailColumn::Workspace => Cell::from(truncate_display_width(
                         workspace_label_or_unknown(row.workspace.as_deref()).as_ref(),
                         table_layout.width_for(PeriodDetailColumn::Workspace),
@@ -1136,6 +1086,7 @@ mod tests {
 
     fn daily_model(provider: &str, model_id: &str, tokens: u64, cost: f64) -> DailyModelInfo {
         DailyModelInfo {
+            machine: None,
             provider: provider.into(),
             model_id: model_id.into(),
             display_name: model_id.into(),
@@ -1269,6 +1220,7 @@ mod tests {
 
     fn workspace_detail_day() -> DailyUsage {
         DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::from_ymd_opt(2026, 6, 9).unwrap(),
             tokens: token_breakdown(300),
             cost: 3.0,

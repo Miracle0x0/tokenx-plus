@@ -1111,6 +1111,7 @@ mod tests {
         cost: f64,
     ) -> DailyModelInfo {
         DailyModelInfo {
+            machine: None,
             provider: provider.into(),
             model_id: model_id.into(),
             display_name: display_name.into(),
@@ -1137,6 +1138,7 @@ mod tests {
         clients: Vec<(&str, DailyClientInfo)>,
     ) -> DailyUsage {
         DailyUsage {
+            cost_provenance: Default::default(),
             date,
             tokens: token_breakdown(tokens),
             cost,

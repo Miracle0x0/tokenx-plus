@@ -166,6 +166,7 @@ mod tests {
         assert!(graph.weeks.is_empty());
 
         let daily = vec![DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::from_ymd_opt(2026, 3, 2).unwrap(),
             tokens: UsageTokenBreakdown::default(),
             cost: 0.0,
@@ -342,6 +343,7 @@ after"#,
         let today = NaiveDate::from_ymd_opt(2026, 3, 3).unwrap();
         let daily = vec![
             DailyUsage {
+                cost_provenance: Default::default(),
                 date: NaiveDate::from_ymd_opt(2026, 3, 2).unwrap(),
                 tokens: UsageTokenBreakdown::default(),
                 cost: 0.0,
@@ -350,6 +352,7 @@ after"#,
                 turn_count: 0,
             },
             DailyUsage {
+                cost_provenance: Default::default(),
                 date: NaiveDate::from_ymd_opt(2026, 3, 3).unwrap(),
                 tokens: UsageTokenBreakdown::default(),
                 cost: 0.0,
@@ -369,6 +372,7 @@ after"#,
             ..UsageTokenBreakdown::default()
         };
         let models = vec![DailyModelInfo {
+            machine: None,
             provider: "anthropic".into(),
             model_id: "claude-sonnet-4".into(),
             display_name: "claude-sonnet-4".into(),
@@ -390,6 +394,7 @@ after"#,
         );
 
         DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
             tokens,
             cost,

@@ -77,6 +77,7 @@ tokenx models --json
 tokenx models --group-by client,model --no-spinner
 tokenx models --group-by client,provider,model --json
 tokenx models --group-by workspace,model --json
+tokenx models --group-by machine,model --json --no-spinner
 ```
 
 `tokenx models` and `tokenx models --group-by model` are identical. Both
@@ -85,18 +86,18 @@ its token normalization, pricing, model identity, Client and Provider
 attribution, and ordering semantics. The table exposes:
 
 ```text
-Workspace?  Model  Client  Provider  Input  Output  Cache×  Cache R  Cache W
+Machine?/Workspace?  Model  Client  Provider  Input  Output  Cache×  Cache R  Cache W
 Total  Cost  Cost/1M
 ```
 
-`Workspace` appears only for `workspace,model`. `Output` is the TUI's displayed
+`Machine` appears only for `machine,model`; `Workspace` appears only for `workspace,model`. `Output` is the TUI's displayed
 output total, which includes reasoning tokens when the source format reports
 reasoning as a component of output. JSON also preserves `output`,
 `reasoning`, and `displayedOutput` separately. Each JSON model row exposes the
 canonical identity as `modelId` and its presentation label as `displayName`;
-grouping and pricing use `modelId`.
+grouping and pricing use `modelId`. Every model row and total includes `costProvenance`, with the actual price sources and a completeness flag; see [price provenance](pricing.md#json-price-provenance).
 
-The four supported grouping strategies exactly match the TUI Group By picker:
+The supported grouping strategies exactly match the TUI Group By picker:
 
 | Strategy | Effect |
 | --- | --- |
@@ -104,6 +105,7 @@ The four supported grouping strategies exactly match the TUI Group By picker:
 | `client,model` | One row per Client and model pair. |
 | `client,provider,model` | One row per Client, Provider, and model. |
 | `workspace,model` | One row per workspace and model. |
+| `machine,model` | One row per configured machine label and model; JSON rows carry `machine`. |
 
 The comma-separated values above are the complete public set. Sessions is an
 independent TUI view rather than a Models grouping dimension.

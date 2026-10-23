@@ -205,6 +205,7 @@ mod tests {
         );
         app.update_data(UsageProjection {
             daily: vec![DailyUsage {
+                cost_provenance: Default::default(),
                 date: NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
                 tokens: UsageTokenBreakdown::default(),
                 cost: 0.0,
