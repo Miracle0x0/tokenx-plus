@@ -3222,6 +3222,8 @@ mod tests {
 
     fn cached_order_model(id: &str, tokens: u64) -> UsageModelEntry {
         UsageModelEntry {
+            machine: None,
+            cost_provenance: Default::default(),
             model_id: id.into(),
             display_name: id.into(),
             provider: "openai".into(),
@@ -3276,6 +3278,7 @@ mod tests {
         let mut app = TuiModel::new_for_test(config_with_theme(None)).unwrap();
         let date = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
         app.usage_mut_for_test().daily = vec![DailyUsage {
+            cost_provenance: Default::default(),
             date,
             tokens: UsageTokenBreakdown::default(),
             cost: 1.0,
@@ -3446,6 +3449,8 @@ mod tests {
         // Add some mock data
         app.usage_mut_for_test().models = vec![
             UsageModelEntry {
+                machine: None,
+                cost_provenance: Default::default(),
                 model_id: "model1".into(),
                 display_name: "model1".into(),
                 provider: "provider1".into(),
@@ -3457,6 +3462,8 @@ mod tests {
                 workspace_label: None,
             },
             UsageModelEntry {
+                machine: None,
+                cost_provenance: Default::default(),
                 model_id: "model2".into(),
                 display_name: "model2".into(),
                 provider: "provider2".into(),
@@ -3493,6 +3500,8 @@ mod tests {
         // Add some mock data
         app.usage_mut_for_test().models = vec![
             UsageModelEntry {
+                machine: None,
+                cost_provenance: Default::default(),
                 model_id: "model1".into(),
                 display_name: "model1".into(),
                 provider: "provider1".into(),
@@ -3504,6 +3513,8 @@ mod tests {
                 workspace_label: None,
             },
             UsageModelEntry {
+                machine: None,
+                cost_provenance: Default::default(),
                 model_id: "model2".into(),
                 display_name: "model2".into(),
                 provider: "provider2".into(),
@@ -3539,6 +3550,8 @@ mod tests {
 
         // Add some mock data
         app.usage_mut_for_test().models = vec![UsageModelEntry {
+            machine: None,
+            cost_provenance: Default::default(),
             model_id: "model1".into(),
             display_name: "model1".into(),
             provider: "provider1".into(),
@@ -3743,6 +3756,8 @@ mod tests {
         let mut app = make_app();
         app.usage_mut_for_test().models = (0..n)
             .map(|i| UsageModelEntry {
+                machine: None,
+                cost_provenance: Default::default(),
                 model_id: format!("model{}", i).into(),
                 display_name: format!("model{}", i).into(),
                 provider: "provider".into(),
@@ -3852,6 +3867,7 @@ mod tests {
                 total_cost += model_cost;
 
                 model_breakdown.push(DailyModelInfo {
+                    machine: None,
                     provider: provider.into(),
                     model_id: model.into(),
                     display_name: model.into(),
@@ -3874,6 +3890,7 @@ mod tests {
         }
 
         DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
             tokens: total_tokens,
             cost: if cost > 0.0 { cost } else { total_cost },
@@ -4074,6 +4091,7 @@ mod tests {
         let mut app = make_app();
         app.usage_mut_for_test().agents = vec![
             AgentEntry {
+                cost_provenance: Default::default(),
                 agent: "builder".into(),
                 client: ClientId::OpenCode,
                 tokens: UsageTokenBreakdown {
@@ -4088,6 +4106,7 @@ mod tests {
                 instance_count: 1,
             },
             AgentEntry {
+                cost_provenance: Default::default(),
                 agent: "reviewer".into(),
                 client: ClientId::RooCode,
                 tokens: UsageTokenBreakdown {
@@ -4115,6 +4134,7 @@ mod tests {
         app.sort_direction = SortDirection::Ascending;
         app.usage_mut_for_test().agents = vec![
             AgentEntry {
+                cost_provenance: Default::default(),
                 agent: "builder".into(),
                 client: ClientId::OpenCode,
                 tokens: UsageTokenBreakdown {
@@ -4129,6 +4149,7 @@ mod tests {
                 instance_count: 1,
             },
             AgentEntry {
+                cost_provenance: Default::default(),
                 agent: "reviewer".into(),
                 client: ClientId::RooCode,
                 tokens: UsageTokenBreakdown {
@@ -4766,6 +4787,8 @@ mod tests {
         let mut app = make_app();
         app.usage_mut_for_test().models = vec![
             UsageModelEntry {
+                machine: None,
+                cost_provenance: Default::default(),
                 model_id: "expensive-low-token".into(),
                 display_name: "expensive-low-token".into(),
                 provider: "anthropic".into(),
@@ -4783,6 +4806,8 @@ mod tests {
                 workspace_label: None,
             },
             UsageModelEntry {
+                machine: None,
+                cost_provenance: Default::default(),
                 model_id: "cheap-high-token".into(),
                 display_name: "cheap-high-token".into(),
                 provider: "anthropic".into(),

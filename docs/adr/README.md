@@ -32,6 +32,8 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0026](0026-claude-verified-append-parsing.md) | Claude verified append parsing | Accepted |
 | [0027](0027-billing-provider-custom-pricing.md) | Billing-provider custom pricing | Accepted |
 | [0028](0028-request-usage-and-pricing.md) | Disjoint usage buckets and request-level pricing | Accepted |
+| [0029](0029-machine-attribution.md) | Machine attribution as a generation projection | Accepted |
+| [0030](0030-price-provenance.md) | Captured catalog price provenance | Accepted |
 
 ## Conventions
 

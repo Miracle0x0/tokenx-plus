@@ -140,6 +140,7 @@ pub struct FrozenUsageIndex {
 
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct UsageTotalsBucket {
+    pub(super) cost_provenance: crate::pricing::CostProvenance,
     pub(super) tokens: UsageTokenBreakdown,
     pub(super) cost: f64,
 }
@@ -152,6 +153,7 @@ impl UsageTotalsBucket {
     ) -> Result<(), UsageAggregationError> {
         add_record_tokens(&mut self.tokens, &msg.tokens)?;
         add_aggregation_cost(&mut self.cost, msg_cost, "usage cost")?;
+        self.cost_provenance.include(msg);
         Ok(())
     }
 }
@@ -202,6 +204,7 @@ impl<T> OneOrMany<T> {
 /// that first message).
 #[derive(Serialize, Deserialize)]
 pub(super) struct FineModelBucket {
+    pub(super) cost_provenance: crate::pricing::CostProvenance,
     #[serde(deserialize_with = "crate::records::intern::de_intern")]
     pub(super) workspace_label: Arc<str>,
     first_seen: usize,
@@ -214,6 +217,8 @@ pub(super) struct FineModelBucket {
 /// one `GroupBy`; converted to [`UsageModelEntry`] by
 /// [`materialize_model`].
 struct ModelBucket {
+    machine: Option<Arc<str>>,
+    pub(super) cost_provenance: crate::pricing::CostProvenance,
     model: Arc<str>,
     providers: IdentitySet<Arc<str>>,
     client: ClientId,
@@ -253,6 +258,7 @@ pub(super) struct AgentKey {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct AgentBucket {
+    pub(super) cost_provenance: crate::pricing::CostProvenance,
     pub(super) instances: IdentitySet<AgentInstanceKey>,
     pub(super) tokens: UsageTokenBreakdown,
     pub(super) cost: f64,
@@ -267,6 +273,7 @@ pub(super) struct DailyBucket {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct DailyClientBucket {
+    pub(super) cost_provenance: crate::pricing::CostProvenance,
     pub(super) tokens: UsageTokenBreakdown,
     pub(super) cost: f64,
     pub(super) message_count: u32,
@@ -289,6 +296,7 @@ pub(super) struct FineDailyModelBucket {
 /// [`FineDailyModelBucket`]s for one `GroupBy`; converted to
 /// [`DailyModelInfo`] by [`materialize_daily_model`].
 struct DailyModelBucket {
+    machine: Option<Arc<str>>,
     provider: Arc<str>,
     workspace_key: Option<Arc<str>>,
     workspace_label: Option<Arc<str>>,
@@ -325,6 +333,7 @@ pub(super) struct FineHourlyModelBucket {
 /// [`FineHourlyModelBucket`]s for one `GroupBy`; converted to
 /// [`HourlyModelInfo`] by [`materialize_hourly_model`].
 struct HourlyModelBucket {
+    machine: Option<Arc<str>>,
     provider: Arc<str>,
     model: Arc<str>,
     tokens: UsageTokenBreakdown,
@@ -348,6 +357,8 @@ fn materialize_model(bucket: ModelBucket) -> Result<UsageModelEntry, UsageProjec
     };
     let model_id = bucket.model;
     Ok(UsageModelEntry {
+        machine: bucket.machine,
+        cost_provenance: bucket.cost_provenance,
         display_name: Arc::clone(&model_id),
         model_id,
         provider,
@@ -367,6 +378,7 @@ fn materialize_model(bucket: ModelBucket) -> Result<UsageModelEntry, UsageProjec
 fn materialize_daily_model(model: DailyModelBucket) -> DailyModelInfo {
     let model_id = model.model;
     DailyModelInfo {
+        machine: model.machine,
         provider: model.provider,
         display_name: Arc::clone(&model_id),
         model_id,
@@ -395,6 +407,7 @@ fn materialize_daily_usage(
     let mut client_breakdown = BTreeMap::new();
     let mut tokens = UsageTokenBreakdown::default();
     let mut cost = 0.0;
+    let mut cost_provenance = crate::pricing::CostProvenance::default();
     let mut message_count = 0_u32;
     let mut turn_count = 0_u32;
 
@@ -417,6 +430,7 @@ fn materialize_daily_usage(
         );
         try_add_projection_tokens(&mut tokens, &client_bucket.tokens, "daily token totals")?;
         try_add_projection_cost(&mut cost, client_bucket.cost, "daily cost")?;
+        cost_provenance.merge(&client_bucket.cost_provenance);
         message_count = message_count
             .checked_add(client_bucket.message_count)
             .ok_or_else(|| UsageProjectionError::new("daily message count"))?;
@@ -425,6 +439,7 @@ fn materialize_daily_usage(
             .ok_or_else(|| UsageProjectionError::new("daily turn count"))?;
     }
     Ok((!client_breakdown.is_empty()).then_some(DailyUsage {
+        cost_provenance,
         date: bucket.date,
         tokens,
         cost,
@@ -466,6 +481,8 @@ fn materialize_daily_client_models(
                     (None, None)
                 };
                 DailyModelBucket {
+                    machine: (*group_by == GroupBy::MachineModel)
+                        .then(|| Arc::clone(&fine_key.machine)),
                     provider: Arc::clone(&fine_key.provider),
                     workspace_key,
                     workspace_label,
@@ -497,6 +514,7 @@ fn materialize_daily_client_models(
 fn materialize_hourly_model(model: HourlyModelBucket) -> HourlyModelInfo {
     let model_id = model.model;
     HourlyModelInfo {
+        machine: model.machine,
         provider: model.provider,
         display_name: Arc::clone(&model_id),
         model_id,
@@ -549,6 +567,8 @@ fn materialize_hourly_usage(
         let grouped_model = grouped_models
             .entry(fine_key.grouped(group_by))
             .or_insert_with(|| HourlyModelBucket {
+                machine: (*group_by == GroupBy::MachineModel)
+                    .then(|| Arc::clone(&fine_key.machine)),
                 provider: Arc::clone(&fine_key.provider),
                 model: Arc::clone(&fine_key.model),
                 tokens: UsageTokenBreakdown::default(),
@@ -743,6 +763,7 @@ impl UsageIndexBuilder {
             .model_map
             .entry(FineModelKey::from_message(msg))
             .or_insert_with(|| FineModelBucket {
+                cost_provenance: Default::default(),
                 workspace_label: workspace_fields(msg).1,
                 first_seen: sequence,
                 tokens: UsageTokenBreakdown::default(),
@@ -752,6 +773,7 @@ impl UsageIndexBuilder {
 
         add_record_tokens(&mut model_entry.tokens, &msg.tokens)?;
         add_aggregation_cost(&mut model_entry.cost, msg_cost, "model cost")?;
+        model_entry.cost_provenance.include(msg);
         let contribution = msg
             .tokens
             .checked_total()
@@ -770,6 +792,7 @@ impl UsageIndexBuilder {
                     agent: Arc::clone(agent),
                 })
                 .or_insert_with(|| AgentBucket {
+                    cost_provenance: Default::default(),
                     instances: IdentitySet::default(),
                     tokens: UsageTokenBreakdown::default(),
                     cost: 0.0,
@@ -777,6 +800,7 @@ impl UsageIndexBuilder {
                 });
             add_record_tokens(&mut agent_entry.tokens, &msg.tokens)?;
             add_aggregation_cost(&mut agent_entry.cost, msg_cost, "agent cost")?;
+            agent_entry.cost_provenance.include(msg);
             agent_entry.message_count = agent_entry
                 .message_count
                 .checked_add(message_count)
@@ -806,6 +830,7 @@ impl UsageIndexBuilder {
                     .clients
                     .entry(client)
                     .or_insert_with(|| DailyClientBucket {
+                        cost_provenance: Default::default(),
                         tokens: UsageTokenBreakdown::default(),
                         cost: 0.0,
                         message_count: 0,
@@ -814,6 +839,7 @@ impl UsageIndexBuilder {
                     });
             add_record_tokens(&mut client_entry.tokens, &msg.tokens)?;
             add_aggregation_cost(&mut client_entry.cost, msg_cost, "daily cost")?;
+            client_entry.cost_provenance.include(msg);
             client_entry.message_count = client_entry
                 .message_count
                 .checked_add(message_count)
@@ -1111,6 +1137,9 @@ impl FrozenUsageIndex {
                         (None, None)
                     };
                     ModelBucket {
+                        machine: (*group_by == GroupBy::MachineModel)
+                            .then(|| Arc::clone(&fine_key.machine)),
+                        cost_provenance: Default::default(),
                         model: Arc::clone(&fine_key.model),
                         providers: IdentitySet::default(),
                         client: fine_key.client,
@@ -1147,6 +1176,9 @@ impl FrozenUsageIndex {
                     "model token totals",
                 )?;
                 try_add_projection_cost(&mut model_entry.cost, fine_model.cost, "model cost")?;
+                model_entry
+                    .cost_provenance
+                    .merge(&fine_model.cost_provenance);
 
                 model_entry
                     .sessions
@@ -1197,6 +1229,7 @@ impl FrozenUsageIndex {
 
         let mut total_token_breakdown = UsageTokenBreakdown::default();
         let mut total_cost = 0.0;
+        let mut cost_provenance = crate::pricing::CostProvenance::default();
         for (_, totals) in client_totals {
             try_add_projection_tokens(
                 &mut total_token_breakdown,
@@ -1204,6 +1237,7 @@ impl FrozenUsageIndex {
                 "total token breakdown",
             )?;
             try_add_projection_cost(&mut total_cost, totals.cost, "total cost")?;
+            cost_provenance.merge(&totals.cost_provenance);
         }
 
         let mut keyed_models = self
@@ -1223,6 +1257,7 @@ impl FrozenUsageIndex {
         });
 
         Ok(ModelProjection {
+            cost_provenance,
             models: keyed_models.into_iter().map(|(_, model)| model).collect(),
             total_tokens: total_token_breakdown
                 .checked_total()
@@ -1261,6 +1296,7 @@ impl FrozenUsageIndex {
         effective_date: NaiveDate,
     ) -> Result<UsageProjection, UsageProjectionError> {
         let ModelProjection {
+            cost_provenance,
             models,
             total_tokens,
             total_cost,
@@ -1286,6 +1322,7 @@ impl FrozenUsageIndex {
                                 .ok_or_else(|| UsageProjectionError::new("agent token total"))?;
                             Ok((
                                 AgentEntry {
+                                    cost_provenance: agent.cost_provenance.clone(),
                                     agent: Arc::clone(&key.agent),
                                     client: key.client,
                                     tokens: agent.tokens.clone(),
@@ -1359,6 +1396,7 @@ impl FrozenUsageIndex {
         let (current_streak, longest_streak) = calculate_streaks_for_today(&daily, effective_date)?;
 
         Ok(UsageProjection {
+            cost_provenance,
             group_by: *group_by,
             models,
             agents,

@@ -1413,6 +1413,7 @@ mod tests {
     fn nonempty_installed_app_on(tab: Tab) -> TuiModel {
         let mut app = installed_app_on(tab);
         app.usage_mut_for_test().daily.push(DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
             tokens: UsageTokenBreakdown::default(),
             cost: 0.0,
@@ -1421,6 +1422,8 @@ mod tests {
             turn_count: 0,
         });
         app.usage_mut_for_test().models.push(UsageModelEntry {
+            machine: None,
+            cost_provenance: Default::default(),
             model_id: "test-model".into(),
             display_name: "Test Model".into(),
             provider: "test-provider".into(),

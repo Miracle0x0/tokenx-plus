@@ -10,6 +10,7 @@ tui:
       header:
         date: "日期"
         workspace: "工作区"
+        machine: "机器"
         model: "模型"
         provider: "提供商"
         client: "客户端"

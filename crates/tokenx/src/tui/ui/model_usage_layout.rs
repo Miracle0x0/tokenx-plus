@@ -36,6 +36,7 @@ pub(crate) enum ModelUsageTableDensity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelUsageColumn {
     Workspace,
+    Machine,
     Model,
     Client,
     Provider,
@@ -54,19 +55,30 @@ pub(crate) enum ModelUsageColumn {
 pub(crate) enum ModelUsageLayoutSchema {
     Models,
     WorkspaceModels,
+    MachineModels,
     ModelProviderDetails,
     ClientModelProviderDetails,
     Detail,
     WorkspaceDetail,
+    MachineDetail,
 }
 
 impl ModelUsageLayoutSchema {
-    fn has_workspace(self) -> bool {
-        matches!(self, Self::WorkspaceModels | Self::WorkspaceDetail)
+    fn has_dimension(self) -> bool {
+        matches!(
+            self,
+            Self::WorkspaceModels
+                | Self::WorkspaceDetail
+                | Self::MachineModels
+                | Self::MachineDetail
+        )
     }
 
     fn uses_detail_metrics(self) -> bool {
-        matches!(self, Self::Detail | Self::WorkspaceDetail)
+        matches!(
+            self,
+            Self::Detail | Self::WorkspaceDetail | Self::MachineDetail
+        )
     }
 
     fn is_model_provider_detail(self) -> bool {
@@ -85,6 +97,70 @@ impl ModelUsageLayoutSchema {
     }
 }
 
+pub(crate) fn detail_table_layout(
+    table_width: u16,
+    model_width: u16,
+    provider_width: u16,
+    client_width: u16,
+    dimension_width: u16,
+    group_by: &tokenx_engine::GroupBy,
+) -> ModelUsageTableLayout {
+    let schema = match group_by {
+        tokenx_engine::GroupBy::MachineModel => ModelUsageLayoutSchema::MachineDetail,
+        tokenx_engine::GroupBy::WorkspaceModel => ModelUsageLayoutSchema::WorkspaceDetail,
+        _ => ModelUsageLayoutSchema::Detail,
+    };
+    model_subscription_table_layout(
+        table_width,
+        model_width,
+        provider_width,
+        client_width,
+        dimension_width,
+        schema,
+    )
+}
+
+pub(crate) fn measured_detail_table_layout<'a>(
+    width: u16,
+    rows: impl Iterator<Item = &'a crate::tui::local_usage::DetailRow>,
+    group_by: tokenx_engine::GroupBy,
+) -> ModelUsageTableLayout {
+    use super::table_layout::display_width;
+    use super::widgets::{
+        get_client_display_names, get_provider_display_name, workspace_label_or_unknown,
+    };
+    let (mut model_width, mut provider_width, mut client_width, mut dimension_width) = (
+        MODEL_MIN_WIDTH,
+        DETAIL_PROVIDER_WIDTH,
+        DETAIL_CLIENT_WIDTH,
+        0,
+    );
+    for row in rows {
+        model_width = model_width.max(display_width(&row.model));
+        provider_width =
+            provider_width.max(display_width(&get_provider_display_name(&row.provider)));
+        client_width = client_width.max(display_width(&get_client_display_names(&row.clients)));
+        let dimension = match group_by {
+            tokenx_engine::GroupBy::MachineModel => {
+                display_width(row.machine.as_deref().expect("machine label"))
+            }
+            tokenx_engine::GroupBy::WorkspaceModel => {
+                display_width(workspace_label_or_unknown(row.workspace.as_deref()).as_ref())
+            }
+            _ => 0,
+        };
+        dimension_width = dimension_width.max(dimension);
+    }
+    detail_table_layout(
+        width,
+        model_width,
+        provider_width,
+        client_width,
+        dimension_width,
+        &group_by,
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModelUsageTableLayout {
     pub(crate) columns: Vec<ModelUsageColumn>,
@@ -101,7 +177,7 @@ impl ModelUsageTableLayout {
 
 fn column_order(column: ModelUsageColumn) -> u16 {
     match column {
-        ModelUsageColumn::Workspace => 0,
+        ModelUsageColumn::Workspace | ModelUsageColumn::Machine => 0,
         ModelUsageColumn::Model => 10,
         ModelUsageColumn::Client => 20,
         ModelUsageColumn::Provider => 30,
@@ -127,27 +203,37 @@ fn model_usage_columns(
     let client_max_width = match schema {
         ModelUsageLayoutSchema::Detail
         | ModelUsageLayoutSchema::WorkspaceDetail
+        | ModelUsageLayoutSchema::MachineDetail
         | ModelUsageLayoutSchema::ModelProviderDetails
         | ModelUsageLayoutSchema::ClientModelProviderDetails => DETAIL_CLIENT_MAX_WIDTH,
-        ModelUsageLayoutSchema::Models | ModelUsageLayoutSchema::WorkspaceModels => {
-            CLIENT_MAX_WIDTH
-        }
+        ModelUsageLayoutSchema::Models
+        | ModelUsageLayoutSchema::WorkspaceModels
+        | ModelUsageLayoutSchema::MachineModels => CLIENT_MAX_WIDTH,
     };
     let provider_max_width = match schema {
         ModelUsageLayoutSchema::Detail
         | ModelUsageLayoutSchema::WorkspaceDetail
+        | ModelUsageLayoutSchema::MachineDetail
         | ModelUsageLayoutSchema::ModelProviderDetails
         | ModelUsageLayoutSchema::ClientModelProviderDetails => DETAIL_PROVIDER_MAX_WIDTH,
-        ModelUsageLayoutSchema::Models | ModelUsageLayoutSchema::WorkspaceModels => {
-            PROVIDER_MAX_WIDTH
-        }
+        ModelUsageLayoutSchema::Models
+        | ModelUsageLayoutSchema::WorkspaceModels
+        | ModelUsageLayoutSchema::MachineModels => PROVIDER_MAX_WIDTH,
     };
 
     let mut columns = Vec::new();
-    if schema.has_workspace() {
+    if schema.has_dimension() {
+        let dimension = if matches!(
+            schema,
+            ModelUsageLayoutSchema::MachineModels | ModelUsageLayoutSchema::MachineDetail
+        ) {
+            ModelUsageColumn::Machine
+        } else {
+            ModelUsageColumn::Workspace
+        };
         columns.push(ResponsiveColumn::measured_required(
-            ModelUsageColumn::Workspace,
-            column_order(ModelUsageColumn::Workspace),
+            dimension,
+            column_order(dimension),
             WORKSPACE_MIN_WIDTH,
             workspace_content_width,
             WORKSPACE_MAX_WIDTH,

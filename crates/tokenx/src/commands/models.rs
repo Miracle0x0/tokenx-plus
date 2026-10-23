@@ -177,6 +177,9 @@ fn render_models_table(
 
     let workspace_grouping = *group_by == GroupBy::WorkspaceModel;
     let mut header = Vec::new();
+    if *group_by == GroupBy::MachineModel {
+        header.push(Cell::new(rust_i18n::t!("commands.models.header.machine")).fg(Color::Cyan));
+    }
     if workspace_grouping {
         header.push(Cell::new(rust_i18n::t!("commands.models.header.workspace")).fg(Color::Cyan));
     }
@@ -197,6 +200,14 @@ fn render_models_table(
 
     for model in &data.models {
         let mut row = Vec::new();
+        if *group_by == GroupBy::MachineModel {
+            row.push(Cell::new(
+                model
+                    .machine
+                    .as_deref()
+                    .expect("machine grouping carries a label"),
+            ));
+        }
         if workspace_grouping {
             row.push(Cell::new(
                 model
@@ -232,7 +243,7 @@ fn render_models_table(
     let totals = model_totals(&data.models)?;
     debug_assert_eq!(totals.total(), data.total_tokens);
     let mut total_row = Vec::new();
-    if workspace_grouping {
+    if workspace_grouping || *group_by == GroupBy::MachineModel {
         total_row.push(Cell::new(""));
     }
     total_row.extend([
@@ -325,6 +336,8 @@ mod tests {
     #[test]
     fn model_totals_return_a_typed_error_on_cross_model_overflow() {
         let model = |input| UsageModelEntry {
+            machine: None,
+            cost_provenance: Default::default(),
             model_id: "model".into(),
             display_name: "Model".into(),
             provider: "provider".into(),

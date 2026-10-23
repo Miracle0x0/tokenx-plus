@@ -72,6 +72,7 @@ fn models_table_layout(
             ModelUsageLayoutSchema::ClientModelProviderDetails
         }
         Some(_) => ModelUsageLayoutSchema::ModelProviderDetails,
+        None if *group_by == GroupBy::MachineModel => ModelUsageLayoutSchema::MachineModels,
         None if *group_by == GroupBy::WorkspaceModel => ModelUsageLayoutSchema::WorkspaceModels,
         None => ModelUsageLayoutSchema::Models,
     };
@@ -92,6 +93,7 @@ fn model_column_header(
     density: ModelsTableDensity,
 ) -> std::borrow::Cow<'static, str> {
     match column {
+        ModelsColumn::Machine => rust_i18n::t!("tui.ui.models.header.machine"),
         ModelsColumn::Workspace => rust_i18n::t!("tui.ui.models.header.workspace"),
         ModelsColumn::Model => rust_i18n::t!("tui.ui.models.header.model"),
         ModelsColumn::Messages => rust_i18n::t!("tui.ui.models.header.messages"),
@@ -225,7 +227,12 @@ pub fn render(
         .map(|model| display_width(&get_client_display_names(&model.clients)))
         .max()
         .unwrap_or(DETAIL_CLIENT_WIDTH);
-    let workspace_content_width = if group_by == GroupBy::WorkspaceModel {
+    let workspace_content_width = if group_by == GroupBy::MachineModel {
+        ordered_models()
+            .map(|model| display_width(model.machine.as_deref().expect("machine label")))
+            .max()
+            .unwrap_or(WORKSPACE_MIN_WIDTH)
+    } else if group_by == GroupBy::WorkspaceModel {
         workspace_content_width(ordered_models())
     } else {
         0
@@ -279,6 +286,10 @@ pub fn render(
             let display_name = model_display_name(model);
             let cell_for_column = |column: ModelsColumn| -> Cell {
                 match column {
+                    ModelsColumn::Machine => Cell::from(truncate_display_width(
+                        model.machine.as_deref().expect("machine label"),
+                        table_layout.width_for(ModelsColumn::Machine),
+                    )),
                     ModelsColumn::Workspace => Cell::from(truncate_display_width(
                         workspace_label(model).as_ref(),
                         table_layout.width_for(ModelsColumn::Workspace),
@@ -616,6 +627,8 @@ mod tests {
     #[test]
     fn workspace_model_widths_split_workspace_from_bare_model() {
         let model = crate::tui::data::UsageModelEntry {
+            machine: None,
+            cost_provenance: Default::default(),
             model_id: "gpt-5".into(),
             display_name: "gpt-5".into(),
             provider: "openai".into(),
@@ -645,6 +658,8 @@ mod tests {
     #[test]
     fn workspace_column_falls_back_to_key_when_label_missing() {
         let model = crate::tui::data::UsageModelEntry {
+            machine: None,
+            cost_provenance: Default::default(),
             model_id: "gpt-5".into(),
             display_name: "gpt-5".into(),
             provider: "openai".into(),
@@ -740,6 +755,8 @@ mod tests {
         cost: f64,
     ) -> crate::tui::data::UsageModelEntry {
         crate::tui::data::UsageModelEntry {
+            machine: None,
+            cost_provenance: Default::default(),
             model_id: model.into(),
             display_name: model.into(),
             provider: "openai".into(),
@@ -784,6 +801,22 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn machine_grouping_renders_its_dimension_without_changing_model_identity() {
+        let mut app = make_models_app(180, GroupBy::MachineModel);
+        let mut row = workspace_model_usage("gpt-5", "irrelevant", 1.0);
+        row.machine = Some("gpu-server".into());
+        row.workspace_key = None;
+        row.workspace_label = None;
+        app.usage_mut_for_test().models = vec![row];
+        let rendered = render_body(&mut app, 180, 12);
+        assert!(rendered.contains("gpu-server"));
+        assert!(rendered.contains("gpt-5"));
+        assert!(!rendered.contains("irrelevant"));
+        let layout = models_table_layout(180, 20, 10, 10, 15, &GroupBy::MachineModel, None);
+        assert_eq!(layout.columns[0], ModelsColumn::Machine);
     }
 
     #[test]

@@ -22,7 +22,7 @@ cli:
     json: "以 JSON 输出"
     benchmark: "将处理耗时写入 stderr"
     no_spinner: "禁用进度动画"
-    group_by: "使用与 TUI Models 视图相同的分组：model、client,model、client,provider,model 或 workspace,model"
+    group_by: "使用与 TUI Models 视图相同的分组：model、client,model、client,provider,model、workspace,model 或 machine,model"
     home: "从该现有 home 目录读取本地会话数据"
     client: "按客户端过滤，可重复使用或用逗号分隔"
     today: "仅显示今天的用量"

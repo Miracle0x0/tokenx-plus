@@ -9,6 +9,7 @@ tui:
         title_default: " 周期明细 "
         header:
           workspace: "工作区"
+          machine: "机器"
           model: "模型"
           provider: "提供商"
           client: "客户端"

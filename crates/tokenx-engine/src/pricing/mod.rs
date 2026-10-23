@@ -4,7 +4,10 @@ pub mod litellm;
 pub mod lookup;
 pub mod models_dev;
 pub mod openrouter;
+mod provenance;
 mod service_tier;
+use provenance::CostEstimate;
+pub use provenance::{CostProvenance, PriceOrigin};
 pub use service_tier::ServiceTierPricing;
 
 use custom::CustomPricing;
@@ -550,19 +553,37 @@ impl PricingService {
         usage: &TokenBreakdown,
         context: UsagePricingContext<'_>,
     ) -> Result<f64, PricingComputationError> {
+        self.estimate_canonical_usage(canonical_model_id, provider_id, usage, context)
+            .map(|estimate| estimate.cost)
+    }
+
+    pub(crate) fn estimate_canonical_usage(
+        &self,
+        canonical_model_id: &str,
+        provider_id: Option<&str>,
+        usage: &TokenBreakdown,
+        context: UsagePricingContext<'_>,
+    ) -> Result<CostEstimate, PricingComputationError> {
         let Some(result) = self.lookup_canonical_with_billing_provider(
             canonical_model_id,
             None,
             provider_id,
             context.billing_provider,
         ) else {
-            return self.lookup.calculate_canonical_cost_with_provider_and_time(
-                canonical_model_id,
-                provider_id,
-                usage,
-                context.timestamp_ms,
-                context.service_tier,
-            );
+            let cost = self
+                .lookup
+                .calculate_canonical_cost_with_provider_and_time(
+                    canonical_model_id,
+                    provider_id,
+                    usage,
+                    context.timestamp_ms,
+                    context.service_tier,
+                )?;
+            return Ok(CostEstimate {
+                cost,
+                origin: None,
+                complete: false,
+            });
         };
         let pricing = if model_aliases::is_deepseek_v4_model(canonical_model_id) {
             lookup::effective_pricing_at(&result.pricing, context.timestamp_ms)?
@@ -613,7 +634,19 @@ impl PricingService {
             usage,
             context.is_aggregate,
         )?;
-        compute_cost(&pricing, usage)
+        Ok(CostEstimate {
+            cost: compute_cost(&pricing, usage)?,
+            complete: provenance::covers_usage(&pricing, usage),
+            origin: Some(PriceOrigin {
+                source: crate::records::intern::intern(&result.pricing_source),
+                matched_key: crate::records::intern::intern(&result.matched_key),
+                billing_provider: result
+                    .billing_provider
+                    .as_deref()
+                    .map(crate::records::intern::intern),
+                service_tier: context.service_tier.map(crate::records::intern::intern),
+            }),
+        })
     }
 
     fn lookup_custom(

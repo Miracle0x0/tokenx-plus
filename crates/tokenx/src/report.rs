@@ -9,13 +9,20 @@ pub(crate) fn build_models_report_value(
     data: &ModelProjection,
     group_by: &GroupBy,
 ) -> serde_json::Value {
-    build_models_value(&data.models, data.total_tokens, data.total_cost, group_by)
+    build_models_value(
+        &data.models,
+        data.total_tokens,
+        data.total_cost,
+        &data.cost_provenance,
+        group_by,
+    )
 }
 
 fn build_models_value(
     models: &[UsageModelEntry],
     total_tokens: u64,
     total_cost: f64,
+    cost_provenance: &tokenx_engine::pricing::CostProvenance,
     group_by: &GroupBy,
 ) -> serde_json::Value {
     json!({
@@ -36,8 +43,10 @@ fn build_models_value(
                     "total": model.tokens.total()
                 },
                 "cost": model.cost,
+                "costProvenance": model.cost_provenance,
                 "sessionCount": model.session_count
             });
+            if *group_by == GroupBy::MachineModel { entry["machine"] = json!(model.machine); }
             if *group_by == GroupBy::WorkspaceModel {
                 entry["workspaceKey"] = model
                     .workspace_key
@@ -52,7 +61,8 @@ fn build_models_value(
         }).collect::<Vec<_>>(),
         "totals": {
             "tokens": total_tokens,
-            "cost": total_cost
+            "cost": total_cost,
+            "costProvenance":cost_provenance
         }
     })
 }
@@ -64,7 +74,13 @@ pub(crate) fn build_usage_report_json(
     health: &HealthSummary,
     group_by: &GroupBy,
 ) -> Result<String> {
-    let mut report = build_models_value(&data.models, data.total_tokens, data.total_cost, group_by);
+    let mut report = build_models_value(
+        &data.models,
+        data.total_tokens,
+        data.total_cost,
+        &data.cost_provenance,
+        group_by,
+    );
     let object = report
         .as_object_mut()
         .expect("usage report is a JSON object");
@@ -85,6 +101,7 @@ pub(crate) fn build_usage_report_json(
                     "total": agent.tokens.total()
                 },
                 "cost": agent.cost,
+                "costProvenance":agent.cost_provenance,
                 "messageCount": agent.message_count,
                 "instanceCount": agent.instance_count
             }))
@@ -107,7 +124,8 @@ pub(crate) fn build_usage_report_json(
                 },
                 "messageCount": day.message_count,
                 "turnCount": day.turn_count,
-                "cost": day.cost
+                "cost": day.cost,
+                "costProvenance":day.cost_provenance
             }))
             .collect::<Vec<_>>()),
     );
@@ -168,6 +186,8 @@ mod tests {
 
     fn model_entry(workspace_key: Option<&str>, workspace_label: Option<&str>) -> UsageModelEntry {
         UsageModelEntry {
+            machine: None,
+            cost_provenance: Default::default(),
             model_id: "claude-sonnet-4.5".into(),
             display_name: "Claude Sonnet 4.5".into(),
             provider: "anthropic".into(),
@@ -209,6 +229,7 @@ mod tests {
     #[test]
     fn model_report_accepts_the_date_independent_projection() {
         let data = ModelProjection {
+            cost_provenance: Default::default(),
             models: vec![model_entry(None, None)],
             total_tokens: 17,
             total_cost: 0.25,
@@ -250,6 +271,7 @@ mod tests {
         };
         let data = UsageProjection {
             agents: vec![AgentEntry {
+                cost_provenance: Default::default(),
                 agent: "Builder".into(),
                 client: tokenx_engine::ClientId::OpenCode,
                 tokens: tokens.clone(),
@@ -258,6 +280,7 @@ mod tests {
                 instance_count: 1,
             }],
             daily: vec![DailyUsage {
+                cost_provenance: Default::default(),
                 date: NaiveDate::from_ymd_opt(2026, 7, 23).unwrap(),
                 tokens,
                 cost: 0.0,

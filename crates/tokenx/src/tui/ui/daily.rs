@@ -1,3 +1,7 @@
+#[cfg(test)]
+use super::model_usage_layout::{
+    detail_table_layout as daily_detail_table_layout, MODEL_MIN_WIDTH,
+};
 use chrono::{Datelike, NaiveDate};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, Table};
@@ -6,10 +10,8 @@ use std::collections::BTreeMap;
 
 use super::empty_state;
 use super::model_usage_layout::{
-    model_subscription_table_layout, ModelUsageColumn as DailyDetailColumn, ModelUsageLayoutSchema,
+    measured_detail_table_layout, ModelUsageColumn as DailyDetailColumn,
     ModelUsageTableDensity as DailyDetailTableDensity,
-    ModelUsageTableLayout as DailyDetailTableLayout, DETAIL_CLIENT_WIDTH, DETAIL_PROVIDER_WIDTH,
-    MODEL_MIN_WIDTH, WORKSPACE_MIN_WIDTH,
 };
 use super::table_layout::{
     display_width, distributed_table_area, responsive_table_layout, width_for_column,
@@ -31,6 +33,7 @@ use crate::tui::presentation::EmptySubject;
 use crate::tui::render_artifacts::RenderArtifacts;
 #[cfg(test)]
 use tokenx_engine::ClientId;
+#[cfg(test)]
 use tokenx_engine::GroupBy;
 
 const DATE_MIN_WIDTH: u16 = 7;
@@ -263,34 +266,12 @@ fn daily_table_layout(
     }
 }
 
-fn daily_detail_table_layout(
-    table_width: u16,
-    model_content_width: u16,
-    provider_content_width: u16,
-    client_content_width: u16,
-    workspace_content_width: u16,
-    group_by: &GroupBy,
-) -> DailyDetailTableLayout {
-    let schema = if *group_by == GroupBy::WorkspaceModel {
-        ModelUsageLayoutSchema::WorkspaceDetail
-    } else {
-        ModelUsageLayoutSchema::Detail
-    };
-    model_subscription_table_layout(
-        table_width,
-        model_content_width,
-        provider_content_width,
-        client_content_width,
-        workspace_content_width,
-        schema,
-    )
-}
-
 fn daily_detail_column_header(
     column: DailyDetailColumn,
     density: DailyDetailTableDensity,
 ) -> Cow<'static, str> {
     match column {
+        DailyDetailColumn::Machine => rust_i18n::t!("tui.ui.daily.header.machine"),
         DailyDetailColumn::Workspace => rust_i18n::t!("tui.ui.daily.header.workspace"),
         DailyDetailColumn::Model => rust_i18n::t!("tui.ui.daily.header.model"),
         DailyDetailColumn::Provider => rust_i18n::t!("tui.ui.daily.header.provider"),
@@ -793,39 +774,8 @@ fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifa
         }
     };
 
-    let model_content_width = rows_data
-        .iter()
-        .map(|row| display_width(&row.model))
-        .max()
-        .unwrap_or(MODEL_MIN_WIDTH);
-    let provider_content_width = rows_data
-        .iter()
-        .map(|row| display_width(&get_provider_display_name(&row.provider)))
-        .max()
-        .unwrap_or(DETAIL_PROVIDER_WIDTH);
-    let client_content_width = rows_data
-        .iter()
-        .map(|row| display_width(&get_client_display_names(&row.clients)))
-        .max()
-        .unwrap_or(DETAIL_CLIENT_WIDTH);
-    let group_by = app.group_by();
-    let workspace_content_width = if group_by == GroupBy::WorkspaceModel {
-        rows_data
-            .iter()
-            .map(|row| display_width(workspace_label_or_unknown(row.workspace.as_deref()).as_ref()))
-            .max()
-            .unwrap_or(WORKSPACE_MIN_WIDTH)
-    } else {
-        0
-    };
-    let table_layout = daily_detail_table_layout(
-        table_area.width,
-        model_content_width,
-        provider_content_width,
-        client_content_width,
-        workspace_content_width,
-        &group_by,
-    );
+    let table_layout =
+        measured_detail_table_layout(table_area.width, rows_data.iter(), app.group_by());
     let columns = table_layout.columns.clone();
 
     let header = Row::new(
@@ -872,6 +822,10 @@ fn render_detail(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifa
 
             let cell_for_column = |column: DailyDetailColumn| -> Cell {
                 match column {
+                    DailyDetailColumn::Machine => Cell::from(truncate_display_width(
+                        row.machine.as_deref().expect("machine label"),
+                        table_layout.width_for(DailyDetailColumn::Machine),
+                    )),
                     DailyDetailColumn::Workspace => Cell::from(truncate_display_width(
                         workspace_label_or_unknown(row.workspace.as_deref()).as_ref(),
                         table_layout.width_for(DailyDetailColumn::Workspace),
@@ -996,6 +950,7 @@ mod tests {
         cost: f64,
     ) -> DailyModelInfo {
         DailyModelInfo {
+            machine: None,
             provider: provider.into(),
             model_id: model_id.into(),
             display_name: display_name.into(),
@@ -1021,6 +976,7 @@ mod tests {
 
     fn day(date: &str, cost: f64) -> DailyUsage {
         DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
             tokens: UsageTokenBreakdown::default(),
             cost,
@@ -1328,6 +1284,7 @@ mod tests {
         cost: f64,
     ) -> DailyModelInfo {
         DailyModelInfo {
+            machine: None,
             provider: provider.into(),
             model_id: model_id.into(),
             display_name: model_id.into(),

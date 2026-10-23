@@ -206,6 +206,7 @@ mod tests {
 
     fn day(date: &str, tokens: u64, cost: f64) -> DailyUsage {
         DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
             tokens: UsageTokenBreakdown {
                 input: tokens,

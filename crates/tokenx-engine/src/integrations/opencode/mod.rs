@@ -184,6 +184,8 @@ mod tests {
             std::fs::write(path, "").unwrap();
         }
         let settings = crate::scanner::ScannerSettings {
+            machine_labels: Default::default(),
+            local_machine_label: "local".into(),
             opencode_db_paths: vec![external_db.clone()],
             extra_scan_paths: [(
                 ClientId::OpenCode,

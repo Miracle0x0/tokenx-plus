@@ -255,6 +255,7 @@ mod tests {
             ..UsageTokenBreakdown::default()
         };
         let model = DailyModelInfo {
+            machine: None,
             provider: "openai".into(),
             model_id: "gpt-5".into(),
             display_name: "gpt-5".into(),
@@ -265,6 +266,7 @@ mod tests {
             messages: 1,
         };
         DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
             tokens: tokens.clone(),
             cost: 0.0,
@@ -295,6 +297,7 @@ mod tests {
             cost: 0.0,
             clients: BTreeSet::from([ClientId::Codex]),
             models: vec![HourlyModelInfo {
+                machine: None,
                 provider: "openai".into(),
                 model_id: "gpt-5".into(),
                 display_name: "gpt-5".into(),

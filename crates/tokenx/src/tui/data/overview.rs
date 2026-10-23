@@ -246,6 +246,7 @@ mod tests {
                     day_cost += cost;
                 }
                 client_models.push(DailyModelInfo {
+                    machine: None,
                     provider: "".into(),
                     model_id: model_id.into(),
                     display_name: model_id.into(),
@@ -267,6 +268,7 @@ mod tests {
         }
 
         DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
             tokens: day_tokens,
             cost: day_cost,

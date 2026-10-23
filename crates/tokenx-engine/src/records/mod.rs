@@ -84,6 +84,9 @@ pub struct UsageRecord {
     pub workspace_key: Option<std::sync::Arc<str>>,
     #[serde(default, deserialize_with = "intern::de_intern_opt")]
     pub workspace_label: Option<std::sync::Arc<str>>,
+    /// Label assigned from the acquired input path, not client metadata.
+    #[serde(deserialize_with = "intern::de_intern")]
+    pub machine: std::sync::Arc<str>,
     pub timestamp: i64,
     pub tokens: TokenBreakdown,
     /// Claude input was explicitly reported alongside cache counters, including
@@ -100,6 +103,10 @@ pub struct UsageRecord {
     /// This row combines calls whose individual prompt lengths are unavailable.
     pub is_aggregate: bool,
     pub cost: f64,
+    #[serde(skip)]
+    pub(crate) price_origin: Option<crate::pricing::PriceOrigin>,
+    #[serde(skip)]
+    pub(crate) cost_is_complete: bool,
     /// Derived pricing failure; never persisted in source-record shards.
     #[serde(skip)]
     pub(crate) pricing_error: Option<crate::pricing::PricingComputationError>,
@@ -408,10 +415,13 @@ impl UsageRecord {
             is_main_session: true,
             workspace_key: None,
             workspace_label: None,
+            machine: intern::intern("local"),
             timestamp,
             tokens,
             cost,
             is_aggregate: false,
+            price_origin: None,
+            cost_is_complete: false,
             pricing_error: None,
             claude_input_is_split: false,
             claude_is_cost_snapshot: false,

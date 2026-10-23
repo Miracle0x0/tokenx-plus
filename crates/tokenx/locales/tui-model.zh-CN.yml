@@ -35,6 +35,7 @@ tui:
         client_model: "客户端+模型"
         client_provider_model: "客户端+提供商+模型"
         workspace_model: "工作区+模型"
+        machine_model: "机器+模型"
       theme:
         green: "绿色"
         halloween: "万圣节"

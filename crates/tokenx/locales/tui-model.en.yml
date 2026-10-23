@@ -35,6 +35,7 @@ tui:
         client_model: "client,model"
         client_provider_model: "client,provider,model"
         workspace_model: "workspace,model"
+        machine_model: "machine,model"
       theme:
         green: "green"
         halloween: "halloween"

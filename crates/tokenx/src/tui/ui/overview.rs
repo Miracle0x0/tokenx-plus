@@ -381,6 +381,7 @@ mod tests {
         let mut models = Vec::new();
         for name in model_names {
             models.push(DailyModelInfo {
+                machine: None,
                 provider: "provider".into(),
                 model_id: (*name).into(),
                 display_name: (*name).into(),
@@ -407,6 +408,7 @@ mod tests {
             },
         );
         app.usage_mut_for_test().daily = vec![DailyUsage {
+            cost_provenance: Default::default(),
             date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
             tokens: UsageTokenBreakdown::default(),
             cost: 1.0,
@@ -441,6 +443,7 @@ mod tests {
             .iter()
             .rev()
             .map(|date| DailyUsage {
+                cost_provenance: Default::default(),
                 date: *date,
                 ..day.clone()
             })

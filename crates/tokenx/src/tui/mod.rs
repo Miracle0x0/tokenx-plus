@@ -632,6 +632,7 @@ mod tests {
             .usage_mut_for_test()
             .daily
             .push(crate::tui::data::DailyUsage {
+                cost_provenance: Default::default(),
                 date: chrono::NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
                 tokens: tokens.clone(),
                 cost: 0.0,
@@ -641,6 +642,7 @@ mod tests {
                         tokens: tokens.clone(),
                         cost: 0.0,
                         models: vec![crate::tui::data::DailyModelInfo {
+                            machine: None,
                             provider: "openai".into(),
                             model_id: "gpt-5".into(),
                             display_name: "gpt-5".into(),
@@ -729,6 +731,8 @@ mod tests {
             .usage_mut_for_test()
             .models
             .push(crate::tui::data::UsageModelEntry {
+                machine: None,
+                cost_provenance: Default::default(),
                 model_id: "gpt-5".into(),
                 display_name: "gpt-5".into(),
                 provider: "openai".into(),

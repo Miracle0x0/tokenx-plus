@@ -247,6 +247,30 @@ channels, not accounts or verified invoices.
 Restart the command after editing the file because overrides are loaded at
 startup.
 
+## JSON price provenance
+
+Models JSON includes `costProvenance` on each model and on `data.totals`. TUI exports carry it on models, totals, agents, and daily rows. The value records the sources captured when costs were calculated:
+
+```json
+{
+  "complete": true,
+  "sources": [
+    {
+      "source": "Custom",
+      "matchedKey": "gpt-5",
+      "billingProvider": "gateway-a",
+      "serviceTier": null
+    }
+  ]
+}
+```
+
+`source` names the selected pricing catalog or custom configuration, and `matchedKey` retains its exact row key. `billingProvider` identifies a matched custom billing scope; it is null for global custom and public rows. `serviceTier` retains the observed tier or null. Aggregates contain the sorted union of participating sources, including mixed catalogs and explicit zero prices.
+
+`complete` means every participating token-bearing record had rates for its used buckets. Unmatched models, unavailable pricing, incomplete selected rates, and excluded pricing errors make it false. Explicit zero rates remain complete; a zero cost alone cannot establish free usage. An empty aggregate has no sources and is complete. Source availability and local input health remain separate diagnostics.
+
+Origins and completeness are retained in the generation and follow client filtering and regrouping. Source-record shards stay free of derived prices and provenance, so changed pricing is applied again to the same token evidence. See [ADR 0030](adr/0030-price-provenance.md).
+
 ## Cache files
 
 Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:

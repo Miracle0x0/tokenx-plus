@@ -136,6 +136,10 @@ pub(crate) enum GroupedModelKey {
         workspace: WorkspaceKey,
         model: Arc<str>,
     },
+    MachineModel {
+        machine: Arc<str>,
+        model: Arc<str>,
+    },
 }
 
 impl GroupedModelKey {
@@ -143,6 +147,10 @@ impl GroupedModelKey {
     #[cfg(test)]
     pub(crate) fn from_message(group_by: &GroupBy, msg: &AttributedUsageRecord) -> Self {
         match group_by {
+            GroupBy::MachineModel => Self::MachineModel {
+                machine: Arc::clone(&msg.machine),
+                model: Arc::clone(&msg.model_id),
+            },
             GroupBy::Model => Self::Model(Arc::clone(&msg.model_id)),
             GroupBy::ClientModel => Self::ClientModel {
                 client: msg.client,
@@ -161,7 +169,10 @@ impl GroupedModelKey {
     }
 
     pub(crate) fn merges_clients(&self) -> bool {
-        matches!(self, Self::Model(_) | Self::WorkspaceModel { .. })
+        matches!(
+            self,
+            Self::Model(_) | Self::WorkspaceModel { .. } | Self::MachineModel { .. }
+        )
     }
 }
 
@@ -169,6 +180,7 @@ impl GroupedModelKey {
 pub(crate) enum HourlyModelKey {
     Model(Arc<str>),
     ProviderModel { provider: Arc<str>, model: Arc<str> },
+    MachineModel { machine: Arc<str>, model: Arc<str> },
 }
 
 /// Finest-granularity model identity for every public `GroupBy` dimension,
@@ -177,6 +189,8 @@ pub(crate) enum HourlyModelKey {
 /// switching groupings is an in-memory re-fold instead of a rescan.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub(crate) struct FineModelKey {
+    #[serde(deserialize_with = "crate::records::intern::de_intern")]
+    pub(crate) machine: Arc<str>,
     pub(crate) client: ClientId,
     #[serde(deserialize_with = "crate::records::intern::de_intern")]
     pub(crate) provider: Arc<str>,
@@ -190,6 +204,7 @@ pub(crate) struct FineModelKey {
 impl FineModelKey {
     pub(crate) fn from_message(msg: &AttributedUsageRecord) -> Self {
         Self {
+            machine: Arc::clone(&msg.machine),
             client: msg.client,
             provider: Arc::clone(&msg.provider_id),
             workspace: WorkspaceKey::from_message(msg),
@@ -201,6 +216,10 @@ impl FineModelKey {
     /// Collapse to one grouping's bucket identity.
     pub(crate) fn grouped(&self, group_by: &GroupBy) -> GroupedModelKey {
         match group_by {
+            GroupBy::MachineModel => GroupedModelKey::MachineModel {
+                machine: Arc::clone(&self.machine),
+                model: Arc::clone(&self.model),
+            },
             GroupBy::Model => GroupedModelKey::Model(Arc::clone(&self.model)),
             GroupBy::ClientModel => GroupedModelKey::ClientModel {
                 client: self.client,
@@ -225,6 +244,8 @@ impl FineModelKey {
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub(crate) struct FineHourlyModelKey {
     #[serde(deserialize_with = "crate::records::intern::de_intern")]
+    pub(crate) machine: Arc<str>,
+    #[serde(deserialize_with = "crate::records::intern::de_intern")]
     pub(crate) provider: Arc<str>,
     #[serde(deserialize_with = "crate::records::intern::de_intern")]
     pub(crate) model: Arc<str>,
@@ -233,6 +254,7 @@ pub(crate) struct FineHourlyModelKey {
 impl FineHourlyModelKey {
     pub(crate) fn from_message(msg: &AttributedUsageRecord) -> Self {
         Self {
+            machine: Arc::clone(&msg.machine),
             provider: Arc::clone(&msg.provider_id),
             model: Arc::clone(&msg.model_id),
         }
@@ -240,7 +262,12 @@ impl FineHourlyModelKey {
 
     /// Collapse to one grouping's hourly bucket identity.
     pub(crate) fn grouped(&self, group_by: &GroupBy) -> HourlyModelKey {
-        if *group_by == GroupBy::ClientProviderModel {
+        if *group_by == GroupBy::MachineModel {
+            HourlyModelKey::MachineModel {
+                machine: Arc::clone(&self.machine),
+                model: Arc::clone(&self.model),
+            }
+        } else if *group_by == GroupBy::ClientProviderModel {
             HourlyModelKey::ProviderModel {
                 provider: Arc::clone(&self.provider),
                 model: Arc::clone(&self.model),

@@ -30,6 +30,7 @@ tokenx tui --tab models
 tokenx models --no-spinner
 tokenx models --json --no-spinner
 tokenx models --client codex --group-by client,provider,model --no-spinner
+tokenx models --group-by machine,model --json --no-spinner
 
 # Date filters
 tokenx tui --client opencode,claude --week
@@ -50,7 +51,7 @@ When running from source, replace `tokenx` with `./target/release/tokenx` (Windo
 - **Local usage remains local.** Token accounting is derived from accepted local records. Vendor spend, credits, balances, and cost-only rows are not mixed into local token cost.
 - **Failures remain visible.** Unreadable inputs, rejected records, unknown attribution, and unmatched pricing appear as errors or Data Health diagnostics instead of guessed success.
 - **Identity is stable.** One generated client catalog defines command IDs, display names, integration bindings, caches, and projections.
-- **Views share one generation.** CLI Models and TUI views project the same immutable acquisition result; changing a view does not rescan inputs.
+- **Views share one generation.** CLI Models and TUI views project the same immutable acquisition result; changing a view, including configured machine grouping, does not rescan inputs.
 - **Caches are disposable.** Input shards and the generation cache accelerate reads but never replace authoritative client data.
 
 ## Supported clients
@@ -59,7 +60,7 @@ Tokenx supports local data from OpenCode, Claude Code, Codex, Gemini CLI, Amp, a
 
 ## Pricing
 
-Tokenx canonicalizes model IDs before grouping and pricing, with optional user overrides in [`model-mappings.toml`](docs/configuration.md#model-mappings). Exact custom prices are checked first, followed by exact matches from the configured public catalogs. Prefix, substring, and fuzzy price guesses are not used. Recorded Codex service tiers select their corresponding catalog rates. Missing model or tier rates keep token usage with no derived cost; unavailable tier pricing produces an explicit warning.
+Tokenx canonicalizes model IDs before grouping and pricing, with optional user overrides in [`model-mappings.toml`](docs/configuration.md#model-mappings). Exact custom prices are checked first, followed by exact matches from the configured public catalogs. Prefix, substring, and fuzzy price guesses are not used. Recorded Codex service tiers select their corresponding catalog rates. Missing model or tier rates keep token usage with no derived cost; unavailable tier pricing produces an explicit warning. JSON reports retain the selected price sources and distinguish complete zero-price estimates from unpriced usage.
 
 See [pricing semantics](docs/pricing.md) for catalog precedence, total-only token allocation, and cost boundaries.
 
