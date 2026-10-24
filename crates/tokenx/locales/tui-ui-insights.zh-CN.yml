@@ -38,6 +38,7 @@ tui:
         tier4: "御马监"
         tier5: "齐天大圣"
     bar_chart:
+      daily_average: "日均 %{average}"
       peak: "峰值 %{max}"
     portraits:
       slogan:

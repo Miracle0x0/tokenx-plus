@@ -6,13 +6,14 @@
 //!   missing dates share the remaining columns and may collapse to zero width.
 //!   Any remainder is split between the left and right margins (the right gets
 //!   any odd column). Recorded bars clip at the right edge if they cannot fit.
-//! - The gridline, baseline, peak marker, and labels use the same centered
+//! - The gridline, baseline, summary markers, and labels use the same centered
 //!   chart area, without a y-axis gutter or title row.
 //! - Rows relative to the chart area: bars occupy rows `0..h-2`, row `h-2` is a
 //!   baseline of '─', row `h-1` holds the date labels.
 //! - A single dotted gridline ('┄') crosses the vertical middle of the bar
 //!   field; it is drawn before the bars so it only shows through empty cells.
 //! - A compact `peak {max}` marker overlays the top-right of bar row 0.
+//!   The daily average mirrors it at the top-left when both markers fit.
 //! - Date labels are anchored to the edges: first date left-aligned, last date
 //!   right-aligned, middle recorded date centered under its bar when it fits.
 
@@ -88,6 +89,7 @@ pub fn render_stacked_bar_chart(
     area: Rect,
     data: &[StackedBarData],
     bar_width: usize,
+    daily_average: Option<u64>,
 ) {
     if data.is_empty() || area.height < 2 || area.width == 0 {
         return;
@@ -161,7 +163,7 @@ pub fn render_stacked_bar_chart(
             .set_style(Style::default().fg(app.theme.visualization.grid));
     }
 
-    // Compact peak marker, right-aligned on the top bar row; drawn after the
+    // Compact summary markers on the top bar row; drawn after the
     // bars with an explicit background so it reads over any bar beneath it.
     if chart_height > 0 {
         let peak_label = rust_i18n::t!(
@@ -172,14 +174,20 @@ pub fn render_stacked_bar_chart(
         let peak_width = width_u16(peak_label.as_str());
         if area.width >= peak_width + 2 {
             let peak_x = area.x + area.width - peak_width;
-            buf.set_string(
-                peak_x,
-                area.y,
-                &peak_label,
-                Style::default()
-                    .fg(app.theme.text.secondary)
-                    .bg(app.theme.surface.panel),
-            );
+            let style = Style::default()
+                .fg(app.theme.text.secondary)
+                .bg(app.theme.surface.panel);
+            buf.set_string(peak_x, area.y, &peak_label, style);
+
+            if let Some(average) = daily_average {
+                let average_label = rust_i18n::t!(
+                    "tui.ui.bar_chart.daily_average",
+                    average = compact_tokens(average)
+                );
+                if area.width >= width_u16(average_label.as_ref()) + peak_width + 2 {
+                    buf.set_string(area.x, area.y, &average_label, style);
+                }
+            }
         }
     }
 
@@ -285,7 +293,7 @@ fn format_date_label(date_str: &str, is_very_narrow: bool) -> String {
     date_str.to_string()
 }
 
-/// Compact token count for the peak marker: when the integer part has 2+
+/// Compact token count for the summary markers: when the integer part has 2+
 /// digits, drop the decimal ("38.2B" -> "38B", "123.4B" -> "123B"; "2.1B"
 /// stays as-is).
 fn compact_tokens(tokens: u64) -> String {
@@ -407,7 +415,7 @@ mod tests {
         let day_count = data.len() + data.iter().map(|bar| bar.empty_days_before).sum::<usize>();
         let bar_width = (area.width as usize / day_count.max(1)).max(1);
         terminal
-            .draw(|frame| render_stacked_bar_chart(frame, app, area, data, bar_width))
+            .draw(|frame| render_stacked_bar_chart(frame, app, area, data, bar_width, None))
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -520,21 +528,50 @@ mod tests {
     }
 
     #[test]
-    fn peak_label_sits_top_right_and_compacts_the_value() {
+    fn summary_labels_mirror_each_other_at_the_centered_chart_edges() {
         let app = make_app(120);
         let data = vec![bar("1/5", 38_200_000_000), bar("1/6", 100)];
-        let area = Rect::new(0, 0, 30, 8);
-        let buf = render_chart(&app, area, &data, 30, 8);
+        // Two 15-column bars leave one unused column on either side.
+        let area = Rect::new(2, 1, 32, 8);
+        let mut terminal = Terminal::new(TestBackend::new(36, 10)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_stacked_bar_chart(frame, &app, area, &data, 15, Some(19_100_000_050))
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let row = row_string(buf, area.y);
 
-        let label = "peak 38B";
-        let start_x = area.x + area.width - label.len() as u16;
-        let row: String = row_string(&buf, area.y)
-            .chars()
-            .skip(start_x as usize)
-            .collect();
-        assert_eq!(row, label);
-        assert_eq!(buf[(start_x, area.y)].fg, app.theme.text.secondary);
-        assert_eq!(buf[(start_x, area.y)].bg, app.theme.surface.panel);
+        for (label, start_x) in [("avg/day 19B", 3), ("peak 38B", 25)] {
+            let rendered: String = row.chars().skip(start_x).take(label.len()).collect();
+            assert_eq!(rendered, label);
+            assert_eq!(buf[(start_x as u16, area.y)].fg, app.theme.text.secondary);
+            assert_eq!(buf[(start_x as u16, area.y)].bg, app.theme.surface.panel);
+        }
+    }
+
+    #[test]
+    fn summary_labels_do_not_overlap_when_the_chart_is_narrow() {
+        let app = make_app(120);
+        let data = vec![bar("1/5", 100)];
+        for (width, show_average) in [(20, false), (21, true)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 8)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_stacked_bar_chart(
+                        frame,
+                        &app,
+                        Rect::new(0, 0, width, 8),
+                        &data,
+                        width as usize,
+                        Some(100),
+                    )
+                })
+                .unwrap();
+            let row = row_string(terminal.backend().buffer(), 0);
+            assert!(row.ends_with("peak 100"), "{row}");
+            assert_eq!(row.starts_with("avg/day 100"), show_average, "{row}");
+        }
     }
 
     #[test]
