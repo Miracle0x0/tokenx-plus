@@ -38,6 +38,7 @@ tui:
         tier4: "Equerry"
         tier5: "Great Sage"
     bar_chart:
+      daily_average: "avg/day %{average}"
       peak: "peak %{max}"
     portraits:
       slogan:

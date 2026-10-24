@@ -28,6 +28,7 @@ struct OverviewData {
 struct OverviewChart {
     bars: Vec<StackedBarData>,
     bar_width: usize,
+    daily_average: Option<u64>,
 }
 
 pub(crate) fn render(
@@ -178,11 +179,22 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
                 })
                 .collect();
             let bar_width = (area.width as usize / bars.len().max(1)).max(1);
-            OverviewChart { bars, bar_width }
+            OverviewChart {
+                bars,
+                bar_width,
+                daily_average: None,
+            }
         }
     };
 
-    render_stacked_bar_chart(frame, app, area, &chart.bars, chart.bar_width);
+    render_stacked_bar_chart(
+        frame,
+        app,
+        area,
+        &chart.bars,
+        chart.bar_width,
+        chart.daily_average,
+    );
 }
 
 /// Size bars from the latest 60 recorded dates and their intervening calendar
@@ -194,6 +206,7 @@ fn daily_chart_data(app: &TuiModel, available_width: u16) -> OverviewChart {
         return OverviewChart {
             bars: Vec::new(),
             bar_width: 1,
+            daily_average: None,
         };
     };
     let initial_oldest = &daily[daily.len().min(60) - 1];
@@ -254,7 +267,17 @@ fn daily_chart_data(app: &TuiModel, available_width: u16) -> OverviewChart {
         });
     }
 
-    OverviewChart { bars, bar_width }
+    // Include every calendar day in the selected interval, even when a gap is
+    // compressed or the first visible date has no recorded usage.
+    let total_tokens: u128 = selected
+        .iter()
+        .map(|day| u128::from(day.tokens.total()))
+        .sum();
+    OverviewChart {
+        bars,
+        bar_width,
+        daily_average: Some((total_tokens / visible_days as u128) as u64),
+    }
 }
 
 fn render_legend(frame: &mut Frame, app: &TuiModel, area: Rect) {
@@ -453,15 +476,16 @@ mod tests {
 
     #[test]
     fn daily_chart_fills_calendar_gaps_including_year_boundaries_and_leap_days() {
-        for (first, last, expected) in [
-            ("2026-09-01", "2026-09-02", "██████"),
-            ("2026-09-01", "2026-09-03", "██  ██"),
-            ("2026-12-31", "2027-01-02", "██  ██"),
-            ("2024-02-28", "2024-03-01", "██  ██"),
-            ("2026-02-28", "2026-03-01", "██████"),
+        for (first, last, expected, average) in [
+            ("2026-09-01", "2026-09-02", "██████", 110),
+            ("2026-09-01", "2026-09-03", "██  ██", 73),
+            ("2026-12-31", "2027-01-02", "██  ██", 73),
+            ("2024-02-28", "2024-03-01", "██  ██", 73),
+            ("2026-02-28", "2026-03-01", "██████", 110),
         ] {
             let dates = [first, last].map(|date| date.parse::<NaiveDate>().unwrap());
             let app = app_with_days(&dates);
+            assert_eq!(daily_chart_data(&app, 6).daily_average, Some(average));
             let mut terminal = Terminal::new(TestBackend::new(6, 6)).unwrap();
             terminal
                 .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
@@ -477,13 +501,16 @@ mod tests {
         let dates: Vec<_> = (0..61)
             .map(|index| first + chrono::Days::new(index * 2))
             .collect();
-        let app = app_with_days(&dates);
+        let mut app = app_with_days(&dates);
+        app.usage_mut_for_test().daily[60].tokens.input = 1_000_000;
+        assert_eq!(daily_chart_data(&app, 119).daily_average, Some(55));
         let mut terminal = Terminal::new(TestBackend::new(119, 6)).unwrap();
         terminal
             .draw(|frame| render_chart(frame, &app, ChartGranularity::Daily, frame.area()))
             .unwrap();
 
         let lines = buffer_lines(&terminal);
+        assert!(lines[0].starts_with("avg/day 55"), "{}", lines[0]);
         assert_eq!(lines[3], format!("{}█", "█ ".repeat(59)));
         assert!(lines[5].starts_with("Jan 3"), "{}", lines[5]);
         assert!(lines[5].ends_with("May 1"), "{}", lines[5]);
@@ -564,6 +591,7 @@ mod tests {
         assert_eq!(chart.bars[0].total, 0);
         assert_eq!(chart.bars[1].date, "01/10");
         assert_eq!(chart.bars[1].empty_days_before, 2);
+        assert_eq!(chart.daily_average, Some(104));
 
         for (width, expected, first_label) in [
             (
@@ -608,6 +636,7 @@ mod tests {
             assert_eq!(chart.bars.len(), 60);
             assert_eq!(chart.bars[0].date, "01/03");
             assert_eq!(chart.bars[59].date, "05/01");
+            assert_eq!(chart.daily_average, Some(55));
 
             let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
             terminal
