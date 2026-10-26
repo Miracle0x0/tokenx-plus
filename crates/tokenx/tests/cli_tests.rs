@@ -14,9 +14,9 @@ fn prime_pricing_cache(base: &Path) {
 
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("pricing-litellm.json"), &payload).unwrap();
-    fs::write(dir.join("pricing-openrouter.json"), &payload).unwrap();
-    fs::write(dir.join("pricing-models-dev.json"), &payload).unwrap();
+    fs::write(dir.join("pricing-litellm.json"), payload).unwrap();
+    fs::write(dir.join("pricing-openrouter.json"), payload).unwrap();
+    fs::write(dir.join("pricing-models-dev.json"), payload).unwrap();
 }
 
 fn prime_override_pricing_cache(config_dir: &Path) {
@@ -24,9 +24,9 @@ fn prime_override_pricing_cache(config_dir: &Path) {
 
     let cache_dir = config_dir.join("cache");
     fs::create_dir_all(&cache_dir).unwrap();
-    fs::write(cache_dir.join("pricing-litellm.json"), &payload).unwrap();
-    fs::write(cache_dir.join("pricing-openrouter.json"), &payload).unwrap();
-    fs::write(cache_dir.join("pricing-models-dev.json"), &payload).unwrap();
+    fs::write(cache_dir.join("pricing-litellm.json"), payload).unwrap();
+    fs::write(cache_dir.join("pricing-openrouter.json"), payload).unwrap();
+    fs::write(cache_dir.join("pricing-models-dev.json"), payload).unwrap();
 }
 
 fn create_opencode_sqlite_at(db_path: &Path) -> Connection {
@@ -1981,62 +1981,6 @@ fn test_models_client_and_date_combined() {
 // ── JSON output validation tests ───────────────────────────────────────────
 
 #[test]
-fn test_models_json_output() {
-    let tmp = create_temp_fixture_dir();
-    let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(json["data"]["groupBy"], "model");
-    assert!(json["data"].get("models").is_some(), "Missing models field");
-    assert!(
-        json["data"]["totals"].get("tokens").is_some(),
-        "Missing totals.tokens"
-    );
-    assert!(
-        json["data"]["totals"].get("cost").is_some(),
-        "Missing totals.cost"
-    );
-    assert!(
-        json["metadata"].get("processingTimeMs").is_some(),
-        "Missing processingTimeMs"
-    );
-    assert!(
-        json["metadata"]["inputFootprint"]["opencode"]
-            .as_u64()
-            .is_some_and(|bytes| bytes > 0),
-        "Missing confirmed OpenCode input footprint"
-    );
-    assert!(json["health"].get("inputDataBytes").is_none());
-
-    let models = model_rows(&json);
-    assert!(!models.is_empty(), "Should have models from fixture data");
-    let first = &models[0];
-    assert!(first.get("clients").is_some());
-    assert!(first.get("modelId").is_some());
-    assert!(first.get("displayName").is_some());
-    assert!(first.get("model").is_none());
-    assert!(first.get("provider").is_some());
-    let tokens = first["tokens"].as_object().expect("tokens object");
-    for field in [
-        "input",
-        "output",
-        "reasoning",
-        "displayedOutput",
-        "cacheRead",
-        "cacheWrite",
-        "total",
-    ] {
-        assert!(tokens.contains_key(field), "Missing tokens.{field}");
-    }
-    assert!(first.get("cost").is_some());
-    assert!(first.get("sessionCount").is_some());
-}
-
-#[test]
 fn codex_service_tier_prices_and_warnings_survive_generation_cache() {
     for tier_available in [true, false] {
         let tmp = create_codex_fixture_dir();
@@ -2420,17 +2364,57 @@ fn test_models_json_offline_uses_stale_pricing_cache_when_available() {
     assert_eq!(json["metadata"]["pricingStatus"], "cachedFallback");
 }
 
-#[test]
-fn test_models_json_total_consistency() {
-    let tmp = create_temp_fixture_dir();
-    let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+// ── Group-by strategy tests ────────────────────────────────────────────────
 
-    let sum_tokens: u64 = model_rows(&json)
+fn assert_models_json_schema(json: &serde_json::Value) {
+    assert_eq!(json["data"]["groupBy"], "model");
+    assert!(json["data"].get("models").is_some(), "Missing models field");
+    assert!(
+        json["data"]["totals"].get("tokens").is_some(),
+        "Missing totals.tokens"
+    );
+    assert!(
+        json["data"]["totals"].get("cost").is_some(),
+        "Missing totals.cost"
+    );
+    assert!(
+        json["metadata"].get("processingTimeMs").is_some(),
+        "Missing processingTimeMs"
+    );
+    assert!(
+        json["metadata"]["inputFootprint"]["opencode"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0),
+        "Missing confirmed OpenCode input footprint"
+    );
+    assert!(json["health"].get("inputDataBytes").is_none());
+
+    let models = model_rows(json);
+    assert!(!models.is_empty(), "Should have models from fixture data");
+    let first = &models[0];
+    assert!(first.get("clients").is_some());
+    assert!(first.get("modelId").is_some());
+    assert!(first.get("displayName").is_some());
+    assert!(first.get("model").is_none());
+    assert!(first.get("provider").is_some());
+    let tokens = first["tokens"].as_object().expect("tokens object");
+    for field in [
+        "input",
+        "output",
+        "reasoning",
+        "displayedOutput",
+        "cacheRead",
+        "cacheWrite",
+        "total",
+    ] {
+        assert!(tokens.contains_key(field), "Missing tokens.{field}");
+    }
+    assert!(first.get("cost").is_some());
+    assert!(first.get("sessionCount").is_some());
+}
+
+fn assert_models_json_totals(json: &serde_json::Value) {
+    let sum_tokens: u64 = model_rows(json)
         .iter()
         .map(|model| model["tokens"]["total"].as_u64().unwrap())
         .sum();
@@ -2441,10 +2425,35 @@ fn test_models_json_total_consistency() {
     assert_eq!(sum_tokens, total_tokens);
 }
 
-// ── Group-by strategy tests ────────────────────────────────────────────────
+fn assert_model_group_rows(json: &serde_json::Value) {
+    assert_eq!(json["data"]["groupBy"].as_str().unwrap(), "model");
+
+    let models: Vec<&str> = model_rows(json)
+        .iter()
+        .map(|e| e["modelId"].as_str().unwrap())
+        .collect();
+    let unique_models: std::collections::HashSet<&&str> = models.iter().collect();
+    assert_eq!(
+        models.len(),
+        unique_models.len(),
+        "group-by model should produce unique model entries"
+    );
+    for entry in model_rows(json) {
+        assert!(entry.get("clients").is_some());
+        assert!(
+            entry.get("workspaceKey").is_none(),
+            "group-by model entries should not expose workspaceKey"
+        );
+        assert!(
+            entry.get("workspaceLabel").is_none(),
+            "group-by model entries should not expose workspaceLabel"
+        );
+        assert!(entry.get("sessionId").is_none());
+    }
+}
 
 #[test]
-fn test_models_group_by_default() {
+fn models_default_and_explicit_grouping_share_json_contract() {
     let tmp = create_temp_fixture_dir();
     let default_output = cmd_with_home(tmp.path())
         .args(["models", "--json", "--client", "opencode", "--no-spinner"])
@@ -2466,7 +2475,11 @@ fn test_models_group_by_default() {
     assert!(explicit_output.status.success());
     let default_json: serde_json::Value = serde_json::from_slice(&default_output.stdout).unwrap();
     let explicit_json: serde_json::Value = serde_json::from_slice(&explicit_output.stdout).unwrap();
-    assert_eq!(default_json["data"]["groupBy"], "model");
+    for document in [&default_json, &explicit_json] {
+        assert_models_json_schema(document);
+        assert_models_json_totals(document);
+        assert_model_group_rows(document);
+    }
     assert_eq!(default_json["data"], explicit_json["data"]);
 }
 
@@ -2575,30 +2588,6 @@ fn test_models_report_clamps_reasoning_above_output() {
 }
 
 #[test]
-fn test_models_group_by_model() {
-    let tmp = create_temp_fixture_dir();
-    let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
-        .args(["--group-by", "model"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["data"]["groupBy"].as_str().unwrap(), "model");
-
-    let models: Vec<&str> = model_rows(&json)
-        .iter()
-        .map(|e| e["modelId"].as_str().unwrap())
-        .collect();
-    let unique_models: std::collections::HashSet<&&str> = models.iter().collect();
-    assert_eq!(
-        models.len(),
-        unique_models.len(),
-        "group-by model should produce unique model entries"
-    );
-}
-
-#[test]
 fn test_models_group_by_client_provider_model() {
     let tmp = create_temp_fixture_dir();
     let output = cmd_with_home(tmp.path())
@@ -2663,30 +2652,6 @@ fn test_models_rejects_noncanonical_groupings() {
             .assert()
             .code(2)
             .stderr(predicate::str::contains("Invalid group-by value"));
-    }
-}
-
-#[test]
-fn test_models_json_with_group_by_model() {
-    let tmp = create_temp_fixture_dir();
-    let output = cmd_with_home(tmp.path())
-        .args(["models", "--json", "--client", "opencode", "--no-spinner"])
-        .args(["--group-by", "model"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    for entry in model_rows(&json) {
-        assert!(entry.get("clients").is_some());
-        assert!(
-            entry.get("workspaceKey").is_none(),
-            "group-by model entries should not expose workspaceKey"
-        );
-        assert!(
-            entry.get("workspaceLabel").is_none(),
-            "group-by model entries should not expose workspaceLabel"
-        );
-        assert!(entry.get("sessionId").is_none());
     }
 }
 
@@ -3266,17 +3231,6 @@ fn test_models_empty_fixture() {
     );
     assert_eq!(json["data"]["totals"]["tokens"].as_u64().unwrap(), 0);
     assert_eq!(json["data"]["totals"]["cost"].as_f64().unwrap(), 0.0);
-}
-
-// ── No-spinner flag tests ──────────────────────────────────────────────────
-
-#[test]
-fn test_models_no_spinner_flag() {
-    let tmp = create_temp_fixture_dir();
-    cmd_with_home(tmp.path())
-        .args(["models", "--client", "opencode", "--no-spinner"])
-        .assert()
-        .success();
 }
 
 // ── Root command ownership tests ───────────────────────────────────────────

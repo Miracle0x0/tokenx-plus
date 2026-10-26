@@ -1,5 +1,5 @@
 # Harvested DISTINCT model-id strings actually seen in local tokenx session
-# data, used to drive the catalog regression in tests/anthropic_catalog.rs.
+# data, used to drive the catalog regression in examples/check_pricing_catalog.rs.
 #
 # PRIVACY: this file contains ONLY model-id strings, an optional provider hint,
 # and pricing-expectation metadata. It carries NO usage counts, token totals,

@@ -288,7 +288,7 @@ fn claude_incomplete_line_and_corrupt_shard_reparse_authoritative_input() {
     write!(file, "{{\"type\":\"assistant\"").unwrap();
     let partial = fixture.load();
     assert!(!partial.health().complete());
-    write!(file,",\"timestamp\":\"2026-10-18T00:00:00Z\",\"message\":{{\"model\":\"claude-sonnet-4.6\",\"usage\":{{\"input_tokens\":5,\"output_tokens\":1}}}}}}\n").unwrap();
+    writeln!(file,",\"timestamp\":\"2026-10-18T00:00:00Z\",\"message\":{{\"model\":\"claude-sonnet-4.6\",\"usage\":{{\"input_tokens\":5,\"output_tokens\":1}}}}}}").unwrap();
     let repaired = fixture.load();
     fixture.assert_full_equivalent(&repaired);
     assert!(repaired.health().complete());

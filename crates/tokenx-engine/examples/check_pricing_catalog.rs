@@ -1,17 +1,12 @@
-//! Catalog invariant tests against the real cached pricing datasets.
+//! Check catalog invariants against an explicitly supplied pricing cache directory.
 //!
-//! `#[ignore]`d so CI (which has no `~/.tokenx/cache/`) skips them.
-//! Run manually when datasets are cached:
-//!
-//! ```sh
-//! cargo test -p tokenx-engine --test anthropic_catalog -- --ignored
-//! ```
+//! Run with `cargo run -p tokenx-engine --example check_pricing_catalog -- CACHE_DIR`.
 //!
 //! These assert INVARIANTS, not exact keys:
 //!
 //! * [`anthropic_catalog_resolves_to_correct_family_version_and_price`] drives
 //!   the Anthropic-family catalog from the model ids ACTUALLY seen in local
-//!   session data (committed as `tests/fixtures/local_model_ids.txt`). Every
+//!   session data (committed as `examples/fixtures/local_model_ids.txt`). Every
 //!   `claude-*` id must resolve to a key carrying the same family token and the
 //!   same major-minor version token (accepting both `4-8` and `4.8` spellings),
 //!   at a price within ±25% of the official rate (band tolerates regional
@@ -25,6 +20,7 @@
 //! Retired `claude-2.x` ids and bare brand tokens must resolve to None.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use tokenx_engine::pricing::lookup::PricingLookup;
 use tokenx_engine::pricing::{litellm, models_dev, openrouter, ModelPricing};
 
@@ -149,17 +145,12 @@ fn key_has_version(matched_lower: &str, version: &str) -> bool {
 
 /// Build the lookup exactly as `PricingService` does for cached datasets
 /// (filter github_copilot and include models.dev as the long-tail Pricing Source).
-fn load_lookup() -> PricingLookup {
-    let product_root = std::env::var_os("TOKENX_CONFIG_DIR")
-        .map(std::path::PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".tokenx")))
-        .expect("Tokenx product root required for catalog test");
-    let cache_dir = product_root.join("cache");
-    let litellm_data = litellm::load_cached_any_age(&cache_dir)
+fn load_lookup(cache_dir: &Path) -> PricingLookup {
+    let litellm_data = litellm::load_cached_any_age(cache_dir)
         .expect("LiteLLM pricing cache required for catalog test");
-    let openrouter_data = openrouter::load_cached_any_age(&cache_dir)
+    let openrouter_data = openrouter::load_cached_any_age(cache_dir)
         .expect("OpenRouter pricing cache required for catalog test");
-    let models_dev_data = models_dev::load_cached_any_age(&cache_dir)
+    let models_dev_data = models_dev::load_cached_any_age(cache_dir)
         .expect("models.dev pricing cache required for catalog test");
 
     PricingLookup::new_with_models_dev(
@@ -179,11 +170,7 @@ fn lookup_id(
         .map(|r| (r.matched_key, r.pricing))
 }
 
-#[test]
-#[ignore]
-fn anthropic_catalog_resolves_to_correct_family_version_and_price() {
-    let lookup = load_lookup();
-
+fn anthropic_catalog_resolves_to_correct_family_version_and_price(lookup: &PricingLookup) {
     let mut failures = Vec::new();
 
     // Drive the Anthropic family from the harvested real ids.
@@ -197,7 +184,7 @@ fn anthropic_catalog_resolves_to_correct_family_version_and_price() {
             continue;
         }
 
-        let resolved = lookup_id(&lookup, &entry.id, entry.provider.as_deref());
+        let resolved = lookup_id(lookup, &entry.id, entry.provider.as_deref());
 
         // Documented acceptable-None ids must stay unpriced.
         if entry.input_per_mtok.is_none() {
@@ -248,7 +235,7 @@ fn anthropic_catalog_resolves_to_correct_family_version_and_price() {
 
     // Hardcoded provider/regional/suffix forms.
     for entry in EXTRA_CATALOG {
-        let Some((matched_key, pricing)) = lookup_id(&lookup, entry.id, None) else {
+        let Some((matched_key, pricing)) = lookup_id(lookup, entry.id, None) else {
             failures.push(format!("{}: did not resolve", entry.id));
             continue;
         };
@@ -284,7 +271,7 @@ fn anthropic_catalog_resolves_to_correct_family_version_and_price() {
     // Retired models absent from all datasets, and bare brand tokens, must
     // resolve unpriced — never to another model's price.
     for id in ["claude-2.1", "claude-2.0", "claude", "anthropic"] {
-        if let Some((key, pricing)) = lookup_id(&lookup, id, None) {
+        if let Some((key, pricing)) = lookup_id(lookup, id, None) {
             failures.push(format!(
                 "{}: must be None, resolved to {} at {:?}",
                 id, key, pricing.input_cost_per_token
@@ -357,15 +344,11 @@ fn cross_family_tokens(family: &str) -> Vec<&'static str> {
     Vec::new()
 }
 
-#[test]
-#[ignore]
-fn real_local_models_all_resolve_sanely() {
-    let lookup = load_lookup();
-
+fn real_local_models_all_resolve_sanely(lookup: &PricingLookup) {
     let mut failures = Vec::new();
 
     for entry in parse_fixture() {
-        let resolved = lookup_id(&lookup, &entry.id, entry.provider.as_deref());
+        let resolved = lookup_id(lookup, &entry.id, entry.provider.as_deref());
 
         // Documented acceptable-None: must stay unpriced. Flag ANY resolution
         // (matching the sibling catalog test), not just an input-priced one —
@@ -431,4 +414,19 @@ fn real_local_models_all_resolve_sanely() {
         "real-local-model sanity violations:\n{}",
         failures.join("\n")
     );
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = std::env::args_os().skip(1);
+    let cache_dir = PathBuf::from(
+        args.next()
+            .ok_or("usage: check_pricing_catalog CACHE_DIR")?,
+    );
+    if args.next().is_some() {
+        return Err("usage: check_pricing_catalog CACHE_DIR".into());
+    }
+    let lookup = load_lookup(&cache_dir);
+    anthropic_catalog_resolves_to_correct_family_version_and_price(&lookup);
+    real_local_models_all_resolve_sanely(&lookup);
+    Ok(())
 }

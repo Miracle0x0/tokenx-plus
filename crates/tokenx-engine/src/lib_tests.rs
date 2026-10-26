@@ -1619,82 +1619,24 @@ max_context_size = 128000
 }
 
 #[test]
-#[serial_test::serial]
 fn test_parse_all_messages_with_pricing_kimi_code_usage_records() {
-    let cache_home = tempfile::TempDir::new().unwrap();
     let input_home = tempfile::TempDir::new().unwrap();
-    let original_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", cache_home.path());
 
-    {
-        write_kimi_code_usage_fixture(input_home.path());
+    write_kimi_code_usage_fixture(input_home.path());
 
-        let messages = parse_all_messages_with_pricing(
-            input_home.path().to_str().unwrap(),
-            &["kimi".to_string()],
-            None,
-        )
-        .unwrap();
+    let messages = parse_all_messages_with_pricing(
+        input_home.path().to_str().unwrap(),
+        &["kimi".to_string()],
+        None,
+    )
+    .unwrap();
 
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].provider_id.as_ref(), "openai");
-        assert_eq!(messages[0].model_id.as_ref(), "gpt-5.5");
-        assert_eq!(messages.iter().map(|m| m.tokens.input).sum::<i64>(), 30);
-        assert_eq!(messages.iter().map(|m| m.tokens.output).sum::<i64>(), 3);
-        assert_eq!(messages.iter().map(|m| m.tokens.cache_read).sum::<i64>(), 5);
-    }
-
-    match original_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
-}
-
-#[test]
-#[serial_test::serial]
-fn test_local_message_loader_kimi_code_usage_records() {
-    let cache_home = tempfile::TempDir::new().unwrap();
-    let input_home = tempfile::TempDir::new().unwrap();
-    let original_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", cache_home.path());
-
-    {
-        write_kimi_code_usage_fixture(input_home.path());
-
-        let parsed = load_local_messages_for_test(TestAcquisitionRequest {
-            home_dir: Some(input_home.path().to_path_buf()),
-            clients: Some(vec![ClientId::Kimi]),
-            date_range: DateRange::none(),
-            scanner_settings: scanner::ScannerSettings::default(),
-        })
-        .unwrap();
-
-        assert_eq!(parsed.counts.get(ClientId::Kimi), 2);
-        assert_eq!(parsed.messages.len(), 2);
-        assert_eq!(parsed.messages[0].provider_id.as_ref(), "openai");
-        assert_eq!(parsed.messages[0].model_id.as_ref(), "gpt-5.5");
-        assert_eq!(
-            parsed.messages.iter().map(|m| m.tokens.input).sum::<i64>(),
-            30
-        );
-        assert_eq!(
-            parsed.messages.iter().map(|m| m.tokens.output).sum::<i64>(),
-            3
-        );
-        assert_eq!(
-            parsed
-                .messages
-                .iter()
-                .map(|m| m.tokens.cache_read)
-                .sum::<i64>(),
-            5
-        );
-    }
-
-    match original_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].provider_id.as_ref(), "openai");
+    assert_eq!(messages[0].model_id.as_ref(), "gpt-5.5");
+    assert_eq!(messages.iter().map(|m| m.tokens.input).sum::<i64>(), 30);
+    assert_eq!(messages.iter().map(|m| m.tokens.output).sum::<i64>(), 3);
+    assert_eq!(messages.iter().map(|m| m.tokens.cache_read).sum::<i64>(), 5);
 }
 
 #[test]
@@ -2716,168 +2658,71 @@ fn test_parse_all_messages_dedups_across_channel_suffixed_opencode_dbs() {
 }
 
 #[test]
-#[serial_test::serial]
 fn test_parse_all_messages_with_pricing_opencode_sqlite_deduplicates_forked_history() {
-    let cache_home = tempfile::TempDir::new().unwrap();
     let input_home = tempfile::TempDir::new().unwrap();
-    let original_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", cache_home.path());
 
-    {
-        let db_dir = input_home.path().join(".local/share/opencode");
-        std::fs::create_dir_all(&db_dir).unwrap();
-        let db_path = db_dir.join("opencode.db");
-        let conn = create_opencode_sqlite_db(&db_path);
+    let db_dir = input_home.path().join(".local/share/opencode");
+    std::fs::create_dir_all(&db_dir).unwrap();
+    let db_path = db_dir.join("opencode.db");
+    let conn = create_opencode_sqlite_db(&db_path);
 
-        let msg_a = build_opencode_sqlite_payload(
-            1_700_000_000_000.0,
-            1_700_000_000_500.0,
-            100,
-            50,
-            0,
-            10,
-            5,
-            0.01,
-        );
-        let msg_b = build_opencode_sqlite_payload(
-            1_700_000_001_000.0,
-            1_700_000_001_500.0,
-            200,
-            80,
-            10,
-            20,
-            0,
-            0.02,
-        );
-        let msg_c = build_opencode_sqlite_payload(
-            1_700_000_002_000.0,
-            1_700_000_002_500.0,
-            300,
-            120,
-            15,
-            0,
-            0,
-            0.03,
-        );
+    let msg_a = build_opencode_sqlite_payload(
+        1_700_000_000_000.0,
+        1_700_000_000_500.0,
+        100,
+        50,
+        0,
+        10,
+        5,
+        0.01,
+    );
+    let msg_b = build_opencode_sqlite_payload(
+        1_700_000_001_000.0,
+        1_700_000_001_500.0,
+        200,
+        80,
+        10,
+        20,
+        0,
+        0.02,
+    );
+    let msg_c = build_opencode_sqlite_payload(
+        1_700_000_002_000.0,
+        1_700_000_002_500.0,
+        300,
+        120,
+        15,
+        0,
+        0,
+        0.03,
+    );
 
-        for (id, session_id, payload) in [
-            ("root_a", "root", msg_a.as_str()),
-            ("root_b", "root", msg_b.as_str()),
-            ("fork_a_copy", "fork", msg_a.as_str()),
-            ("fork_b_copy", "fork", msg_b.as_str()),
-            ("fork_c_new", "fork", msg_c.as_str()),
-        ] {
-            conn.execute(
-                "INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)",
-                rusqlite::params![id, session_id, payload],
-            )
-            .unwrap();
-        }
-        drop(conn);
-
-        let messages = parse_all_messages_with_pricing(
-            input_home.path().to_str().unwrap(),
-            &["opencode".to_string()],
-            None,
+    for (id, session_id, payload) in [
+        ("root_a", "root", msg_a.as_str()),
+        ("root_b", "root", msg_b.as_str()),
+        ("fork_a_copy", "fork", msg_a.as_str()),
+        ("fork_b_copy", "fork", msg_b.as_str()),
+        ("fork_c_new", "fork", msg_c.as_str()),
+    ] {
+        conn.execute(
+            "INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)",
+            rusqlite::params![id, session_id, payload],
         )
         .unwrap();
-
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages.iter().map(|m| m.tokens.input).sum::<i64>(), 600);
-        assert_eq!(messages.iter().map(|m| m.tokens.output).sum::<i64>(), 250);
-        assert_eq!(messages.iter().map(|m| m.cost).sum::<f64>(), 0.0);
     }
+    drop(conn);
 
-    match original_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
-}
+    let messages = parse_all_messages_with_pricing(
+        input_home.path().to_str().unwrap(),
+        &["opencode".to_string()],
+        None,
+    )
+    .unwrap();
 
-#[test]
-#[serial_test::serial]
-fn test_local_message_loader_opencode_sqlite_counts_deduplicated_forked_history() {
-    let cache_home = tempfile::TempDir::new().unwrap();
-    let input_home = tempfile::TempDir::new().unwrap();
-    let original_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", cache_home.path());
-
-    {
-        let db_dir = input_home.path().join(".local/share/opencode");
-        std::fs::create_dir_all(&db_dir).unwrap();
-        let db_path = db_dir.join("opencode.db");
-        let conn = create_opencode_sqlite_db(&db_path);
-
-        let msg_a = build_opencode_sqlite_payload(
-            1_700_000_000_000.0,
-            1_700_000_000_500.0,
-            100,
-            50,
-            0,
-            10,
-            5,
-            0.01,
-        );
-        let msg_b = build_opencode_sqlite_payload(
-            1_700_000_001_000.0,
-            1_700_000_001_500.0,
-            200,
-            80,
-            10,
-            20,
-            0,
-            0.02,
-        );
-        let msg_c = build_opencode_sqlite_payload(
-            1_700_000_002_000.0,
-            1_700_000_002_500.0,
-            300,
-            120,
-            15,
-            0,
-            0,
-            0.03,
-        );
-
-        for (id, session_id, payload) in [
-            ("root_a", "root", msg_a.as_str()),
-            ("root_b", "root", msg_b.as_str()),
-            ("fork_a_copy", "fork", msg_a.as_str()),
-            ("fork_b_copy", "fork", msg_b.as_str()),
-            ("fork_c_new", "fork", msg_c.as_str()),
-        ] {
-            conn.execute(
-                "INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)",
-                rusqlite::params![id, session_id, payload],
-            )
-            .unwrap();
-        }
-        drop(conn);
-
-        let parsed = load_local_messages_for_test(TestAcquisitionRequest {
-            home_dir: Some(input_home.path().to_path_buf()),
-            clients: Some(vec![ClientId::OpenCode]),
-            date_range: DateRange::none(),
-            scanner_settings: scanner::ScannerSettings::default(),
-        })
-        .unwrap();
-
-        assert_eq!(parsed.counts.get(ClientId::OpenCode), 3);
-        assert_eq!(parsed.messages.len(), 3);
-        assert_eq!(
-            parsed.messages.iter().map(|m| m.tokens.input).sum::<i64>(),
-            600
-        );
-        assert_eq!(
-            parsed.messages.iter().map(|m| m.tokens.output).sum::<i64>(),
-            250
-        );
-    }
-
-    match original_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages.iter().map(|m| m.tokens.input).sum::<i64>(), 600);
+    assert_eq!(messages.iter().map(|m| m.tokens.output).sum::<i64>(), 250);
+    assert_eq!(messages.iter().map(|m| m.cost).sum::<f64>(), 0.0);
 }
 
 fn write_codex_forked_history_fixture(input_home: &std::path::Path) {
@@ -2980,89 +2825,67 @@ fn write_codex_parent_replay_fixture(input_home: &std::path::Path) {
 }
 
 #[test]
-#[serial_test::serial]
 fn test_parse_all_messages_with_pricing_codex_deduplicates_forked_history() {
-    let cache_home = tempfile::TempDir::new().unwrap();
     let input_home = tempfile::TempDir::new().unwrap();
-    let original_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", cache_home.path());
 
-    {
-        write_codex_forked_history_fixture(input_home.path());
+    write_codex_forked_history_fixture(input_home.path());
 
-        let messages = parse_all_messages_with_pricing(
-            input_home.path().to_str().unwrap(),
-            &["codex".to_string()],
-            None,
-        )
-        .unwrap();
+    let messages = parse_all_messages_with_pricing(
+        input_home.path().to_str().unwrap(),
+        &["codex".to_string()],
+        None,
+    )
+    .unwrap();
 
-        assert_eq!(messages.len(), 3);
-        assert_eq!(
-            messages
-                .iter()
-                .map(|message| message.tokens.input)
-                .sum::<i64>(),
-            88
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .map(|message| message.tokens.cache_read)
-                .sum::<i64>(),
-            22
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .map(|message| message.tokens.output)
-                .sum::<i64>(),
-            33
-        );
-    }
-
-    match original_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
+    assert_eq!(messages.len(), 3);
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.tokens.input)
+            .sum::<i64>(),
+        88
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.tokens.cache_read)
+            .sum::<i64>(),
+        22
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.tokens.output)
+            .sum::<i64>(),
+        33
+    );
 }
 
 #[test]
-#[serial_test::serial]
 fn test_parse_all_messages_with_pricing_codex_deduplicates_parent_replay_across_forks() {
-    let cache_home = tempfile::TempDir::new().unwrap();
     let input_home = tempfile::TempDir::new().unwrap();
-    let original_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", cache_home.path());
 
-    {
-        write_codex_parent_replay_fixture(input_home.path());
+    write_codex_parent_replay_fixture(input_home.path());
 
-        let messages = parse_all_messages_with_pricing(
-            input_home.path().to_str().unwrap(),
-            &["codex".to_string()],
-            None,
-        )
-        .unwrap();
+    let messages = parse_all_messages_with_pricing(
+        input_home.path().to_str().unwrap(),
+        &["codex".to_string()],
+        None,
+    )
+    .unwrap();
 
-        // Parent contributes its two turns. The two forks each replay the
-        // parent history (skipped) and then emit one own turn that lands on
-        // the identical cumulative total (140/14). Sibling forks sharing a
-        // cumulative total is the signature of a replayed row, so the
-        // fork-parent-scoped dedup key collapses them into one. Real fork
-        // fan-out replays the same upstream totals into 10-100+ siblings;
-        // two distinct turns reaching a byte-identical cumulative vector by
-        // chance does not happen in practice because the cumulative encodes
-        // each fork's divergent context size.
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages.iter().map(|m| m.tokens.input).sum::<i64>(), 140);
-        assert_eq!(messages.iter().map(|m| m.tokens.output).sum::<i64>(), 14);
-    }
-
-    match original_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
+    // Parent contributes its two turns. The two forks each replay the
+    // parent history (skipped) and then emit one own turn that lands on
+    // the identical cumulative total (140/14). Sibling forks sharing a
+    // cumulative total is the signature of a replayed row, so the
+    // fork-parent-scoped dedup key collapses them into one. Real fork
+    // fan-out replays the same upstream totals into 10-100+ siblings;
+    // two distinct turns reaching a byte-identical cumulative vector by
+    // chance does not happen in practice because the cumulative encodes
+    // each fork's divergent context size.
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages.iter().map(|m| m.tokens.input).sum::<i64>(), 140);
+    assert_eq!(messages.iter().map(|m| m.tokens.output).sum::<i64>(), 14);
 }
 
 fn write_codex_twin_token_count_fixture(input_home: &std::path::Path) {
@@ -3090,109 +2913,45 @@ fn write_codex_twin_token_count_fixture(input_home: &std::path::Path) {
 }
 
 #[test]
-#[serial_test::serial]
 fn test_parse_all_messages_with_pricing_codex_keeps_twin_token_counts_at_distinct_timestamps() {
-    let cache_home = tempfile::TempDir::new().unwrap();
     let input_home = tempfile::TempDir::new().unwrap();
-    let original_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", cache_home.path());
 
-    {
-        write_codex_twin_token_count_fixture(input_home.path());
+    write_codex_twin_token_count_fixture(input_home.path());
 
-        let messages = parse_all_messages_with_pricing(
-            input_home.path().to_str().unwrap(),
-            &["codex".to_string()],
-            None,
-        )
-        .unwrap();
+    let messages = parse_all_messages_with_pricing(
+        input_home.path().to_str().unwrap(),
+        &["codex".to_string()],
+        None,
+    )
+    .unwrap();
 
-        assert_eq!(
-            messages.len(),
-            2,
-            "two turns with identical token deltas at distinct timestamps must both survive dedup",
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .map(|message| message.tokens.input)
-                .sum::<i64>(),
-            16,
-            "input tokens normalize cache_read out of input: 2 turns × (10 - 2) = 16",
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .map(|message| message.tokens.output)
-                .sum::<i64>(),
-            6,
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .map(|message| message.tokens.cache_read)
-                .sum::<i64>(),
-            4,
-        );
-    }
-
-    match original_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
-}
-
-#[test]
-#[serial_test::serial]
-fn test_local_message_loader_codex_counts_deduplicated_forked_history() {
-    let cache_home = tempfile::TempDir::new().unwrap();
-    let input_home = tempfile::TempDir::new().unwrap();
-    let original_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", cache_home.path());
-
-    {
-        write_codex_forked_history_fixture(input_home.path());
-
-        let parsed = load_local_messages_for_test(TestAcquisitionRequest {
-            home_dir: Some(input_home.path().to_path_buf()),
-            clients: Some(vec![ClientId::Codex]),
-            date_range: DateRange::none(),
-            scanner_settings: scanner::ScannerSettings::default(),
-        })
-        .unwrap();
-
-        assert_eq!(parsed.counts.get(ClientId::Codex), 3);
-        assert_eq!(parsed.messages.len(), 3);
-        assert_eq!(
-            parsed
-                .messages
-                .iter()
-                .map(|message| message.tokens.input)
-                .sum::<i64>(),
-            88
-        );
-        assert_eq!(
-            parsed
-                .messages
-                .iter()
-                .map(|message| message.tokens.cache_read)
-                .sum::<i64>(),
-            22
-        );
-        assert_eq!(
-            parsed
-                .messages
-                .iter()
-                .map(|message| message.tokens.output)
-                .sum::<i64>(),
-            33
-        );
-    }
-
-    match original_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
+    assert_eq!(
+        messages.len(),
+        2,
+        "two turns with identical token deltas at distinct timestamps must both survive dedup",
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.tokens.input)
+            .sum::<i64>(),
+        16,
+        "input tokens normalize cache_read out of input: 2 turns × (10 - 2) = 16",
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.tokens.output)
+            .sum::<i64>(),
+        6,
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.tokens.cache_read)
+            .sum::<i64>(),
+        4,
+    );
 }
 
 #[test]
