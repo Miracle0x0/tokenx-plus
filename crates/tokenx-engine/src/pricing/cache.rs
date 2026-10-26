@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const CACHE_TTL_SECS: u64 = 3600;
-pub const CACHE_FORMAT_VERSION: u32 = 4;
+pub const CACHE_FORMAT_VERSION: u32 = 5;
 
 pub fn get_cache_path(cache_dir: &Path, filename: &str) -> PathBuf {
     cache_dir.join(filename)
@@ -125,8 +125,9 @@ mod tests {
     fn unchanged_data_only_renews_freshness_without_replacing_the_file() {
         let root = tempfile::TempDir::new().unwrap();
         let path = root.path().join("catalog.json");
-        let previous = br#"{"data":{"b":2,"a":1},"version":4}"#;
-        fs::write(&path, previous).unwrap();
+        let previous =
+            format!(r#"{{"data":{{"b":2,"a":1}},"version":{CACHE_FORMAT_VERSION}}}"#).into_bytes();
+        fs::write(&path, &previous).unwrap();
         let file = fs::OpenOptions::new()
             .read(true)
             .write(true)

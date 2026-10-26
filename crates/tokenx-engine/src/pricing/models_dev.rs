@@ -28,6 +28,17 @@ struct ModelCost {
     output: Option<f64>,
     cache_read: Option<f64>,
     cache_write: Option<f64>,
+    #[serde(default)]
+    tiers: Vec<ModelCostTier>,
+}
+
+#[derive(Deserialize)]
+struct ModelCostTier {
+    tier: serde_json::Value,
+    input: Option<f64>,
+    output: Option<f64>,
+    cache_read: Option<f64>,
+    cache_write: Option<f64>,
 }
 
 pub type PricingDataset = HashMap<String, ModelPricing>;
@@ -261,7 +272,26 @@ fn cost_to_pricing(cost: ModelCost) -> Option<ModelPricing> {
     let input = per_token(cost.input?)?;
     let output = per_token(cost.output?)?;
 
+    let tier = cost.tiers.iter().find(|tier| {
+        tier.tier.get("type").and_then(serde_json::Value::as_str) == Some("context")
+            && matches!(
+                tier.tier.get("size").and_then(serde_json::Value::as_u64),
+                Some(100_000 | 100_001)
+            )
+    });
     Some(ModelPricing {
+        input_cost_per_token_above_100k_tokens: tier
+            .and_then(|tier| tier.input)
+            .and_then(per_token),
+        output_cost_per_token_above_100k_tokens: tier
+            .and_then(|tier| tier.output)
+            .and_then(per_token),
+        cache_read_input_token_cost_above_100k_tokens: tier
+            .and_then(|tier| tier.cache_read)
+            .and_then(per_token),
+        cache_creation_input_token_cost_above_100k_tokens: tier
+            .and_then(|tier| tier.cache_write)
+            .and_then(per_token),
         input_cost_per_token: Some(input),
         output_cost_per_token: Some(output),
         cache_read_input_token_cost: cost.cache_read.and_then(per_token),
@@ -284,6 +314,35 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    #[test]
+    fn context_tiers_preserve_published_rates_without_inventing_duration_prices() {
+        for boundary in [100_000, 100_001] {
+            let data = parse_dataset(
+                &serde_json::json!({"anthropic":{"models":{
+                    "claude-haiku-5-5":{"cost":{"input":0.1,"output":0.5,"tiers":[{
+                        "tier":{"type":"context","size":boundary},
+                        "input":0.5,"output":2.5,"cache_read":0.05,"cache_write":0.625
+                    }]}}
+                }}})
+                .to_string(),
+            )
+            .unwrap();
+            let row = &data["anthropic/claude-haiku-5-5"];
+            assert_eq!(
+                row.input_cost_per_token_above_100k_tokens,
+                Some(0.5 / 1_000_000.0)
+            );
+            assert_eq!(
+                row.cache_creation_input_token_cost_above_100k_tokens,
+                Some(0.625 / 1_000_000.0)
+            );
+            assert_eq!(
+                row.cache_creation_input_token_cost_above_1hr_above_100k_tokens,
+                None
+            );
+        }
+    }
 
     fn retryable_status_server(status_line: &'static str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

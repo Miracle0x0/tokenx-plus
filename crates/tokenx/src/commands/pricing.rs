@@ -114,6 +114,17 @@ pub(crate) async fn run_pricing_lookup(
                 #[derive(serde::Serialize)]
                 #[serde(rename_all = "camelCase")]
                 struct PricingValues {
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    input_cost_per_token_above_100k_tokens: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    output_cost_per_token_above_100k_tokens: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    cache_read_input_token_cost_above_100k_tokens: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    cache_creation_input_token_cost_above_100k_tokens: Option<f64>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    cache_creation_input_token_cost_above_1hr_above_100k_tokens: Option<f64>,
+
                     input_cost_per_token: Option<f64>,
                     output_cost_per_token: Option<f64>,
                     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,6 +175,22 @@ pub(crate) async fn run_pricing_lookup(
                     pricing_source: pricing.pricing_source,
                     billing_provider: pricing.billing_provider,
                     pricing: PricingValues {
+                        input_cost_per_token_above_100k_tokens: pricing
+                            .pricing
+                            .input_cost_per_token_above_100k_tokens,
+                        output_cost_per_token_above_100k_tokens: pricing
+                            .pricing
+                            .output_cost_per_token_above_100k_tokens,
+                        cache_read_input_token_cost_above_100k_tokens: pricing
+                            .pricing
+                            .cache_read_input_token_cost_above_100k_tokens,
+                        cache_creation_input_token_cost_above_100k_tokens: pricing
+                            .pricing
+                            .cache_creation_input_token_cost_above_100k_tokens,
+                        cache_creation_input_token_cost_above_1hr_above_100k_tokens: pricing
+                            .pricing
+                            .cache_creation_input_token_cost_above_1hr_above_100k_tokens,
+
                         input_cost_per_token: pricing.pricing.input_cost_per_token,
                         output_cost_per_token: pricing.pricing.output_cost_per_token,
                         cache_read_input_token_cost: pricing.pricing.cache_read_input_token_cost,

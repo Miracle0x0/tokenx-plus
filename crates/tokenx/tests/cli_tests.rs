@@ -10,7 +10,7 @@ use tempfile::TempDir;
 // ── Fixture helpers ────────────────────────────────────────────────────────
 
 fn prime_pricing_cache(base: &Path) {
-    let payload = r#"{"version":4,"data":{}}"#;
+    let payload = r#"{"version":5,"data":{}}"#;
 
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
@@ -20,7 +20,7 @@ fn prime_pricing_cache(base: &Path) {
 }
 
 fn prime_override_pricing_cache(config_dir: &Path) {
-    let payload = r#"{"version":4,"data":{}}"#;
+    let payload = r#"{"version":5,"data":{}}"#;
 
     let cache_dir = config_dir.join("cache");
     fs::create_dir_all(&cache_dir).unwrap();
@@ -751,8 +751,8 @@ fn invalid_model_mapping_file_fails_before_acquisition() {
 }
 
 fn write_pricing_cache(base: &Path, timestamp: u64) {
-    let litellm = r#"{"version":4,"data":{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001},"claude-sonnet-4":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}"#;
-    let empty = r#"{"version":4,"data":{}}"#;
+    let litellm = r#"{"version":5,"data":{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001},"claude-sonnet-4":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015}}}"#;
+    let empty = r#"{"version":5,"data":{}}"#;
     let dir = base.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
     for (name, payload) in [

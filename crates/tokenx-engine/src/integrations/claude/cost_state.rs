@@ -72,6 +72,7 @@ pub(super) fn append_records(
             0.0,
         );
         record.claude_is_cost_snapshot = true;
+        record.is_aggregate = true;
         record.claude_input_is_split = true;
         record.message_count = 0;
         match crate::record_finalization(&record) {

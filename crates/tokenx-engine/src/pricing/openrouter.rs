@@ -25,7 +25,7 @@ struct PricingOverride {
     #[serde(default)]
     utc_end: Option<u32>,
     #[serde(default)]
-    min_prompt_tokens: Option<u64>,
+    min_prompt_tokens: Option<f64>,
     #[serde(default)]
     prompt: Option<String>,
     #[serde(default)]
@@ -34,6 +34,8 @@ struct PricingOverride {
     input_cache_read: Option<String>,
     #[serde(default)]
     input_cache_write: Option<String>,
+    #[serde(default)]
+    input_cache_write_1h: Option<String>,
     #[serde(flatten)]
     unrecognized_fields: HashMap<String, Value>,
 }
@@ -46,6 +48,8 @@ struct OpenRouterPricing {
     input_cache_read: Option<String>,
     #[serde(default)]
     input_cache_write: Option<String>,
+    #[serde(default)]
+    input_cache_write_1h: Option<String>,
     #[serde(default)]
     overrides: Vec<PricingOverride>,
 }
@@ -261,16 +265,48 @@ fn parse_openrouter_pricing(
         parse_optional_price(pricing.input_cache_read.as_deref(), "input_cache_read")?;
     let cache_creation_input_token_cost =
         parse_optional_price(pricing.input_cache_write.as_deref(), "input_cache_write")?;
-    let time_period_prices = parse_time_period_prices(model_id, pricing.overrides)?;
-
-    Ok(ModelPricing {
+    let mut result = ModelPricing {
         input_cost_per_token: Some(input),
         output_cost_per_token: Some(output),
         cache_read_input_token_cost,
         cache_creation_input_token_cost,
-        time_period_prices,
+        cache_creation_input_token_cost_above_1hr: parse_optional_price(
+            pricing.input_cache_write_1h.as_deref(),
+            "input_cache_write_1h",
+        )?,
         ..Default::default()
-    })
+    };
+    let mut seen = false;
+    for tier in &pricing.overrides {
+        if tier.min_prompt_tokens != Some(100_000.0) {
+            continue;
+        }
+        if seen {
+            return Err("duplicate 100k pricing override".into());
+        }
+        seen = true;
+        if tier.utc_days.is_some()
+            || tier.utc_start.is_some()
+            || tier.utc_end.is_some()
+            || !tier.unrecognized_fields.is_empty()
+        {
+            return Err("100k override has unsupported conditions".into());
+        }
+        result.input_cost_per_token_above_100k_tokens =
+            parse_optional_price(tier.prompt.as_deref(), "100k prompt")?;
+        result.output_cost_per_token_above_100k_tokens =
+            parse_optional_price(tier.completion.as_deref(), "100k completion")?;
+        result.cache_read_input_token_cost_above_100k_tokens =
+            parse_optional_price(tier.input_cache_read.as_deref(), "100k cache read")?;
+        result.cache_creation_input_token_cost_above_100k_tokens =
+            parse_optional_price(tier.input_cache_write.as_deref(), "100k cache write")?;
+        result.cache_creation_input_token_cost_above_1hr_above_100k_tokens = parse_optional_price(
+            tier.input_cache_write_1h.as_deref(),
+            "100k one-hour cache write",
+        )?;
+    }
+    result.time_period_prices = parse_time_period_prices(model_id, pricing.overrides)?;
+    Ok(result)
 }
 
 async fn fetch_author_pricing(
@@ -555,6 +591,30 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
+    #[test]
+    fn haiku_overrides_preserve_all_request_rates_and_reject_invalid_conditions() {
+        let mut wire = serde_json::json!({"prompt":"0.1","completion":"0.5","input_cache_write_1h":"0.2",
+            "overrides":[{"min_prompt_tokens":100000.0,"prompt":"0.5","completion":"2.5",
+                "input_cache_read":"0.05","input_cache_write":"0.625","input_cache_write_1h":"1"}]});
+        let row = parse_openrouter_pricing(
+            "anthropic/claude-haiku-5.5",
+            serde_json::from_value(wire.clone()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(row.input_cost_per_token_above_100k_tokens, Some(0.5));
+        assert_eq!(row.cache_creation_input_token_cost_above_1hr, Some(0.2));
+        assert_eq!(
+            row.cache_creation_input_token_cost_above_1hr_above_100k_tokens,
+            Some(1.0)
+        );
+        wire["overrides"][0]["utc_start"] = serde_json::json!(900);
+        assert!(parse_openrouter_pricing(
+            "anthropic/claude-haiku-5.5",
+            serde_json::from_value(wire).unwrap()
+        )
+        .is_err());
+    }
+
     fn retryable_status_server() -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -623,6 +683,7 @@ mod tests {
         let pricing = parse_openrouter_pricing(
             "openai/gpt-5",
             OpenRouterPricing {
+                input_cache_write_1h: None,
                 prompt: "0.00000085".to_string(),
                 completion: "0.00000125".to_string(),
                 input_cache_read: None,
