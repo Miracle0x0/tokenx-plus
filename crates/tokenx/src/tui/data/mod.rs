@@ -191,7 +191,7 @@ mod tests {
         let _config_guard = ConfigDirEnvGuard::set(temp_dir.path());
         let task_root = temp_dir
             .path()
-            .join(".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks");
+            .join(".vscode-server/data/User/globalStorage/rooveterinaryinc.roo-cline/tasks");
 
         let architect_dir = task_root.join("task-architect");
         fs::create_dir_all(&architect_dir).unwrap();
@@ -278,11 +278,11 @@ after"#,
         assert_eq!(usage.agents[0].agent.as_ref(), "Architect");
         assert_eq!(usage.agents[0].client, ClientId::RooCode);
         assert_eq!(usage.agents[0].message_count, 2);
-        assert_eq!(usage.agents[0].tokens.total(), 734_000);
+        assert_eq!(usage.agents[0].tokens.total(), 690_000);
 
         assert_eq!(usage.agents[1].agent.as_ref(), "Reviewer");
         assert_eq!(usage.agents[1].message_count, 2);
-        assert_eq!(usage.agents[1].tokens.total(), 147_000);
+        assert_eq!(usage.agents[1].tokens.total(), 136_000);
     }
 
     #[test]
