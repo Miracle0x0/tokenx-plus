@@ -3470,45 +3470,7 @@ mod tests {
 
     #[test]
     fn test_move_selection_up() {
-        let config = TuiConfig {
-            theme: Some(ThemeName::Blue),
-            refresh: 0,
-            no_refresh: false,
-            client_universe: tokenx_engine::ClientUniverse::all(),
-            initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-        };
-        let mut app = TuiModel::new_for_test(config).unwrap();
-
-        // Add some mock data
-        app.usage_mut_for_test().models = vec![
-            UsageModelEntry {
-                machine: None,
-                cost_provenance: Default::default(),
-                model_id: "model1".into(),
-                display_name: "model1".into(),
-                provider: "provider1".into(),
-                clients: vec![ClientId::OpenCode],
-                tokens: UsageTokenBreakdown::default(),
-                cost: 0.0,
-                session_count: 1,
-                workspace_key: None,
-                workspace_label: None,
-            },
-            UsageModelEntry {
-                machine: None,
-                cost_provenance: Default::default(),
-                model_id: "model2".into(),
-                display_name: "model2".into(),
-                provider: "provider2".into(),
-                clients: vec![ClientId::OpenCode],
-                tokens: UsageTokenBreakdown::default(),
-                cost: 0.0,
-                session_count: 1,
-                workspace_key: None,
-                workspace_label: None,
-            },
-        ];
+        let mut app = make_app_with_models(2);
 
         app.set_selected_index(1);
         app.move_selection_up();
@@ -3521,45 +3483,7 @@ mod tests {
 
     #[test]
     fn test_move_selection_down() {
-        let config = TuiConfig {
-            theme: Some(ThemeName::Blue),
-            refresh: 0,
-            no_refresh: false,
-            client_universe: tokenx_engine::ClientUniverse::all(),
-            initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-        };
-        let mut app = TuiModel::new_for_test(config).unwrap();
-
-        // Add some mock data
-        app.usage_mut_for_test().models = vec![
-            UsageModelEntry {
-                machine: None,
-                cost_provenance: Default::default(),
-                model_id: "model1".into(),
-                display_name: "model1".into(),
-                provider: "provider1".into(),
-                clients: vec![ClientId::OpenCode],
-                tokens: UsageTokenBreakdown::default(),
-                cost: 0.0,
-                session_count: 1,
-                workspace_key: None,
-                workspace_label: None,
-            },
-            UsageModelEntry {
-                machine: None,
-                cost_provenance: Default::default(),
-                model_id: "model2".into(),
-                display_name: "model2".into(),
-                provider: "provider2".into(),
-                clients: vec![ClientId::OpenCode],
-                tokens: UsageTokenBreakdown::default(),
-                cost: 0.0,
-                session_count: 1,
-                workspace_key: None,
-                workspace_label: None,
-            },
-        ];
+        let mut app = make_app_with_models(2);
 
         app.set_selected_index(0);
         app.move_selection_down();
@@ -3568,36 +3492,13 @@ mod tests {
         // At bottom boundary - wraps to first item (index 0)
         app.move_selection_down();
         assert_eq!(app.selected_index(), 0);
+        assert_eq!(app.scroll_offset(), 0);
     }
 
     #[test]
     fn test_clamp_selection() {
-        let config = TuiConfig {
-            theme: Some(ThemeName::Blue),
-            refresh: 0,
-            no_refresh: false,
-            client_universe: tokenx_engine::ClientUniverse::all(),
-            initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-        };
-        let mut app = TuiModel::new_for_test(config).unwrap();
+        let mut app = make_app_with_models(1);
 
-        // Add some mock data
-        app.usage_mut_for_test().models = vec![UsageModelEntry {
-            machine: None,
-            cost_provenance: Default::default(),
-            model_id: "model1".into(),
-            display_name: "model1".into(),
-            provider: "provider1".into(),
-            clients: vec![ClientId::OpenCode],
-            tokens: UsageTokenBreakdown::default(),
-            cost: 0.0,
-            session_count: 1,
-            workspace_key: None,
-            workspace_label: None,
-        }];
-
-        // Set selection beyond bounds
         app.set_selected_index(10);
         app.clamp_selection();
         assert_eq!(app.selected_index(), 0);
@@ -3612,15 +3513,7 @@ mod tests {
 
     #[test]
     fn test_set_sort() {
-        let config = TuiConfig {
-            theme: Some(ThemeName::Blue),
-            refresh: 0,
-            no_refresh: false,
-            client_universe: tokenx_engine::ClientUniverse::all(),
-            initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-        };
-        let mut app = TuiModel::new_for_test(config).unwrap();
+        let mut app = make_app();
 
         // Initial state
         assert_eq!(app.sort_field, SortField::Cost);
@@ -5001,22 +4894,6 @@ mod tests {
     }
 
     #[test]
-    fn subscription_tab_key_scrolls_text_viewport_without_table_selection() {
-        let mut app = make_app_with_subscription();
-        let mut state = crate::tui::page_state::PageStates::default();
-        app.current_tab = Tab::Subscription;
-        app.set_selected_index(3);
-        app.set_scroll_offset(2);
-        state.set_subscription_text_viewport(4, 10);
-
-        state.handle_intent(&mut app, Intent::Move(MoveCommand::Down));
-
-        assert_eq!(state.subscription_scroll(), 1);
-        assert_eq!(app.selected_index(), 3);
-        assert_eq!(app.scroll_offset(), 2);
-    }
-
-    #[test]
     fn hourly_profile_key_scrolls_text_viewport_without_table_selection() {
         let mut app = make_app();
         let mut state = crate::tui::page_state::PageStates::default();
@@ -5050,25 +4927,6 @@ mod tests {
     }
 
     // ── wrap-around navigation ──────────────────────────────────────
-
-    #[test]
-    fn test_move_selection_up_wraps_to_last() {
-        let mut app = make_app_with_models(3);
-        app.set_max_visible_items(10);
-        app.set_selected_index(0);
-        app.move_selection_up();
-        assert_eq!(app.selected_index(), 2);
-    }
-
-    #[test]
-    fn test_move_selection_down_wraps_to_first() {
-        let mut app = make_app_with_models(3);
-        app.set_max_visible_items(10);
-        app.set_selected_index(2);
-        app.move_selection_down();
-        assert_eq!(app.selected_index(), 0);
-        assert_eq!(app.scroll_offset(), 0);
-    }
 
     #[test]
     fn test_move_selection_up_empty_list_noop() {
@@ -5206,7 +5064,6 @@ mod tests {
     // ── handle_key_event: refresh ───────────────────────────────────
 
     #[test]
-    #[ignore] // triggers load_data() which requires network + filesystem I/O
     fn test_handle_key_refresh() {
         let mut app = make_app();
         app.handle_key_event(key(KeyCode::Char('r')));

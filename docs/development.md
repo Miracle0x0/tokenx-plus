@@ -70,6 +70,13 @@ bun run test:launchers
 
 When running Tokenx from automation, pass `--no-spinner` unless spinner behavior is under test.
 
+Automated tests use temporary directories and synthetic fixtures. The optional
+catalog check reads only the explicitly supplied pricing cache directory:
+
+```bash
+cargo run --locked -p tokenx-engine --example check_pricing_catalog -- /path/to/pricing-cache
+```
+
 The launcher test builds the TypeScript launcher and native binary, packs every npm platform package, checks exact tarball contents, installs local tarballs, and verifies Node and Bun execution. Use `TOKENX_SMOKE_BUILD_PROFILE=release` for release-binary coverage.
 
 ## Security checks
@@ -103,7 +110,11 @@ Commit the root `THIRD_PARTY_LICENSES.html` together with the dependency change.
 
 Engine microbenchmarks use `codspeed-criterion-compat` and run through `.github/workflows/codspeed.yml`. The workflow authenticates with GitHub OIDC and does not require a long-lived `CODSPEED_TOKEN`.
 
-Measure startup, acquisition, and RSS only with `target/release/tokenx`; debug binaries are correctness artifacts. Every new repository must be imported into CodSpeed settings and authorized for the CodSpeed GitHub App before its workflow can publish a baseline.
+Use `target/release/tokenx` for startup, acquisition, and comparative RSS benchmarks.
+The automated Copilot memory regression uses the test profile to check a broad RSS
+budget and cold/warm cache correctness; its timing is not a performance baseline.
+Every new repository must be imported into CodSpeed settings and authorized for
+the CodSpeed GitHub App before its workflow can publish a baseline.
 
 For local end-to-end acquisition measurements, `scripts/measure-scan-performance.sh` requires `jq` and GNU time. It prefers `gtime`; otherwise it uses `/usr/bin/time` only after checking support for GNU `-f` and `-o`.
 

@@ -1547,17 +1547,3 @@ mod tests {
         );
     }
 }
-
-#[cfg(test)]
-mod integration_tests {
-    use super::*;
-
-    #[test]
-    #[ignore]
-    fn parses_real_current_database() {
-        let home = std::env::var("HOME").unwrap();
-        let db_path = Path::new(&home).join(".local/share/opencode/opencode.db");
-        let messages = parse_opencode_sqlite(&db_path).unwrap().messages;
-        assert!(!messages.is_empty());
-    }
-}

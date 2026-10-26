@@ -15,9 +15,9 @@ fn prime_pricing_cache(home: &Path) {
 
     let dir = home.join(".tokenx/cache");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("pricing-litellm.json"), &payload).unwrap();
-    fs::write(dir.join("pricing-openrouter.json"), &payload).unwrap();
-    fs::write(dir.join("pricing-models-dev.json"), &payload).unwrap();
+    fs::write(dir.join("pricing-litellm.json"), payload).unwrap();
+    fs::write(dir.join("pricing-openrouter.json"), payload).unwrap();
+    fs::write(dir.join("pricing-models-dev.json"), payload).unwrap();
 }
 
 fn write_large_copilot_fixture(home: &Path) {

@@ -5,8 +5,6 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
-#[cfg(test)]
-use std::ops::Range;
 use std::sync::Arc;
 
 use super::intent::Intent;
@@ -180,12 +178,6 @@ impl PageStates {
     }
 
     #[cfg(test)]
-    pub(crate) fn subscription_text_visible_range(&self) -> Range<usize> {
-        self.subscription_viewport
-            .visible_range(self.subscription_total_lines)
-    }
-
-    #[cfg(test)]
     pub(crate) fn subscription_scroll(&self) -> usize {
         self.subscription_viewport.scroll
     }
@@ -195,12 +187,6 @@ impl PageStates {
         self.hourly_profile_total_lines = total_lines;
         self.hourly_profile_viewport
             .set_visible(visible, total_lines);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn hourly_profile_text_visible_range(&self) -> Range<usize> {
-        self.hourly_profile_viewport
-            .visible_range(self.hourly_profile_total_lines)
     }
 
     #[cfg(test)]
@@ -229,12 +215,6 @@ impl PageStates {
         self.daily_profile_total_lines = total_lines;
         self.daily_profile_viewport
             .set_visible(visible, total_lines);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn daily_profile_text_visible_range(&self) -> Range<usize> {
-        self.daily_profile_viewport
-            .visible_range(self.daily_profile_total_lines)
     }
 
     #[cfg(test)]
@@ -388,46 +368,6 @@ impl PageStates {
 
         self.session_clients.clamp(self.client_count(app));
         self.session_details.clamp(self.session_count(app));
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_client_viewport(&mut self, visible: usize, len: usize) {
-        self.session_clients.set_visible(visible, len);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_detail_viewport(&mut self, visible: usize, len: usize) {
-        self.session_details.set_visible(visible, len);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn client_selected(&self) -> usize {
-        self.session_clients.selected
-    }
-
-    #[cfg(test)]
-    pub(crate) fn detail_selected(&self) -> usize {
-        self.session_details.selected
-    }
-
-    #[cfg(test)]
-    pub(crate) fn client_scroll(&self) -> usize {
-        self.session_clients.scroll
-    }
-
-    #[cfg(test)]
-    pub(crate) fn detail_scroll(&self) -> usize {
-        self.session_details.scroll
-    }
-
-    #[cfg(test)]
-    pub(crate) fn client_visible_range(&self, len: usize) -> Range<usize> {
-        self.session_clients.visible_range(len)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn detail_visible_range(&self, len: usize) -> Range<usize> {
-        self.session_details.visible_range(len)
     }
 
     pub(crate) fn session_clients_interaction(&self) -> ListInteraction {

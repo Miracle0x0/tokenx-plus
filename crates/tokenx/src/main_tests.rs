@@ -598,7 +598,7 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
         "pricing-openrouter.json",
         "pricing-models-dev.json",
     ] {
-        std::fs::write(pricing_cache_dir.join(filename), &empty_pricing).unwrap();
+        std::fs::write(pricing_cache_dir.join(filename), empty_pricing).unwrap();
     }
     let cli = Cli::try_parse_from([
         "tokenx",
