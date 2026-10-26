@@ -65,8 +65,10 @@ worker pool and repeated refreshes do not recreate threads.
 `DiscoveredInput` is source-neutral. Its `DecoderKind` directly carries every
 typed detail required to select decoder behavior. Persisted `DecoderVersion`
 cache identity combines its `DecoderId`, the build-generated SHA-256 contract
-of the shared and integration-local decoder sources, and any typed structural
-variant carried by the kind. It is never reconstructed from a client default
+of the shared and integration-local decoder sources selected by ADR 0037, and any
+typed structural variant carried by the kind. Standalone files explicitly marked
+test-only are excluded; production files retain their complete source bytes in
+the contract. It is never reconstructed from a client default
 or advanced by a handwritten revision number. Snapshotting promotes a
 `DiscoveredInput` to `PreparedInput`; cache planning then turns a miss into
 `ExecutionInput`, the only phase accepted by parsers. Session decoders produce

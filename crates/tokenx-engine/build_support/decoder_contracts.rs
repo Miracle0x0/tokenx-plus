@@ -1,9 +1,11 @@
 use std::fs;
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 const DOMAIN: &[u8] = b"tokenx-decoder-contract-v1";
+const SHARED_SOURCE_DIRECTORIES: &[&str] = &["src/records", "src/acquisition", "src/finalization"];
 
 pub(crate) struct DecoderContractSpec {
     pub variant: &'static str,
@@ -228,7 +230,9 @@ pub(crate) fn production_sources(crate_dir: &Path) -> Vec<PathBuf> {
         crate_dir.join("src/provider_identity.rs"),
         crate_dir.join("src/token_imputation.rs"),
     ];
-    paths.extend(rust_sources_recursive(&crate_dir.join("src/records")));
+    for directory in SHARED_SOURCE_DIRECTORIES {
+        paths.extend(rust_sources_recursive(&crate_dir.join(directory)));
+    }
     paths.extend(
         fs::read_dir(crate_dir.join("src/integrations"))
             .expect("failed to enumerate shared integration sources")
@@ -237,7 +241,11 @@ pub(crate) fn production_sources(crate_dir: &Path) -> Vec<PathBuf> {
                     .expect("failed to inspect shared integration source")
                     .path()
             })
-            .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "rs")),
+            .filter(|path| {
+                path.is_file()
+                    && path.extension().is_some_and(|ext| ext == "rs")
+                    && !is_test_only_source(path)
+            }),
     );
     paths.sort();
     paths.dedup();
@@ -270,11 +278,45 @@ fn rust_sources_recursive(root: &Path) -> Vec<PathBuf> {
             .path();
         if path.is_dir() {
             paths.extend(rust_sources_recursive(&path));
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
+        } else if path.extension().is_some_and(|extension| extension == "rs")
+            && !is_test_only_source(&path)
+        {
             paths.push(path);
         }
     }
     paths
+}
+
+fn is_test_only_source(path: &Path) -> bool {
+    let file = fs::File::open(path).unwrap_or_else(|error| {
+        panic!(
+            "failed to open decoder contract source {}: {error}",
+            path.display()
+        )
+    });
+    let mut first_line = String::new();
+    BufReader::new(file)
+        .read_line(&mut first_line)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to read decoder contract source {}: {error}",
+                path.display()
+            )
+        });
+    // This attribute excludes the entire file from production compilation.
+    // Other layouts remain conservatively included in the source contract.
+    first_line.trim() == "#![cfg(test)]"
+}
+
+pub(crate) fn write_if_changed(path: &Path, contents: &[u8]) -> io::Result<bool> {
+    match fs::read(path) {
+        Ok(current) if current == contents => return Ok(false),
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    fs::write(path, contents)?;
+    Ok(true)
 }
 
 pub(crate) fn contract_fingerprint(
@@ -312,6 +354,12 @@ fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
 pub(crate) fn generate_decoder_contracts(crate_dir: &Path) -> (String, Vec<PathBuf>) {
     let shared = production_sources(crate_dir);
     let mut watched = shared.clone();
+    watched.push(crate_dir.join("src/integrations"));
+    watched.extend(
+        SHARED_SOURCE_DIRECTORIES
+            .iter()
+            .map(|directory| crate_dir.join(directory)),
+    );
     let mut stable_name_arms = String::new();
     let mut from_stable_name_arms = String::new();
     let mut plain_kind_arms = String::new();

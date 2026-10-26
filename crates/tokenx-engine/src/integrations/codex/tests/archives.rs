@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 
 fn write_archive(path: &Path, content: &str) {

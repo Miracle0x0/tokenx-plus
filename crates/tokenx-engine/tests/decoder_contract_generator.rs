@@ -5,7 +5,8 @@ use std::fs;
 use std::path::Path;
 
 use decoder_contracts::{
-    contract_fingerprint, generate_decoder_contracts, integration_sources, DECODER_CONTRACTS,
+    contract_fingerprint, generate_decoder_contracts, integration_sources, production_sources,
+    write_if_changed, DECODER_CONTRACTS,
 };
 
 fn write(path: &Path, content: &str) {
@@ -17,6 +18,41 @@ fn fingerprint(root: &Path, integration: &str) -> [u8; 32] {
     let shared = vec![root.join("shared.rs")];
     let integration = vec![root.join(integration).join("decode.rs")];
     contract_fingerprint(root, &shared, &integration)
+}
+
+fn source_fixture(root: &Path) {
+    for file in [
+        "lib.rs",
+        "acquisition.rs",
+        "finalization.rs",
+        "model_aliases.rs",
+        "provider_identity.rs",
+        "token_imputation.rs",
+        "records/mod.rs",
+        "integrations/mod.rs",
+    ] {
+        write(&root.join("src").join(file), "// shared source\n");
+    }
+    for module in ["acquisition", "finalization"] {
+        write(
+            &root.join(format!("src/{module}/test_support.rs")),
+            "#![cfg(test)]\nfn helper() {}\n",
+        );
+    }
+    for spec in DECODER_CONTRACTS {
+        write(
+            &root.join(format!("src/integrations/{}/decode.rs", spec.integration)),
+            "fn decode() {}\n",
+        );
+    }
+}
+
+fn discovered_fingerprint(root: &Path, integration: &str) -> [u8; 32] {
+    contract_fingerprint(
+        root,
+        &production_sources(root),
+        &integration_sources(root, integration),
+    )
 }
 
 #[test]
@@ -89,6 +125,121 @@ fn integration_source_discovery_is_recursive_and_rust_only() {
     assert_eq!(sources.len(), 2);
     assert!(sources[0].ends_with("src/integrations/amp/decode.rs"));
     assert!(sources[1].ends_with("src/integrations/amp/nested/filter.rs"));
+}
+
+#[test]
+fn only_explicit_file_level_test_markers_are_excluded() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    source_fixture(root);
+    let integration = root.join("src/integrations/amp");
+    let marked = integration.join("tests/marked.rs");
+    write(&marked, "#![cfg(test)]\nfn test_case() {}\n");
+    let unmarked = integration.join("tests.rs");
+    write(&unmarked, "fn production_helper() {}\n");
+    let nested = integration.join("tests/production.rs");
+    write(&nested, "fn production_helper() {}\n");
+    let conservative = integration.join("test_support.rs");
+    write(&conservative, "// comment\n#![cfg(test)]\nfn helper() {}\n");
+
+    let sources = integration_sources(root, "amp");
+    assert!(!sources.contains(&marked));
+    assert!(sources.contains(&unmarked));
+    assert!(sources.contains(&nested));
+    assert!(sources.contains(&conservative));
+    let before = discovered_fingerprint(root, "amp");
+
+    write(&marked, "#![cfg(test)]\nfn changed_test_case() {}\n");
+    assert_eq!(before, discovered_fingerprint(root, "amp"));
+
+    write(&unmarked, "fn changed_production_helper() {}\n");
+    assert_ne!(before, discovered_fingerprint(root, "amp"));
+}
+
+#[test]
+fn removing_a_test_marker_restores_production_invalidation() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    source_fixture(root);
+    let path = root.join("src/integrations/amp/tests/converted.rs");
+    write(&path, "#![cfg(test)]\nfn helper() {}\n");
+    let before = discovered_fingerprint(root, "amp");
+
+    write(&path, "fn helper() {}\n");
+
+    assert!(integration_sources(root, "amp").contains(&path));
+    assert_ne!(before, discovered_fingerprint(root, "amp"));
+}
+
+#[test]
+fn shared_test_helpers_do_not_invalidate_but_production_additions_do() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    source_fixture(root);
+    let amp = discovered_fingerprint(root, "amp");
+    let claude = discovered_fingerprint(root, "claude");
+    let helper = root.join("src/acquisition/test_support.rs");
+    assert!(!production_sources(root).contains(&helper));
+
+    write(&helper, "#![cfg(test)]\nfn changed_test_helper() {}\n");
+    assert_eq!(amp, discovered_fingerprint(root, "amp"));
+    assert_eq!(claude, discovered_fingerprint(root, "claude"));
+
+    let production = root.join("src/acquisition/prepare.rs");
+    write(&production, "fn prepare() {}\n");
+    assert!(production_sources(root).contains(&production));
+    assert_ne!(amp, discovered_fingerprint(root, "amp"));
+    assert_ne!(claude, discovered_fingerprint(root, "claude"));
+}
+
+#[test]
+fn generated_contracts_watch_source_roots_and_include_new_local_sources() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    source_fixture(root);
+    let (before, watched) = generate_decoder_contracts(root);
+    for directory in ["integrations", "records", "acquisition", "finalization"] {
+        assert!(watched.contains(&root.join("src").join(directory)));
+    }
+    let claude = discovered_fingerprint(root, "claude");
+    let added = root.join("src/integrations/amp/nested/usage.rs");
+    write(&added, "fn usage() {}\n");
+
+    let (after, watched) = generate_decoder_contracts(root);
+    assert_ne!(before, after);
+    assert!(watched.contains(&added));
+    assert_eq!(claude, discovered_fingerprint(root, "claude"));
+}
+
+#[test]
+fn unchanged_generated_files_keep_their_modification_time() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let path = temp.path().join("generated.rs");
+    assert!(write_if_changed(&path, b"first contents").unwrap());
+    let previous = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(previous)
+        .unwrap();
+
+    assert!(!write_if_changed(&path, b"first contents").unwrap());
+    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), previous);
+
+    assert!(write_if_changed(&path, b"changed contents").unwrap());
+    assert_eq!(fs::read(&path).unwrap(), b"changed contents");
+    assert_ne!(fs::metadata(&path).unwrap().modified().unwrap(), previous);
+}
+
+#[test]
+fn generated_file_read_errors_remain_errors() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let path = temp.path().join("generated.rs");
+    fs::create_dir(&path).unwrap();
+
+    assert!(write_if_changed(&path, b"contents").is_err());
+    assert!(path.is_dir());
 }
 
 #[test]
