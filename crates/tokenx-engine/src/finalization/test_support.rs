@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::{price_source_eligible_messages, retain_source_eligible_messages};
 use crate::{input_health, pricing, records, ModelMappings};
 

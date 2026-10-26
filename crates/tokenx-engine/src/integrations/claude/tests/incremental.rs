@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::*;
 use crate::pricing::{ModelPricing, PricingService, ResolvedPricingSnapshot};
 use crate::{

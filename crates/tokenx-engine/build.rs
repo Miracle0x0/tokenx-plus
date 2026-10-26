@@ -27,16 +27,22 @@ fn main() {
 
     let generated = generate_rust(&entries);
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR must be set by cargo");
-    fs::write(Path::new(&out_dir).join("client_catalog.rs"), generated)
-        .expect("failed to write generated client catalog");
+    decoder_contracts::write_if_changed(
+        &Path::new(&out_dir).join("client_catalog.rs"),
+        generated.as_bytes(),
+    )
+    .expect("failed to write generated client catalog");
 
     let crate_dir = Path::new(".");
     let (generated, watched) = decoder_contracts::generate_decoder_contracts(crate_dir);
     for source in watched {
         println!("cargo:rerun-if-changed={}", source.display());
     }
-    fs::write(Path::new(&out_dir).join("decoder_contracts.rs"), generated)
-        .expect("failed to write generated decoder contracts");
+    decoder_contracts::write_if_changed(
+        &Path::new(&out_dir).join("decoder_contracts.rs"),
+        generated.as_bytes(),
+    )
+    .expect("failed to write generated decoder contracts");
 }
 
 fn validate_catalog(entries: &[CatalogEntry]) {
