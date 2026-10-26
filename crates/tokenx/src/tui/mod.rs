@@ -265,10 +265,11 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::TuiPlan) -> Result
         original_hook(info);
     }));
 
+    let entered_terminal = TerminalSession::enter()?;
     let mut events = EventHandler::new(Duration::from_millis(100));
     // Restore the terminal before draining supervised work, including on unwind.
     let mut tasks = TaskSupervisor::new(runtime, events.sender());
-    let mut terminal_session = TerminalSession::enter()?;
+    let mut terminal_session = entered_terminal;
     let mut model = TuiModel::new(
         config,
         startup.settings.clone(),
@@ -425,6 +426,7 @@ fn run_loop_with_background(
             controller.start_persistence(tasks);
         }
         match events.next()? {
+            Event::InputError(error) => return Err(error.into()),
             Event::Tick => tui_frame.on_tick(),
             Event::BackgroundReady => {}
             Event::Key(key) => {

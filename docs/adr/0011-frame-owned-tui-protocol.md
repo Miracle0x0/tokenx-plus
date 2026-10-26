@@ -54,6 +54,11 @@ Acquisition and subscription task ownership remains outside `TuiFrame` in the
 existing controllers and `TaskSupervisor`; this ADR does not create a second
 generation lifecycle.
 
+Terminal input polling starts after the terminal session is established. A poll
+or read error is delivered to the event loop as a failure, never as a normal tick.
+The loop exits through the existing shutdown path, which restores the terminal
+before draining background work.
+
 ### Typed intent and one capability vocabulary
 
 Raw keyboard input is decoded exactly once into `Intent`. Mouse hit targets
