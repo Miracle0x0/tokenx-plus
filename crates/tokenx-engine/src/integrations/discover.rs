@@ -159,6 +159,11 @@ fn input_unit_for_policy(
     match fingerprint_policy {
         FingerprintPolicy::PlainFile => DiscoveredInput::plain_file(path, decoder),
         FingerprintPolicy::SqliteWithWal => DiscoveredInput::sqlite_with_wal(path, decoder),
+        FingerprintPolicy::HermesWithLogs { .. } => {
+            let mut unit = DiscoveredInput::sqlite_with_wal(path, decoder);
+            unit.fingerprint_policy = fingerprint_policy.clone();
+            unit
+        }
         FingerprintPolicy::ClaudeCodeWithHome { home_dir, .. } => {
             DiscoveredInput::claude_code(path, home_dir.clone(), decoder)
         }

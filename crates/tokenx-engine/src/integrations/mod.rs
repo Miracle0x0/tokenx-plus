@@ -270,6 +270,7 @@ impl DiscoveredInput {
                 *related_failure_policy
                     == input_record_cache::RelatedInputFailurePolicy::PreservePrimary
             }
+            FingerprintPolicy::HermesWithLogs { .. } => true,
             _ => false,
         }
     }
@@ -333,6 +334,13 @@ impl DiscoveredInput {
             }
             FingerprintPolicy::SqliteWithWal => {
                 input_record_cache::hash_inventory_bytes(hasher, b"sqlite-with-wal");
+            }
+            FingerprintPolicy::HermesWithLogs { logs } => {
+                input_record_cache::hash_inventory_bytes(hasher, b"hermes-with-logs");
+                input_record_cache::hash_inventory_bytes(
+                    hasher,
+                    logs.failure.as_deref().unwrap_or("").as_bytes(),
+                );
             }
             FingerprintPolicy::ClaudeCodeWithHome {
                 home_dir,
@@ -401,6 +409,9 @@ impl DiscoveredInput {
             }
             FingerprintPolicy::SqliteWithWal => {
                 input_record_cache::InputPolicy::sqlite_with_wal(&self.path)
+            }
+            FingerprintPolicy::HermesWithLogs { logs } => {
+                input_record_cache::InputPolicy::sqlite_with_optional_files(&self.path, &logs.paths)
             }
             FingerprintPolicy::ClaudeCodeWithHome {
                 parent_session_path,
@@ -626,6 +637,9 @@ pub(crate) enum CodeBuddyLogOrigin {
 pub(crate) enum FingerprintPolicy {
     PlainFile,
     SqliteWithWal,
+    HermesWithLogs {
+        logs: hermes::logs::LogInputs,
+    },
     ClaudeCodeWithHome {
         home_dir: PathBuf,
         parent_session_path: Option<PathBuf>,

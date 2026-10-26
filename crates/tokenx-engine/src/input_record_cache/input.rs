@@ -281,6 +281,7 @@ impl InputSnapshot {
 #[derive(Debug, Clone)]
 pub(crate) struct InputPolicy {
     pub(super) inputs: Vec<(String, PathBuf)>,
+    optional_paths: std::collections::BTreeSet<PathBuf>,
     pub(super) related_failure_policy: RelatedInputFailurePolicy,
 }
 
@@ -294,6 +295,19 @@ impl InputPolicy {
             path,
             [("-wal".to_string(), append_path_suffix(path, "-wal"))],
         )
+    }
+
+    pub(crate) fn sqlite_with_optional_files(path: &Path, paths: &[PathBuf]) -> Self {
+        let mut related = vec![("-wal".to_string(), append_path_suffix(path, "-wal"))];
+        related.extend(
+            paths
+                .iter()
+                .enumerate()
+                .map(|(index, path)| (format!("related:{index}"), path.clone())),
+        );
+        let mut policy = Self::with_related(path, related);
+        policy.optional_paths.extend(paths.iter().cloned());
+        policy
     }
 
     pub(crate) fn with_siblings<'a, I>(path: &Path, sibling_names: I) -> Self
@@ -342,6 +356,7 @@ impl InputPolicy {
         inputs.extend(related);
         Self {
             inputs,
+            optional_paths: Default::default(),
             related_failure_policy: RelatedInputFailurePolicy::FailInput,
         }
     }
@@ -413,8 +428,9 @@ impl InputPolicy {
                 Ok(file) => file,
                 Err(source)
                     if index > 0
-                        && self.related_failure_policy
-                            == RelatedInputFailurePolicy::PreservePrimary =>
+                        && (self.related_failure_policy
+                            == RelatedInputFailurePolicy::PreservePrimary
+                            || self.optional_paths.contains(path)) =>
                 {
                     InputFileSnapshot::Unavailable {
                         failure: source.to_string(),
