@@ -367,4 +367,29 @@ mod tests {
         assert_eq!(warm, cold);
         assert_eq!(cold[0].client, ClientId::Dsh);
     }
+
+    #[test]
+    fn partial_rewrite_invalidates_cached_usage_and_repair_is_cacheable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = duplicate_session_paths(dir.path()).remove(0);
+        let complete = zstd::encode_all(std::fs::read(&path).unwrap().as_slice(), 1).unwrap();
+        std::fs::write(&path, &complete).unwrap();
+        let paths = [path.clone()];
+        let version = DecoderVersion::current(DecoderId::Dsh);
+        let mut cache = input_record_cache::InputRecordShardStore::default();
+        let expected = fold_batched(&paths, &mut cache);
+        assert_eq!(expected.len(), 1);
+        assert!(cache.get_meta(&path, version).unwrap().is_some());
+        let mut broken = complete.clone();
+        broken.extend_from_slice(&[0x28, 0xb5, 0x2f, 0xfd, 0xff]);
+        std::fs::write(&path, broken).unwrap();
+        assert!(decode::parse_dsh_file(&path).unwrap().interrupted.is_some());
+        for _ in 0..2 {
+            assert_eq!(fold_batched(&paths, &mut cache), expected);
+            assert!(cache.get_meta(&path, version).unwrap().is_none());
+        }
+        std::fs::write(&path, complete).unwrap();
+        assert_eq!(fold_batched(&paths, &mut cache), expected);
+        assert!(cache.get_meta(&path, version).unwrap().is_some());
+    }
 }

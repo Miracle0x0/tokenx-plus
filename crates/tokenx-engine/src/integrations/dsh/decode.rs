@@ -5,7 +5,6 @@
 //! the zstd frame magic and otherwise parses the payload as plain JSONL.
 
 use std::collections::HashSet;
-use std::io::Read;
 use std::path::Path;
 
 use serde_json::Value;
@@ -17,34 +16,12 @@ use crate::records::{
 };
 use crate::{provider_identity, TokenBreakdown};
 
-const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
-const ZSTD_CHUNK_BYTES: usize = 128 * 1024;
-
-/// Bound the amount of one transcript that can be retained from disk.
-///
-/// DSH transcripts are parsed in parallel.  A file-controlled allocation here
-/// would therefore be multiplied by the number of acquisition workers before
-/// any record-level validation can run.
-const MAX_TRANSCRIPT_FILE_BYTES: usize = 64 * 1024 * 1024;
-
-/// Bound the expansion of a compressed transcript before it is materialized.
-///
-/// Zstandard permits very high expansion ratios, so limiting only the bytes
-/// read from disk does not bound memory use.
-const MAX_DECODED_TRANSCRIPT_BYTES: usize = 64 * 1024 * 1024;
-
-#[derive(Debug)]
-struct DecodedSession {
-    bytes: Vec<u8>,
-    interrupted: Option<InputFailure>,
-}
+#[path = "reader.rs"]
+mod reader;
 
 pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
-    let decoded = read_session_bytes(path)?;
-    let mut scanned = ScannedInput {
-        interrupted: decoded.interrupted,
-        ..Default::default()
-    };
+    let lines = reader::Transcript::open(path)?;
+    let mut scanned = ScannedInput::default();
 
     let session_id_from_path = path
         .parent()
@@ -57,6 +34,8 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
     let mut session_id = None;
     let mut workspace_key = None;
     let mut seed_length = 0_i64;
+    let mut seeded = false;
+    let mut inherited_boundary_seen = false;
     let mut version = None;
     let mut request_provider = None;
     let mut request_model = None;
@@ -65,20 +44,15 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
     let mut pending_user_turn = false;
     let mut last_settlement: Option<(i64, i64, usize)> = None;
 
-    let parse_len = complete_prefix_len(&decoded.bytes, scanned.interrupted.is_some());
-    for (line_index, raw_line) in decoded.bytes[..parse_len]
-        .split(|byte| *byte == b'\n')
-        .enumerate()
-    {
-        let raw_line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
-        let raw_line = if line_index == 0 {
-            raw_line
-                .strip_prefix("\u{feff}".as_bytes())
-                .unwrap_or(raw_line)
-        } else {
-            raw_line
+    for (line_index, line) in lines.enumerate() {
+        let line = match line {
+            Ok(line) => line,
+            Err(error) if line_index == 0 => return Err(error),
+            Err(error) => {
+                scanned.interrupted = Some(InputFailure::from(&error));
+                break;
+            }
         };
-        let line = String::from_utf8_lossy(raw_line);
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -102,17 +76,36 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 session_id = non_empty_str(value.get("id")).map(str::to_string);
                 workspace_key = non_empty_str(value.get("cwd")).and_then(normalize_workspace_key);
                 version = value.get("version").and_then(Value::as_u64);
-                seed_length = if matches!(version, Some(3 | 4))
-                    && value.get("isSeeded").and_then(Value::as_bool) == Some(true)
-                {
-                    inherited_seed_length(&decoded.bytes[..parse_len])?
-                } else {
-                    value
-                        .get("seedLength")
-                        .and_then(Value::as_i64)
-                        .filter(|length| *length > 0)
-                        .unwrap_or(0)
-                };
+                seeded = matches!(version, Some(3 | 4))
+                    && value.get("isSeeded").and_then(Value::as_bool) == Some(true);
+                seed_length = value
+                    .get("seedLength")
+                    .and_then(Value::as_i64)
+                    .filter(|length| *length > 0)
+                    .unwrap_or(0);
+            }
+            "session/end-seed"
+                if seeded
+                    && value.pointer("/data/inherited").and_then(Value::as_bool) == Some(true) =>
+            {
+                seed_length = value
+                    .get("seq")
+                    .and_then(Value::as_i64)
+                    .filter(|seq| *seq >= 0)
+                    .ok_or_else(|| {
+                        SessionParseError::invalid(
+                            "read DSH seed boundary",
+                            "invalid inherited marker seq",
+                        )
+                    })?;
+                // Nested forks embed older boundaries. Only records after the
+                // final inherited boundary belong to this ordered transcript.
+                scanned.messages.clear();
+                seen.clear();
+                started_turns.clear();
+                last_settlement = None;
+                pending_user_turn = false;
+                inherited_boundary_seen = true;
             }
             "request/header" => {
                 let config = value.pointer("/data/header/config");
@@ -269,35 +262,13 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
         }
     }
 
-    Ok(scanned)
-}
-
-fn inherited_seed_length(bytes: &[u8]) -> SessionParseResult<i64> {
-    // Nested forks carry their ancestors' markers too. Only the last inherited
-    // marker owns this session's prefix; ordinary resume markers do not.
-    for line in bytes.split(|byte| *byte == b'\n').rev() {
-        let Ok(value) = serde_json::from_slice::<Value>(line) else {
-            continue;
-        };
-        if value.get("type").and_then(Value::as_str) == Some("session/end-seed")
-            && value.pointer("/data/inherited").and_then(Value::as_bool) == Some(true)
-        {
-            return value
-                .get("seq")
-                .and_then(Value::as_i64)
-                .filter(|seq| *seq >= 0)
-                .ok_or_else(|| {
-                    SessionParseError::invalid(
-                        "read DSH seed boundary",
-                        "invalid inherited marker seq",
-                    )
-                });
-        }
+    if seeded && !inherited_boundary_seen {
+        return Err(SessionParseError::invalid(
+            "read DSH seed boundary",
+            "seeded session has no inherited end-seed marker",
+        ));
     }
-    Err(SessionParseError::invalid(
-        "read DSH seed boundary",
-        "seeded session has no inherited end-seed marker",
-    ))
+    Ok(scanned)
 }
 
 fn settlement_step(value: &Value) -> Option<(i64, i64)> {
@@ -318,132 +289,6 @@ fn stream_usage(value: &Value) -> Option<&Value> {
                 && record.pointer("/chunk/type").and_then(Value::as_str) == Some("usage")
         })?
         .pointer("/chunk/usage")
-}
-
-fn read_session_bytes(path: &Path) -> SessionParseResult<DecodedSession> {
-    read_session_bytes_bounded(
-        path,
-        MAX_TRANSCRIPT_FILE_BYTES,
-        MAX_DECODED_TRANSCRIPT_BYTES,
-    )
-}
-
-fn read_session_bytes_bounded(
-    path: &Path,
-    max_file_bytes: usize,
-    max_decoded_bytes: usize,
-) -> SessionParseResult<DecodedSession> {
-    let raw = read_bounded_file(path, max_file_bytes)?;
-    if !raw.starts_with(&ZSTD_MAGIC) {
-        if raw.len() > max_decoded_bytes {
-            return Err(size_limit_error(
-                path,
-                "read DSH session",
-                "decoded",
-                max_decoded_bytes,
-                raw.len(),
-            ));
-        }
-        return Ok(DecodedSession {
-            bytes: raw,
-            interrupted: None,
-        });
-    }
-
-    let mut decoder = zstd::stream::read::Decoder::new(raw.as_slice())
-        .map_err(|error| SessionParseError::at_path(path, "decode DSH zstd stream", error))?;
-    let mut bytes = Vec::new();
-    let mut chunk = vec![0_u8; ZSTD_CHUNK_BYTES];
-    loop {
-        let remaining = max_decoded_bytes.saturating_sub(bytes.len());
-        let want = remaining.saturating_add(1).min(chunk.len());
-        if want == 0 {
-            return Err(size_limit_error(
-                path,
-                "decode DSH zstd stream",
-                "decoded",
-                max_decoded_bytes,
-                bytes.len(),
-            ));
-        }
-        match decoder.read(&mut chunk[..want]) {
-            Ok(0) => break,
-            Ok(read) if bytes.len().saturating_add(read) > max_decoded_bytes => {
-                return Err(size_limit_error(
-                    path,
-                    "decode DSH zstd stream",
-                    "decoded",
-                    max_decoded_bytes,
-                    max_decoded_bytes.saturating_add(1),
-                ));
-            }
-            Ok(read) => bytes.extend_from_slice(&chunk[..read]),
-            Err(error) => {
-                let error = SessionParseError::at_path(path, "decode DSH zstd stream", error);
-                if bytes.is_empty() {
-                    return Err(error);
-                }
-                return Ok(DecodedSession {
-                    bytes,
-                    interrupted: Some(InputFailure::from(&error)),
-                });
-            }
-        }
-    }
-
-    Ok(DecodedSession {
-        bytes,
-        interrupted: None,
-    })
-}
-
-fn read_bounded_file(path: &Path, max_bytes: usize) -> SessionParseResult<Vec<u8>> {
-    let file = std::fs::File::open(path)
-        .map_err(|error| SessionParseError::at_path(path, "read DSH session", error))?;
-    let mut raw = Vec::new();
-    let limit = u64::try_from(max_bytes)
-        .expect("DSH transcript byte limit must fit in u64")
-        .saturating_add(1);
-    file.take(limit)
-        .read_to_end(&mut raw)
-        .map_err(|error| SessionParseError::at_path(path, "read DSH session", error))?;
-    if raw.len() > max_bytes {
-        return Err(size_limit_error(
-            path,
-            "read DSH session",
-            "read",
-            max_bytes,
-            raw.len(),
-        ));
-    }
-    Ok(raw)
-}
-
-fn size_limit_error(
-    path: &Path,
-    operation: &'static str,
-    kind: &str,
-    limit: usize,
-    observed: usize,
-) -> SessionParseError {
-    SessionParseError::at_path(
-        path,
-        operation,
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("DSH {kind} transcript exceeds {limit} bytes (observed {observed})"),
-        ),
-    )
-}
-
-fn complete_prefix_len(bytes: &[u8], interrupted: bool) -> usize {
-    if !interrupted || bytes.ends_with(b"\n") {
-        return bytes.len();
-    }
-    bytes
-        .iter()
-        .rposition(|byte| *byte == b'\n')
-        .map_or(0, |index| index + 1)
 }
 
 fn non_empty_str(value: Option<&Value>) -> Option<&str> {
@@ -889,7 +734,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let path = session_path(dir.path(), "corrupt", true);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let mut payload = ZSTD_MAGIC.to_vec();
+        let mut payload = reader::ZSTD_MAGIC.to_vec();
         payload.extend_from_slice(b"not-a-zstd-frame");
         std::fs::write(&path, payload).unwrap();
 
@@ -961,30 +806,33 @@ mod tests {
     }
 
     #[test]
-    fn bounded_plain_reads_fail_before_buffering_past_the_limit() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = session_path(dir.path(), "oversized", false);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, b"0123456789").unwrap();
-
-        let error = read_session_bytes_bounded(&path, 9, 64).unwrap_err();
-
-        assert_eq!(error.operation(), "read DSH session");
-        assert!(error.to_string().contains("exceeds 9 bytes"));
-    }
-
-    #[test]
-    fn bounded_zstd_reads_fail_before_materializing_expansion_past_the_limit() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = session_path(dir.path(), "expanded", true);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let compressed = zstd::encode_all(vec![b'a'; 4096].as_slice(), 3).unwrap();
-        assert!(compressed.len() < 128);
-        std::fs::write(&path, compressed).unwrap();
-
-        let error = read_session_bytes_bounded(&path, 128, 1024).unwrap_err();
-
-        assert_eq!(error.operation(), "decode DSH zstd stream");
-        assert!(error.to_string().contains("exceeds 1024 bytes"));
+    fn transcripts_larger_than_64_mib_stream_in_both_encodings() {
+        for compressed in [false, true] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let path = session_path(dir.path(), "large", compressed);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let file = std::fs::File::create(&path).unwrap();
+            let write_transcript = |writer: &mut dyn Write| {
+                writeln!(writer, "{{\"type\":\"session\",\"id\":\"large\"}}").unwrap();
+                let padding = format!("{}\n", " ".repeat(1024 * 1024));
+                for _ in 0..65 {
+                    writer.write_all(padding.as_bytes()).unwrap();
+                }
+                writer.write_all(br#"{"type":"assistant/message","time":1786669454772,"data":{"message":{"source":{"model":"m"}},"usage":{"inputTokens":10}}}"#).unwrap();
+            };
+            if compressed {
+                let mut encoder = zstd::stream::write::Encoder::new(file, 1).unwrap();
+                write_transcript(&mut encoder);
+                encoder.finish().unwrap();
+            } else {
+                let mut writer = std::io::BufWriter::new(file);
+                write_transcript(&mut writer);
+                writer.flush().unwrap();
+            }
+            let scanned = parse_dsh_file(&path).unwrap();
+            assert_eq!(scanned.messages.len(), 1);
+            assert_eq!(scanned.messages[0].tokens.input, 10);
+            assert!(scanned.interrupted.is_none());
+        }
     }
 }
