@@ -28,7 +28,7 @@ config
 ```
 
 The TUI is the complete interactive local-usage product. `--tab` sets its initial focus to
-Overview, Usage, Models, Monthly, Weekly, Daily, Hourly, Stats, Agents, or
+Overview, Subscription, Models, Monthly, Weekly, Daily, Hourly, Stats, Agents, or
 Sessions without creating a separate command or partial application.
 
 `models` is the only headless local-usage projection. It derives from the same
@@ -40,9 +40,10 @@ model
 client,model
 client,provider,model
 workspace,model
+machine,model
 ```
 
-`pricing` queries catalogs or overrides, `cache` performs explicit cache
+`pricing` queries catalogs or overrides and explicitly refreshes public catalogs, `cache` performs explicit cache
 maintenance, and `config init-model-mappings` generates the optional TOML
 mapping file defined by ADR 0013. Generation never acquires local usage or
 pricing catalogs and does not overwrite an existing file.

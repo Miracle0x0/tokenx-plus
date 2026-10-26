@@ -1,6 +1,7 @@
 tui:
   ui:
     subscription:
+      offline: "Offline mode: subscription usage is limited to the local cache"
       panel_title: " Subscription "
       prompt_fetch: "Press 'u' to fetch subscription data"
       prompt_no_providers: "No remote subscription providers enabled; configure subscription.providers"

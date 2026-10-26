@@ -63,6 +63,7 @@ pub(crate) fn run_models(plan: ResolvedModelsPlan, no_spinner: bool) -> Result<(
         json,
         startup:
             StartupSnapshot {
+                offline: _,
                 paths,
                 input:
                     ResolvedInputScope {

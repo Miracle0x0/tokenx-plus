@@ -71,6 +71,7 @@ mod tests {
 
     fn snapshot(root: &std::path::Path) -> StartupSnapshot<PendingPricing> {
         StartupSnapshot {
+            offline: false,
             paths: crate::product_paths::ProductPaths::at(root.join("config")),
             input: crate::cli::ResolvedInputScope {
                 home: root.to_path_buf(),

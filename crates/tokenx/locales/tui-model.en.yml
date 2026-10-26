@@ -97,6 +97,7 @@ tui:
       group_by_projection: "Group By projection"
       projection_failed: "%{operation} failed: %{error}"
     subscription:
+      offline: "Offline mode does not allow subscription refresh"
       loaded: "Subscription data loaded"
       loaded_with_errors: "Subscription data loaded with provider errors"
       no_data: "No subscription data available"

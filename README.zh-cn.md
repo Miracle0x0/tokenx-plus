@@ -29,6 +29,7 @@ tokenx tui --tab models
 # 适合脚本的用量投影
 tokenx models --no-spinner
 tokenx models --json --no-spinner
+tokenx models --offline --json --no-spinner
 tokenx models --client codex --group-by client,provider,model --no-spinner
 tokenx models --group-by machine,model --json --no-spinner
 
@@ -38,6 +39,7 @@ tokenx models --since 2026-01-01 --until 2026-01-31 --no-spinner
 
 # 定价目录
 tokenx pricing lookup claude-sonnet-4-5 --no-spinner
+tokenx pricing refresh --no-spinner
 tokenx pricing overrides --json
 
 # 生成用于聚合和计价的模型映射配置

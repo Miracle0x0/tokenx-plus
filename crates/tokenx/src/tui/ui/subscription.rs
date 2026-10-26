@@ -84,7 +84,9 @@ fn render_centered_message(frame: &mut Frame, app: &TuiModel, area: Rect, messag
 }
 
 fn prompt_message(app: &TuiModel) -> std::borrow::Cow<'static, str> {
-    if app.has_enabled_subscription_providers() {
+    if app.offline {
+        rust_i18n::t!("tui.ui.subscription.offline")
+    } else if app.has_enabled_subscription_providers() {
         rust_i18n::t!("tui.ui.subscription.prompt_fetch")
     } else {
         rust_i18n::t!("tui.ui.subscription.prompt_no_providers")
@@ -92,7 +94,9 @@ fn prompt_message(app: &TuiModel) -> std::borrow::Cow<'static, str> {
 }
 
 fn empty_message(app: &TuiModel) -> std::borrow::Cow<'static, str> {
-    if app.has_enabled_subscription_providers() {
+    if app.offline {
+        rust_i18n::t!("tui.ui.subscription.offline")
+    } else if app.has_enabled_subscription_providers() {
         rust_i18n::t!("tui.ui.subscription.empty")
     } else {
         rust_i18n::t!("tui.ui.subscription.prompt_no_providers")
@@ -100,7 +104,9 @@ fn empty_message(app: &TuiModel) -> std::borrow::Cow<'static, str> {
 }
 
 fn cache_display_notice(app: &TuiModel) -> Option<std::borrow::Cow<'static, str>> {
-    if app.subscription_outputs().is_empty() || app.has_enabled_subscription_providers() {
+    if app.offline && !app.subscription_outputs().is_empty() {
+        Some(rust_i18n::t!("tui.ui.subscription.offline"))
+    } else if app.subscription_outputs().is_empty() || app.has_enabled_subscription_providers() {
         None
     } else {
         Some(rust_i18n::t!("tui.ui.subscription.cache_notice"))

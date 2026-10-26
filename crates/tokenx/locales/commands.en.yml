@@ -31,6 +31,8 @@ commands:
     pricing_cached_fallback: "Pricing refresh failed; costs use cached rates"
     pricing_unavailable: "Pricing unavailable; zero costs may mean missing rates"
   pricing:
+    refreshed: "All public pricing catalogs refreshed"
+    refresh_diagnostics: "Pricing refresh reported diagnostics; see the source messages above"
     billing_provider: "Billing provider: %{provider}"
     fetching: "Fetching pricing data..."
     fetching_from: "Fetching pricing data from %{source}..."

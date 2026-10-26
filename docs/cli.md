@@ -15,12 +15,33 @@ with an installed repository package. Pass `--no-spinner` in automation.
 | `tokenx` | Exact shortcut for `tokenx tui`. |
 | `tokenx tui` | Launch the complete interactive interface. |
 | `tokenx models` | Print the TUI Models projection as a table or JSON. |
-| `tokenx pricing ...` | Query pricing catalogs or custom overrides. |
+| `tokenx pricing ...` | Query pricing catalogs or custom overrides, or explicitly refresh public catalogs. |
 | `tokenx cache ...` | Explicitly maintain Tokenx's local caches. |
 | `tokenx config init-model-mappings` | Create an optional TOML model-mapping template with the default rules in comments. |
 
 The table is the complete accepted root grammar. Every other command name is
 invalid CLI usage.
+
+## Offline operation
+
+`--offline` is a global option and may appear before or after the subcommand:
+
+```bash
+tokenx --offline models --json --no-spinner
+tokenx tui --offline
+tokenx pricing lookup gpt-5.5 --offline --no-spinner
+```
+
+Offline runs use custom prices and available local pricing catalogs, including
+expired catalogs, without network requests. Missing prices remain visible in
+pricing diagnostics; valid token usage is still reported. Local TUI refresh,
+client/group projections, and export remain available. Subscription displays
+its eligible local cache and disables remote refresh.
+
+`tokenx pricing refresh --no-spinner` explicitly refreshes every public catalog,
+even when its cache is fresh. Sources publish independently and atomically;
+failed sources retain their previous files. Diagnostics produce a nonzero exit
+status. Combining this command with `--offline` is an invocation error.
 
 ## Interactive TUI
 
@@ -237,9 +258,10 @@ normalization.
 | Code | Meaning |
 | --- | --- |
 | `0` | The command produced its result, including incomplete local usage with explicit Data Health. |
-| `1` | Internal, I/O, network, or authentication failure. |
+| `1` | Internal, I/O, network, authentication failure, or explicit pricing-refresh diagnostics. |
 | `2` | Invalid CLI arguments, option combinations, or runtime environment. |
 | `130` | User interruption where supplied by the terminal or child process. |
 
-Flags belong to the leaf command that executes them. They cannot be placed on
-the root or before the owning subcommand.
+`--language` and `--offline` are global options and can appear before or after a
+subcommand. Other flags belong to the leaf command that executes them and cannot
+be placed before that owning subcommand.

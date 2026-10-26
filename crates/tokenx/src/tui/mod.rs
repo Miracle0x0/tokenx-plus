@@ -269,7 +269,12 @@ pub fn run(runtime: tokio::runtime::Handle, plan: crate::cli::TuiPlan) -> Result
     // Restore the terminal before draining supervised work, including on unwind.
     let mut tasks = TaskSupervisor::new(runtime, events.sender());
     let mut terminal_session = TerminalSession::enter()?;
-    let mut model = TuiModel::new(config, startup.settings.clone(), startup.paths.clone())?;
+    let mut model = TuiModel::new(
+        config,
+        startup.settings.clone(),
+        startup.paths.clone(),
+        startup.offline,
+    )?;
     let mut status = model.refresh_status();
     status.set_loading(true);
     model.set_refresh_status(status);

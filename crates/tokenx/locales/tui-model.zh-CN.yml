@@ -97,6 +97,7 @@ tui:
       group_by_projection: "分组投影"
       projection_failed: "%{operation}失败：%{error}"
     subscription:
+      offline: "离线模式不支持刷新订阅用量"
       loaded: "订阅数据已加载"
       loaded_with_errors: "订阅数据已加载，但存在提供商错误"
       no_data: "无可用订阅数据"

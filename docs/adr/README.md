@@ -39,6 +39,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0033](0033-dsh-streaming-transcripts.md) | DSH streaming transcripts | Accepted |
 | [0034](0034-selected-row-request-pricing.md) | Selected-row request pricing | Accepted |
 | [0035](0035-hermes-recorded-call-times.md) | Hermes recorded call times | Accepted |
+| [0036](0036-explicit-offline-mode.md) | Explicit offline mode | Accepted |
 
 ## Conventions
 

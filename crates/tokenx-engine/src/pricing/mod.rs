@@ -950,6 +950,13 @@ impl CapturedPublicPricingCatalogs {
 }
 
 impl CatalogSeed {
+    fn require_refresh(self) -> Self {
+        match self {
+            Self::Fresh(data) => Self::Stale(data),
+            seed => seed,
+        }
+    }
+
     fn map(self, transform: fn(PricingDataset) -> PricingDataset) -> Self {
         match self {
             Self::Fresh(data) => Self::Fresh(transform(data)),
@@ -970,6 +977,18 @@ impl CatalogSeed {
             },
         }
     }
+}
+
+/// Explicitly refresh every public catalog, even when its current cache is fresh.
+/// Each source retains its existing atomic publication and diagnostic behavior.
+pub async fn refresh_catalog_cache(cache_dir: &Path) -> PricingDiagnostics {
+    let captured = CapturedPublicPricingCatalogs::read(cache_dir);
+    let (litellm, openrouter, models_dev) = tokio::join!(
+        resolve_litellm_catalog(captured.litellm.require_refresh(), cache_dir),
+        resolve_openrouter_catalog(captured.openrouter.require_refresh(), cache_dir),
+        resolve_models_dev_catalog(captured.models_dev.require_refresh(), cache_dir),
+    );
+    ResolvedPublicPricingCatalogs::from_resolutions(litellm, openrouter, models_dev).1
 }
 
 impl CatalogResolution {

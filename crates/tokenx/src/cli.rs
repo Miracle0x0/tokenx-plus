@@ -26,6 +26,8 @@ use crate::tui::Tab;
     after_help = rust_i18n::t!("cli.help.model_mappings")
 )]
 pub(crate) struct Cli {
+    #[arg(long, global = true, help = rust_i18n::t!("cli.help.offline"))]
+    pub(crate) offline: bool,
     #[arg(
         long,
         value_enum,
@@ -389,6 +391,11 @@ pub(crate) struct DateRangeFlags {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum PricingSubcommand {
+    #[command(about = rust_i18n::t!("cli.about.pricing_refresh"))]
+    Refresh {
+        #[arg(long, help = rust_i18n::t!("cli.help.no_spinner"))]
+        no_spinner: bool,
+    },
     #[command(about = rust_i18n::t!("cli.about.pricing_lookup"))]
     Lookup {
         #[arg(help = rust_i18n::t!("cli.help.model_id"))]
@@ -474,6 +481,7 @@ pub(crate) struct ResolvedInputScope {
 /// binds one immutable runtime snapshot before any acquisition command executes.
 #[derive(Debug)]
 pub(crate) struct StartupSnapshot<PricingState> {
+    pub(crate) offline: bool,
     pub(crate) paths: ProductPaths,
     pub(crate) input: ResolvedInputScope,
     pub(crate) settings: Settings,
@@ -552,6 +560,7 @@ pub(crate) enum ExecutionPlan<PricingState> {
     Tui(TuiPlan),
     Models(ModelsPlan<PricingState>),
     Pricing {
+        offline: bool,
         paths: ProductPaths,
         subcommand: PricingSubcommand,
     },
@@ -572,15 +581,25 @@ impl ExecutionPlan<PendingPricing> {
                 paths: ProductPaths::resolve()?,
                 no_spinner,
             }),
-            Commands::Tui(args) => resolve_tui(args, terminal).map(Self::Tui),
-            Commands::Models(args) => resolve_models(args).map(Self::Models),
-            Commands::Pricing { subcommand } => Ok(Self::Pricing {
-                paths: ProductPaths::resolve()?,
-                subcommand,
-            }),
+            Commands::Tui(args) => resolve_tui(args, terminal, cli.offline).map(Self::Tui),
+            Commands::Models(args) => resolve_models(args, cli.offline).map(Self::Models),
+            Commands::Pricing { subcommand } => {
+                if cli.offline && matches!(subcommand, PricingSubcommand::Refresh { .. }) {
+                    return Err(CliFailure::invalid_message(rust_i18n::t!(
+                        "cli.error.offline_refresh"
+                    )));
+                }
+                Ok(Self::Pricing {
+                    offline: cli.offline,
+                    paths: ProductPaths::resolve()?,
+                    subcommand,
+                })
+            }
             Commands::Cache { subcommand } => match subcommand {
                 CacheSubcommand::Prune => Ok(Self::CachePrune(ProductPaths::resolve()?)),
-                CacheSubcommand::Warm { input } => resolve_startup(input).map(Self::CacheWarm),
+                CacheSubcommand::Warm { input } => {
+                    resolve_startup(input, cli.offline).map(Self::CacheWarm)
+                }
             },
         }
     }
@@ -589,7 +608,15 @@ impl ExecutionPlan<PendingPricing> {
         match self {
             Self::Tui(plan) => ExecutionPlan::Tui(plan),
             Self::Models(plan) => ExecutionPlan::Models(plan.bind_refreshed_pricing().await),
-            Self::Pricing { paths, subcommand } => ExecutionPlan::Pricing { paths, subcommand },
+            Self::Pricing {
+                paths,
+                subcommand,
+                offline,
+            } => ExecutionPlan::Pricing {
+                paths,
+                subcommand,
+                offline,
+            },
             Self::InitModelMappings { paths, no_spinner } => {
                 ExecutionPlan::InitModelMappings { paths, no_spinner }
             }
@@ -614,6 +641,9 @@ impl StartupSnapshot<PendingPricing> {
     }
 
     async fn bind_refreshed_pricing(self) -> ResolvedStartupSnapshot {
+        if self.offline {
+            return self.bind_local_pricing();
+        }
         let pricing = Arc::new(
             tokenx_engine::pricing::ResolvedPricingSnapshot::resolve_with_refresh(
                 &self.paths.custom_pricing_file(),
@@ -627,6 +657,7 @@ impl StartupSnapshot<PendingPricing> {
 
     fn with_pricing(self, pricing: RuntimePricing) -> ResolvedStartupSnapshot {
         let Self {
+            offline,
             paths,
             input,
             settings,
@@ -634,6 +665,7 @@ impl StartupSnapshot<PendingPricing> {
             pricing: PendingPricing,
         } = self;
         StartupSnapshot {
+            offline,
             paths,
             input,
             settings,
@@ -664,14 +696,18 @@ impl ModelsPlan<PendingPricing> {
     }
 }
 
-fn resolve_tui(args: TuiArgs, terminal: TerminalState) -> Result<TuiPlan, CliFailure> {
+fn resolve_tui(
+    args: TuiArgs,
+    terminal: TerminalState,
+    offline: bool,
+) -> Result<TuiPlan, CliFailure> {
     if !terminal.interactive() {
         return Err(CliFailure::invalid_message(rust_i18n::t!(
             "cli.error.tui_requires_terminal"
         )));
     }
 
-    let startup = resolve_startup(args.input)?;
+    let startup = resolve_startup(args.input, offline)?;
     let date = resolve_date(args.date, startup.calendar)?;
     let initial_tab = args.tab;
     if initial_tab == Some(Tab::Subscription) && !startup.settings.subscription.enabled {
@@ -691,8 +727,11 @@ fn resolve_tui(args: TuiArgs, terminal: TerminalState) -> Result<TuiPlan, CliFai
     })
 }
 
-fn resolve_models(args: ModelsArgs) -> Result<ModelsPlan<PendingPricing>, CliFailure> {
-    let startup = resolve_startup(args.input)?;
+fn resolve_models(
+    args: ModelsArgs,
+    offline: bool,
+) -> Result<ModelsPlan<PendingPricing>, CliFailure> {
+    let startup = resolve_startup(args.input, offline)?;
     let date = resolve_date(args.date, startup.calendar)?;
     Ok(ModelsPlan {
         json: args.json,
@@ -704,7 +743,10 @@ fn resolve_models(args: ModelsArgs) -> Result<ModelsPlan<PendingPricing>, CliFai
     })
 }
 
-fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot<PendingPricing>, CliFailure> {
+fn resolve_startup(
+    args: InputScopeArgs,
+    offline: bool,
+) -> Result<StartupSnapshot<PendingPricing>, CliFailure> {
     // Product state and input discovery are deliberately separate authorities:
     // settings always come from Tokenx's product root, while `--home` changes
     // only the home used to derive built-in client input paths.
@@ -730,6 +772,7 @@ fn resolve_startup(args: InputScopeArgs) -> Result<StartupSnapshot<PendingPricin
         .ok_or_else(|| CliFailure::invalid_message(rust_i18n::t!("cli.error.home_dir_unknown")))?;
     let (universe, restricted) = resolve_client_universe(args.clients, &settings.default_clients)?;
     Ok(StartupSnapshot {
+        offline,
         paths,
         input: ResolvedInputScope {
             home,

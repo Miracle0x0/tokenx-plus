@@ -439,6 +439,7 @@ impl Index<usize> for OrderedDetailRows<'_> {
 }
 
 pub struct TuiModel {
+    pub(crate) offline: bool,
     pub current_tab: Tab,
     pub theme: Theme,
     pub settings: Settings,
@@ -513,7 +514,7 @@ impl TuiModel {
         config: TuiConfig,
         settings: Settings,
     ) -> Result<Self> {
-        Self::new(config, settings, Self::test_product_paths())
+        Self::new(config, settings, Self::test_product_paths(), false)
     }
 
     #[cfg(test)]
@@ -522,13 +523,14 @@ impl TuiModel {
         settings: Settings,
         product_paths: ProductPaths,
     ) -> Result<Self> {
-        Self::new(config, settings, product_paths)
+        Self::new(config, settings, product_paths, false)
     }
 
     pub(crate) fn new(
         config: TuiConfig,
         settings: Settings,
         product_paths: ProductPaths,
+        offline: bool,
     ) -> Result<Self> {
         let theme_name = config.theme.unwrap_or(settings.color_palette);
         let theme = Theme::from_name(theme_name);
@@ -583,6 +585,7 @@ impl TuiModel {
         );
 
         let mut app = Self {
+            offline,
             current_tab,
             theme,
             settings,
@@ -1586,6 +1589,13 @@ impl TuiModel {
     }
 
     pub fn fetch_subscription(&mut self) {
+        if self.offline {
+            self.set_subscription_status_with_tone(
+                &rust_i18n::t!("tui.model.subscription.offline"),
+                StatusTone::Warning,
+            );
+            return;
+        }
         match self.subscription.request_fetch() {
             FetchRequest::AlreadyFetching => {
                 self.set_subscription_status(&rust_i18n::t!(
@@ -1616,7 +1626,9 @@ impl TuiModel {
 
     fn should_start_initial_subscription_fetch(&self) -> bool {
         self.subscription.should_start_initial_fetch(
-            self.current_tab == Tab::Subscription && self.settings.subscription.enabled,
+            !self.offline
+                && self.current_tab == Tab::Subscription
+                && self.settings.subscription.enabled,
         )
     }
 
@@ -3218,6 +3230,28 @@ mod tests {
             initial_tab: None,
             effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
         }
+    }
+
+    #[test]
+    fn offline_subscription_entry_and_manual_fetch_never_queue_network_work() {
+        let mut config = config_with_theme(None);
+        config.initial_tab = Some(Tab::Subscription);
+        let mut settings = Settings::default();
+        settings.subscription.enabled = true;
+        settings.subscription.providers = vec![ProviderId::Codex];
+        let root = tempfile::tempdir().unwrap();
+        let mut app = TuiModel::new(
+            config,
+            settings,
+            ProductPaths::at(root.path().to_owned()),
+            true,
+        )
+        .unwrap();
+        assert!(app.take_subscription_request().is_none());
+        assert!(!app.is_fetching_subscription());
+        app.fetch_subscription();
+        assert!(app.take_subscription_request().is_none());
+        assert!(app.subscription_status_message.is_some());
     }
 
     fn cached_order_model(id: &str, tokens: u64) -> UsageModelEntry {
