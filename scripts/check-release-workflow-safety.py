@@ -14,7 +14,6 @@ RELEASE_WORKFLOW = ROOT / ".github/workflows/publish.yml"
 BUILD_NATIVE_WORKFLOW = ROOT / ".github/workflows/build-native.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 LAUNCHER_VALIDATION_WORKFLOW = ROOT / ".github/workflows/launcher_validation.yml"
-TEST_COVERAGE_WORKFLOW = ROOT / ".github/workflows/test_coverage.yml"
 RELEASE_TOOLING_SCRIPT = ROOT / "scripts/test-release-tooling.sh"
 REQUIRED_ENV_KEYS = ("MACOSX_DEPLOYMENT_TARGET", "CARGO_TERM_COLOR", "CARGO_INCREMENTAL")
 COMMON_BUILD_FIELDS = ("host", "target", "build", "strip", "bin_name")
@@ -316,7 +315,6 @@ def main() -> None:
     native_lines = read_lines(BUILD_NATIVE_WORKFLOW)
     ci_lines = read_lines(CI_WORKFLOW)
     launcher_validation_lines = read_lines(LAUNCHER_VALIDATION_WORKFLOW)
-    test_coverage_lines = read_lines(TEST_COVERAGE_WORKFLOW)
     errors: list[str] = []
 
     if not PACKAGE_MANIFEST.is_file():
@@ -381,28 +379,17 @@ def main() -> None:
     elif git_index_mode(RELEASE_TOOLING_SCRIPT) != "100755":
         errors.append(f"release tooling entrypoint is not executable: {RELEASE_TOOLING_SCRIPT}")
 
-    for label, workflow_lines in (
-        ("CI", ci_lines),
-        ("Test & Coverage", test_coverage_lines),
-    ):
-        command_count = exact_run_command_count(workflow_lines, RELEASE_TOOLING_COMMAND)
-        if command_count != 1:
-            errors.append(
-                f"{label} must call {RELEASE_TOOLING_COMMAND!r} exactly once, found {command_count}"
-            )
+    command_count = exact_run_command_count(ci_lines, RELEASE_TOOLING_COMMAND)
+    if command_count != 1:
+        errors.append(
+            f"CI must call {RELEASE_TOOLING_COMMAND!r} exactly once, found {command_count}"
+        )
 
     validate_bun_job(
         errors,
         "CI rust",
         ci_lines,
         "rust",
-        RELEASE_TOOLING_COMMAND,
-    )
-    validate_bun_job(
-        errors,
-        "Test & Coverage lint",
-        test_coverage_lines,
-        "lint",
         RELEASE_TOOLING_COMMAND,
     )
     validate_bun_job(
@@ -447,15 +434,23 @@ def main() -> None:
         errors.append("Release finalize must wait for every native build")
 
     for event_name in ("push", "pull_request"):
-        block = event_block(test_coverage_lines, event_name)
+        block = event_block(ci_lines, event_name)
         if block is None:
-            errors.append(f"Test & Coverage must run on {event_name}")
+            errors.append(f"CI must run on {event_name}")
+            continue
+        if any(re.match(r"\s+paths-ignore:", line) for line in block):
+            errors.append(
+                f"CI {event_name} must not use paths-ignore to exclude release inputs"
+            )
+            continue
+        # An unfiltered event includes every release input.
+        if not any(re.match(r"\s+paths:\s*$", line) for line in block):
             continue
         configured_paths = set(nested_list_values(block, "paths"))
         missing_paths = sorted(RELEASE_VALIDATION_PATHS - configured_paths)
         if missing_paths:
             errors.append(
-                f"Test & Coverage {event_name} paths are missing release inputs: {missing_paths}"
+                f"CI {event_name} paths are missing release inputs: {missing_paths}"
             )
 
     for event_name in ("push", "pull_request"):

@@ -1,4 +1,4 @@
-name: Test & Coverage
+name: Coverage
 
 on:
   workflow_dispatch:
@@ -8,30 +8,12 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - 'packages/tokenx/package.json'
-      - 'packages/tokenx-*/package.json'
-      - 'scripts/**'
-      - 'package.json'
-      - '.github/actions/setup-bun/action.yml'
-      - '.github/workflows/build-native.yml'
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/launcher_validation.yml'
-      - '.github/workflows/publish.yml'
       - '.github/workflows/test_coverage.yml'
   pull_request:
     paths:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - 'packages/tokenx/package.json'
-      - 'packages/tokenx-*/package.json'
-      - 'scripts/**'
-      - 'package.json'
-      - '.github/actions/setup-bun/action.yml'
-      - '.github/workflows/build-native.yml'
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/launcher_validation.yml'
-      - '.github/workflows/publish.yml'
       - '.github/workflows/test_coverage.yml'
 
 concurrency:
@@ -44,41 +26,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          components: clippy, rustfmt
-      - name: Set up Bun
-        uses: ./.github/actions/setup-bun
-      - name: Validate release tooling
-        run: bash scripts/test-release-tooling.sh
-      - name: Cache cargo registry
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: lint-${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            lint-${{ runner.os }}-cargo-
-      - name: Check formatting (strict)
-        run: cargo fmt --all -- --check
-      - name: Run Clippy (strict)
-        run: cargo clippy --locked --workspace --all-features -- -D warnings
-
   coverage:
     name: Code Coverage
     if: github.event_name == 'pull_request' || github.ref_name == github.event.repository.default_branch
@@ -93,23 +40,20 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
+        id: rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - name: Cache cargo registry
+      - name: Cache coverage build
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: coverage-${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: coverage-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            coverage-${{ runner.os }}-cargo-
-
-      - name: Run tests
-        run: cargo test --locked --workspace --all-features
+            coverage-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}-
 
       - name: Install cargo-tarpaulin
         uses: taiki-e/install-action@51b9b111bd6914e2e43286340cbdbf490ef816a3 # cargo-tarpaulin

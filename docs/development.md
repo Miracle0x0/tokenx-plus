@@ -27,7 +27,15 @@ bun install --frozen-lockfile
 bun run build
 ```
 
-For narrower checks:
+For the development feedback loop:
+
+```bash
+bun run check
+bun run build:dev
+cargo run --locked -p tokenx -- models --no-spinner
+```
+
+For narrower release builds and launcher checks:
 
 ```bash
 bun run build:native

@@ -10,6 +10,8 @@
     "build": "cargo build --locked --release -p tokenx && bun run build:launcher",
     "build:launcher": "bun run --cwd packages/tokenx build",
     "build:native": "cargo build --locked --release -p tokenx",
+    "build:dev": "cargo build --locked -p tokenx",
+    "check": "cargo check --locked --workspace --all-features",
     "cli": "./scripts/cli.sh",
     "release:bump": "bash scripts/bump-release-version.sh",
     "licenses:generate": "bash scripts/generate-third-party-licenses.sh",
