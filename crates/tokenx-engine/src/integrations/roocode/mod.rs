@@ -14,14 +14,12 @@ use crate::integrations::discover as source_discovery;
 use crate::integrations::{
     BoundUsageSink, DecoderKind, DiscoveredInput, DiscoveryContext, FingerprintPolicy, FoldContext,
     InputDiscoveryError, InputPipelineError, IntegrationDriver, ParseContext, ParsedUnit,
-    SourceSpec,
+    SourceMatcher,
 };
 
 const ROOCODE_SIBLINGS: &[&str] = &["api_conversation_history.json"];
-const SOURCE: SourceSpec = SourceSpec::home(
-    ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
-    crate::integrations::SourceMatcher::new(crate::integrations::source_matchers::ui_messages_json),
-);
+const MATCHER: SourceMatcher =
+    SourceMatcher::new(crate::integrations::source_matchers::ui_messages_json);
 pub(crate) struct Driver;
 
 impl IntegrationDriver for Driver {
@@ -30,13 +28,13 @@ impl IntegrationDriver for Driver {
         ctx: &DiscoveryContext<'_>,
     ) -> Result<Vec<DiscoveredInput>, InputDiscoveryError> {
         let client = ctx.client;
-        let mut roots = vec![SOURCE.resolve(ctx.home_dir)];
+        let mut roots = vec![roocode_local_root(ctx.home_dir)];
         roots.extend(roocode_additional_roots(ctx.home_dir));
         roots.extend(source_discovery::extra_roots_for_client(client, ctx)?);
 
         source_discovery::input_units_from_paths(
             client,
-            source_discovery::scan_roots(ctx, roots, SOURCE.matcher())?,
+            source_discovery::scan_roots(ctx, roots, MATCHER)?,
             FingerprintPolicy::PrimaryWithSiblings {
                 sibling_names: ROOCODE_SIBLINGS,
                 related_failure_policy: RelatedInputFailurePolicy::PreservePrimary,
@@ -76,6 +74,19 @@ impl IntegrationDriver for Driver {
     }
 }
 
+fn roocode_local_root(home_dir: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    let root = "Library/Application Support/Code/User/globalStorage";
+    #[cfg(target_os = "windows")]
+    let root = "AppData/Roaming/Code/User/globalStorage";
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let root = ".config/Code/User/globalStorage";
+    home_dir
+        .join(root)
+        .join("rooveterinaryinc.roo-cline")
+        .join("tasks")
+}
+
 fn roocode_additional_roots(home_dir: &Path) -> Vec<PathBuf> {
     vec![home_dir.join(".vscode-server/data/User/globalStorage/rooveterinaryinc.roo-cline/tasks")]
 }
@@ -108,9 +119,7 @@ mod tests {
     #[test]
     fn roocode_driver_discovers_local_and_server_roots() {
         let home = tempfile::TempDir::new().unwrap();
-        let local = home
-            .path()
-            .join(".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/local/ui_messages.json");
+        let local = roocode_local_root(home.path()).join("local/ui_messages.json");
         let server = home
             .path()
             .join(".vscode-server/data/User/globalStorage/rooveterinaryinc.roo-cline/tasks/server/ui_messages.json");
@@ -133,9 +142,7 @@ mod tests {
     #[test]
     fn roocode_units_include_api_history_sibling_in_fingerprint() {
         let home = tempfile::TempDir::new().unwrap();
-        let path = home.path().join(
-            ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/roo/ui_messages.json",
-        );
+        let path = roocode_local_root(home.path()).join("roo/ui_messages.json");
         write_file(&path);
 
         let settings = crate::scanner::ScannerSettings::default();
@@ -162,9 +169,7 @@ mod tests {
     #[test]
     fn all_bad_roocode_scan_caches_record_rejections() {
         let home = tempfile::TempDir::new().unwrap();
-        let path = home.path().join(
-            ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/bad/ui_messages.json",
-        );
+        let path = roocode_local_root(home.path()).join("bad/ui_messages.json");
         let bad_usage = r#"[
   {
     "type": "say",
