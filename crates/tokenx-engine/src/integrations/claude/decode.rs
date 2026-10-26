@@ -350,6 +350,7 @@ pub struct ClaudeUsage {
     pub cache_read_input_tokens: Option<i64>,
     pub cache_creation_input_tokens: Option<i64>,
     pub cache_creation: Option<ClaudeCacheCreation>,
+    pub iterations: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,6 +359,17 @@ pub struct ClaudeCacheCreation {
 }
 
 impl ClaudeUsage {
+    fn tokens(&self) -> TokenBreakdown {
+        TokenBreakdown {
+            input: self.input_tokens.unwrap_or(0),
+            output: self.output_tokens.unwrap_or(0),
+            cache_read: self.cache_read_input_tokens.unwrap_or(0),
+            cache_write: self.cache_creation_input_tokens.unwrap_or(0),
+            cache_write_1h: self.cache_write_1h(),
+            reasoning: 0,
+        }
+    }
+
     fn reports_input_split(&self) -> bool {
         self.input_tokens.is_some()
             && (self.cache_read_input_tokens.is_some()
@@ -1156,14 +1168,7 @@ pub(super) fn parse_claude_reader(
                 let token_breakdown = message
                     .usage
                     .as_ref()
-                    .map(|usage| TokenBreakdown {
-                        input: usage.input_tokens.unwrap_or(0),
-                        output: usage.output_tokens.unwrap_or(0),
-                        cache_read: usage.cache_read_input_tokens.unwrap_or(0),
-                        cache_write: usage.cache_creation_input_tokens.unwrap_or(0),
-                        cache_write_1h: usage.cache_write_1h(),
-                        reasoning: 0,
-                    })
+                    .map(ClaudeUsage::tokens)
                     .unwrap_or_default();
                 if crate::positive_token_total(&token_breakdown).is_none() {
                     let error = SessionParseError::at_path(
@@ -1282,7 +1287,7 @@ pub(super) fn parse_claude_reader(
                     ))),
                     _ => None,
                 };
-                if let Some(existing_idx) =
+                let parent_idx = if let Some(existing_idx) =
                     pending_hash.and_then(|key| processed_hashes.get(&key).copied())
                 {
                     let duplicate_model = message
@@ -1311,80 +1316,115 @@ pub(super) fn parse_claude_reader(
                             choice,
                         );
                     }
-                    continue;
-                }
-
-                let raw_model = match message.model {
-                    Some(m) => m,
-                    None => {
-                        if !has_positive_usage {
+                    existing_idx
+                } else {
+                    let raw_model = match message.model {
+                        Some(m) => m,
+                        None => {
+                            if !has_positive_usage {
+                                pending_turn_start = false;
+                                continue;
+                            }
+                            let error = SessionParseError::at_path(
+                                path,
+                                "validate Claude assistant message",
+                                std::io::Error::new(
+                                    ErrorKind::InvalidData,
+                                    format!(
+                                        "line {}: token-bearing assistant message is missing model",
+                                        line_index + 1
+                                    ),
+                                ),
+                            );
+                            record_claude_rejection(
+                                &mut rejections,
+                                RecordRejectionReason::MissingModel,
+                                &error,
+                            );
                             pending_turn_start = false;
                             continue;
                         }
-                        let error = SessionParseError::at_path(
-                            path,
-                            "validate Claude assistant message",
-                            std::io::Error::new(
-                                ErrorKind::InvalidData,
-                                format!(
-                                    "line {}: token-bearing assistant message is missing model",
-                                    line_index + 1
-                                ),
-                            ),
+                    };
+                    let model = observed_claude_model(&raw_model);
+                    let provider_choice = claude_provider_choice_for_models(
+                        &raw_model,
+                        &model,
+                        provider_hint.as_deref(),
+                    );
+                    let provider_confidence = provider_choice.confidence;
+
+                    // Insert dedup index only after all checks pass, right before push
+                    let dedup_key = pending_hash.inspect(|hash| {
+                        processed_hashes.insert(*hash, messages.len());
+                    });
+
+                    let mut message = UsageRecord::new_with_dedup(
+                        model,
+                        provider_choice.id,
+                        session_id.clone(),
+                        parsed_timestamp,
+                        token_breakdown,
+                        0.0,
+                        dedup_key,
+                    );
+                    message.set_billing_provider(provider_hint.as_deref());
+                    message.claude_input_is_split = usage.reports_input_split();
+                    message.claude_session_id = entry
+                        .session_id
+                        .as_deref()
+                        .filter(|id| !id.trim().is_empty())
+                        .map(crate::records::intern::intern);
+                    message.is_main_session = is_main_session;
+                    message.agent = sidechain_agent
+                        .as_deref()
+                        .map(crate::records::intern::intern);
+                    message.set_agent_instance(sidechain_agent_instance.clone());
+                    let (message_workspace_key, message_workspace_label) =
+                        workspace_options_for_entry(
+                            entry_workspace.as_ref(),
+                            &workspace_key,
+                            &workspace_label,
                         );
-                        record_claude_rejection(
-                            &mut rejections,
-                            RecordRejectionReason::MissingModel,
-                            &error,
-                        );
+                    message.set_workspace(message_workspace_key, message_workspace_label);
+                    // Mark the first assistant response after a user message as a turn start
+                    if pending_turn_start {
+                        message.is_turn_start = true;
                         pending_turn_start = false;
-                        continue;
                     }
+                    messages.push(message);
+                    provider_confidences.push(provider_confidence);
+                    messages.len() - 1
                 };
-                let model = observed_claude_model(&raw_model);
-                let provider_choice =
-                    claude_provider_choice_for_models(&raw_model, &model, provider_hint.as_deref());
-                let provider_confidence = provider_choice.confidence;
-
-                // Insert dedup index only after all checks pass, right before push
-                let dedup_key = pending_hash.inspect(|hash| {
-                    processed_hashes.insert(*hash, messages.len());
-                });
-
-                let mut message = UsageRecord::new_with_dedup(
-                    model,
-                    provider_choice.id,
-                    session_id.clone(),
-                    parsed_timestamp,
-                    token_breakdown,
-                    0.0,
-                    dedup_key,
+                let advisors = advisor_records(
+                    &usage,
+                    &messages[parent_idx],
+                    provider_hint.as_deref(),
+                    &mut rejections,
                 );
-                message.set_billing_provider(provider_hint.as_deref());
-                message.claude_input_is_split = usage.reports_input_split();
-                message.claude_session_id = entry
-                    .session_id
-                    .as_deref()
-                    .filter(|id| !id.trim().is_empty())
-                    .map(crate::records::intern::intern);
-                message.is_main_session = is_main_session;
-                message.agent = sidechain_agent
-                    .as_deref()
-                    .map(crate::records::intern::intern);
-                message.set_agent_instance(sidechain_agent_instance.clone());
-                let (message_workspace_key, message_workspace_label) = workspace_options_for_entry(
-                    entry_workspace.as_ref(),
-                    &workspace_key,
-                    &workspace_label,
-                );
-                message.set_workspace(message_workspace_key, message_workspace_label);
-                // Mark the first assistant response after a user message as a turn start
-                if pending_turn_start {
-                    message.is_turn_start = true;
-                    pending_turn_start = false;
+                for (record, advisor_usage, choice) in advisors {
+                    if let Some(index) = record
+                        .dedup_key
+                        .and_then(|key| processed_hashes.get(&key).copied())
+                    {
+                        merge_claude_duplicate(
+                            &mut messages[index],
+                            &advisor_usage,
+                            record.timestamp,
+                            provider_hint.as_deref(),
+                        );
+                        update_claude_provider_id(
+                            &mut messages[index].provider_id,
+                            &mut provider_confidences[index],
+                            choice,
+                        );
+                    } else {
+                        if let Some(key) = record.dedup_key {
+                            processed_hashes.insert(key, messages.len());
+                        }
+                        provider_confidences.push(choice.confidence);
+                        messages.push(record);
+                    }
                 }
-                messages.push(message);
-                provider_confidences.push(provider_confidence);
             }
         }
     }
@@ -1410,6 +1450,65 @@ pub(super) fn parse_claude_reader(
         ends_with_newline,
         content_hash: hasher.map(|hasher| hasher.finalize().into()),
     })
+}
+
+/// Advisor counters are additional calls, whereas ordinary iterations are
+/// already included in their parent's usage. Array positions identify calls
+/// across streamed duplicates, appends, and mirrored transcripts.
+fn advisor_records(
+    usage: &ClaudeUsage,
+    parent: &UsageRecord,
+    provider_hint: Option<&str>,
+    rejections: &mut RejectionSummary,
+) -> Vec<(UsageRecord, ClaudeUsage, ClaudeProviderChoice)> {
+    let Some(iterations) = usage.iterations.as_ref() else {
+        return Vec::new();
+    };
+    let Some(iterations) = iterations.as_array() else {
+        rejections.record(RecordRejectionReason::MalformedRecord);
+        return Vec::new();
+    };
+    let mut records = Vec::new();
+    for (index, iteration) in iterations.iter().enumerate() {
+        if iteration.get("type").and_then(Value::as_str) != Some("advisor_message") {
+            continue;
+        }
+        let Some(model) = iteration
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            rejections.record(RecordRejectionReason::MissingModel);
+            continue;
+        };
+        if is_claude_synthetic_placeholder_model(model) {
+            continue;
+        }
+        let Ok(usage) = serde_json::from_value::<ClaudeUsage>(iteration.clone()) else {
+            rejections.record(RecordRejectionReason::MalformedRecord);
+            continue;
+        };
+        let tokens = usage.tokens();
+        if crate::positive_token_total(&tokens).is_none() {
+            rejections.record(RecordRejectionReason::MalformedRecord);
+            continue;
+        }
+        let choice = claude_provider_choice(model, provider_hint);
+        let mut record = parent.clone();
+        record.model_id = crate::records::intern::intern(model);
+        record.raw_model_id = record.model_id.clone();
+        record.provider_id = crate::records::intern::intern(&choice.id);
+        record.tokens = tokens;
+        record.claude_input_is_split = usage.reports_input_split();
+        record.message_count = 0;
+        record.is_turn_start = false;
+        record.dedup_key = parent
+            .dedup_key
+            .map(|key| crate::records::dedup_hash_str(&format!("claude-advisor:{key}:{index}")));
+        records.push((record, usage, choice));
+    }
+    records
 }
 
 fn record_claude_rejection(

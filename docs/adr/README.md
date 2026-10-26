@@ -34,6 +34,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0028](0028-request-usage-and-pricing.md) | Disjoint usage buckets and request-level pricing | Accepted |
 | [0029](0029-machine-attribution.md) | Machine attribution as a generation projection | Accepted |
 | [0030](0030-price-provenance.md) | Captured catalog price provenance | Accepted |
+| [0031](0031-claude-advisor-usage.md) | Claude advisor usage reconciliation | Accepted |
 
 ## Conventions
 
