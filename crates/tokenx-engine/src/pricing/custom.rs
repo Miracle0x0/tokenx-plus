@@ -44,6 +44,17 @@ struct ProviderOverride {
 
 #[derive(Deserialize)]
 struct CustomModelPricing {
+    input_cost_per_token_above_100k_tokens: Option<f64>,
+    input_cost_per_million_tokens_above_100k_tokens: Option<f64>,
+    output_cost_per_token_above_100k_tokens: Option<f64>,
+    output_cost_per_million_tokens_above_100k_tokens: Option<f64>,
+    cache_read_input_token_cost_above_100k_tokens: Option<f64>,
+    cache_read_input_token_cost_per_million_tokens_above_100k_tokens: Option<f64>,
+    cache_creation_input_token_cost_above_100k_tokens: Option<f64>,
+    cache_creation_input_token_cost_per_million_tokens_above_100k_tokens: Option<f64>,
+    cache_creation_input_token_cost_above_1hr_above_100k_tokens: Option<f64>,
+    cache_creation_input_token_cost_per_million_tokens_above_1hr_above_100k_tokens: Option<f64>,
+
     #[serde(rename = "pricingSource")]
     _pricing_source: Option<String>,
     #[serde(rename = "notes")]
@@ -124,6 +135,37 @@ impl CustomModelPricing {
         }
 
         Ok(ModelPricing {
+            input_cost_per_token_above_100k_tokens: price_field(
+                self.input_cost_per_million_tokens_above_100k_tokens,
+                self.input_cost_per_token_above_100k_tokens,
+                "input_cost_per_million_tokens_above_100k_tokens",
+                "input_cost_per_token_above_100k_tokens",
+            )?,
+            output_cost_per_token_above_100k_tokens: price_field(
+                self.output_cost_per_million_tokens_above_100k_tokens,
+                self.output_cost_per_token_above_100k_tokens,
+                "output_cost_per_million_tokens_above_100k_tokens",
+                "output_cost_per_token_above_100k_tokens",
+            )?,
+            cache_read_input_token_cost_above_100k_tokens: price_field(
+                self.cache_read_input_token_cost_per_million_tokens_above_100k_tokens,
+                self.cache_read_input_token_cost_above_100k_tokens,
+                "cache_read_input_token_cost_per_million_tokens_above_100k_tokens",
+                "cache_read_input_token_cost_above_100k_tokens",
+            )?,
+            cache_creation_input_token_cost_above_100k_tokens: price_field(
+                self.cache_creation_input_token_cost_per_million_tokens_above_100k_tokens,
+                self.cache_creation_input_token_cost_above_100k_tokens,
+                "cache_creation_input_token_cost_per_million_tokens_above_100k_tokens",
+                "cache_creation_input_token_cost_above_100k_tokens",
+            )?,
+            cache_creation_input_token_cost_above_1hr_above_100k_tokens: price_field(
+                self.cache_creation_input_token_cost_per_million_tokens_above_1hr_above_100k_tokens,
+                self.cache_creation_input_token_cost_above_1hr_above_100k_tokens,
+                "cache_creation_input_token_cost_per_million_tokens_above_1hr_above_100k_tokens",
+                "cache_creation_input_token_cost_above_1hr_above_100k_tokens",
+            )?,
+
             input_cost_per_token,
             input_cost_per_token_above_128k_tokens: price_field(
                 self.input_cost_per_million_tokens_above_128k_tokens,

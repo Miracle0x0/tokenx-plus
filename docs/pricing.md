@@ -23,8 +23,10 @@ Codex includes cache reads and writes in `input_tokens`. Tokenx subtracts
 `cache_write_input_tokens` from that inclusive input count, then prices the three
 buckets separately. Cache writes use the catalog's
 `cache_creation_input_token_cost`, including custom overrides. An absent
-`cache_write_input_tokens` means zero; no write volume or model-specific write
-rate is inferred. See [Codex token usage](facts/codex.md).
+`cache_write_input_tokens` means zero; no write volume is inferred. For native
+OpenAI GPT-5 models before GPT-5.6, missing cache-write rates use the selected
+row's matching input tariff, including request and service tiers. Explicit write
+rates remain authoritative; reseller routes and custom overrides are excluded. See [Codex token usage](facts/codex.md).
 
 Rows without positive token buckets are not usage rows. Cost-only or
 credits-only records are dropped instead of being converted into local token
@@ -108,9 +110,19 @@ For xAI rows with explicit 200k rates, ordinary input plus cache reads selects t
 
 Grok completion records retain `modelCalls`. Only an explicit count of one establishes a single request; multiple calls, missing counts, and cumulative-only usage are aggregates. When such an aggregate reaches a request-tier boundary, its constituents cannot be priced from their sum or arithmetic mean. Tokens remain reportable, cost is excluded, and `requestTierUnavailable` identifies the uncertainty. Below the boundary, the aggregate cannot contain a request that crosses it and uses the ordinary rates. See [request usage and pricing](adr/0028-request-usage-and-pricing.md).
 
+### Haiku 5.5 prompt-length pricing
+
+For Haiku 5.5, ordinary input plus cache reads and writes determines prompt size.
+Strictly above 100,000 tokens, the selected row's `_above_100k_tokens` rates apply
+to the entire request, including output and each cache-write duration. A missing
+used-bucket rate excludes cost with a diagnostic. Aggregated usage above the
+boundary retains tokens with `requestTierUnavailable`. No rate is borrowed from
+another catalog. A custom row without an explicit 100k card retains its flat
+price. See [request pricing](adr/0034-selected-row-request-pricing.md).
+
 ### Claude Code cache durations
 
-Claude accounting uses recorded assistant and cumulative snapshot usage.
+Claude accounting uses recorded assistant, advisor, and cumulative snapshot usage.
 Tool-output text and request replay records add no separate tokens. See
 [Claude Code fields and accounting](facts/claude-code.md).
 
@@ -215,6 +227,8 @@ One-hour cache creation accepts
 `cache_creation_input_token_cost_per_million_tokens_above_1hr` and
 `cache_creation_input_token_cost_per_million_tokens_above_1hr_above_200k_tokens`,
 or the corresponding per-token fields without `_per_million_tokens`.
+Haiku 5.5 also accepts `_above_100k_tokens` variants for input, output, cache
+read, ordinary cache write, and one-hour cache write, in both units.
 
 Overrides are exact-only and case-insensitive:
 

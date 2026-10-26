@@ -37,6 +37,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0031](0031-claude-advisor-usage.md) | Claude advisor usage reconciliation | Accepted |
 | [0032](0032-roocode-current-task-usage.md) | Roo Code current task usage | Accepted |
 | [0033](0033-dsh-streaming-transcripts.md) | DSH streaming transcripts | Accepted |
+| [0034](0034-selected-row-request-pricing.md) | Selected-row request pricing | Accepted |
 
 ## Conventions
 

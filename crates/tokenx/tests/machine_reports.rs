@@ -60,7 +60,7 @@ fn machine_grouping_and_price_origins_are_visible_in_cli_json_and_tables() {
         };
         write(
             &config.join(format!("cache/pricing-{catalog}.json")),
-            &json!({"version":4,"data":data}).to_string(),
+            &json!({"version":5,"data":data}).to_string(),
         );
     }
     for _ in 0..2 {

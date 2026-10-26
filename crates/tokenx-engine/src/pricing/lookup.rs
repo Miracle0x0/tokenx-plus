@@ -220,7 +220,7 @@ impl PricingLookup {
         forced_pricing_source: Option<&str>,
         provider_scope: Option<&str>,
     ) -> Option<LookupResult> {
-        match forced_pricing_source {
+        let mut result = match forced_pricing_source {
             None => self.lookup_auto(model_id, provider_scope),
             Some(source) if source.eq_ignore_ascii_case("litellm") => lookup_catalog(
                 &self.litellm,
@@ -244,7 +244,9 @@ impl PricingLookup {
                 provider_scope,
             ),
             Some(_) => None,
-        }
+        }?;
+        super::request_rates::normalize_openai_cache_writes(&mut result, provider_scope);
+        Some(result)
     }
 
     fn lookup_auto(&self, model_id: &str, provider_scope: Option<&str>) -> Option<LookupResult> {
@@ -371,6 +373,13 @@ impl PricingLookup {
             super::service_tier::effective_service_tier(&pricing, service_tier, usage, false)?;
         let pricing =
             super::service_tier::effective_xai_request_rates(&pricing, provider_id, usage, false)?;
+        let pricing = super::request_rates::haiku_rates(
+            &pricing,
+            model_id,
+            &result.pricing_source,
+            usage,
+            false,
+        )?;
         compute_cost(&pricing, usage)
     }
 }
@@ -479,6 +488,11 @@ fn is_valid_price_value(value: f64) -> bool {
 
 fn has_any_usable_pricing(pricing: &ModelPricing) -> bool {
     [
+        pricing.input_cost_per_token_above_100k_tokens,
+        pricing.output_cost_per_token_above_100k_tokens,
+        pricing.cache_read_input_token_cost_above_100k_tokens,
+        pricing.cache_creation_input_token_cost_above_100k_tokens,
+        pricing.cache_creation_input_token_cost_above_1hr_above_100k_tokens,
         pricing.input_cost_per_token,
         pricing.output_cost_per_token,
         pricing.cache_read_input_token_cost,

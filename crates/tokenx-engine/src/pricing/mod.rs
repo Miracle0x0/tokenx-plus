@@ -5,6 +5,7 @@ pub mod lookup;
 pub mod models_dev;
 pub mod openrouter;
 mod provenance;
+mod request_rates;
 mod service_tier;
 use provenance::CostEstimate;
 pub use provenance::{CostProvenance, PriceOrigin};
@@ -631,6 +632,13 @@ impl PricingService {
         let pricing = service_tier::effective_xai_request_rates(
             &pricing,
             provider_id,
+            usage,
+            context.is_aggregate,
+        )?;
+        let pricing = request_rates::haiku_rates(
+            &pricing,
+            canonical_model_id,
+            &result.pricing_source,
             usage,
             context.is_aggregate,
         )?;
