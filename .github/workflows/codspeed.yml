@@ -41,9 +41,10 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
+        id: rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - name: Cache cargo registry
+      - name: Cache benchmark build
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
@@ -51,11 +52,19 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: codspeed-tokenx-v1-${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: codspeed-4.7.0-bench-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            codspeed-tokenx-v1-${{ runner.os }}-cargo-
+            codspeed-4.7.0-bench-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}-
+
+      - name: Cache cargo-codspeed
+        id: codspeed-tool
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.cargo/bin/cargo-codspeed
+          key: cargo-codspeed-4.7.0-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}
 
       - name: Install cargo-codspeed
+        if: steps.codspeed-tool.outputs.cache-hit != 'true'
         run: cargo install cargo-codspeed --locked --version 4.7.0
 
       - name: Build benchmark targets

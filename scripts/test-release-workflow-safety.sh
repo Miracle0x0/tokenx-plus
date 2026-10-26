@@ -164,6 +164,19 @@ EOF_YAML
   cat > "${work}/.github/workflows/ci.yml" <<'EOF_YAML'
 name: CI (Test Only)
 
+on:
+  pull_request:
+  push:
+    paths:
+      - scripts/**
+      - package.json
+      - .github/actions/setup-bun/action.yml
+      - .github/workflows/build-native.yml
+      - .github/workflows/ci.yml
+      - .github/workflows/launcher_validation.yml
+      - .github/workflows/publish.yml
+      - .github/workflows/test_coverage.yml
+
 jobs:
   rust:
     steps:
@@ -190,38 +203,6 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-bun
       - run: bun install --frozen-lockfile
-EOF_YAML
-  cat > "${work}/.github/workflows/test_coverage.yml" <<'EOF_YAML'
-name: Test & Coverage (Test Only)
-
-on:
-  push:
-    paths:
-      - scripts/**
-      - package.json
-      - .github/actions/setup-bun/action.yml
-      - .github/workflows/build-native.yml
-      - .github/workflows/ci.yml
-      - .github/workflows/launcher_validation.yml
-      - .github/workflows/publish.yml
-      - .github/workflows/test_coverage.yml
-  pull_request:
-    paths:
-      - scripts/**
-      - package.json
-      - .github/actions/setup-bun/action.yml
-      - .github/workflows/build-native.yml
-      - .github/workflows/ci.yml
-      - .github/workflows/launcher_validation.yml
-      - .github/workflows/publish.yml
-      - .github/workflows/test_coverage.yml
-
-jobs:
-  lint:
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/setup-bun
-      - run: bash scripts/test-release-tooling.sh
 EOF_YAML
 
   git -C "${work}" init -q
@@ -512,7 +493,7 @@ test_rejects_missing_generated_release_notes() {
 test_rejects_release_tooling_command_drift() {
   local work="${TMP_DIR}/release-tooling-command-drift"
   write_good_workflows "${work}"
-  python3 - "${work}/.github/workflows/test_coverage.yml" <<'PY'
+  python3 - "${work}/.github/workflows/ci.yml" <<'PY'
 import pathlib
 import sys
 
@@ -530,7 +511,7 @@ PY
     return 1
   fi
 
-  grep -q "Test & Coverage must call 'bash scripts/test-release-tooling.sh' exactly once" "${output}"
+  grep -q "CI must call 'bash scripts/test-release-tooling.sh' exactly once" "${output}"
 }
 
 test_rejects_missing_release_tooling_entrypoint() {
@@ -578,7 +559,7 @@ test_rejects_non_executable_release_tooling_entrypoint() {
 test_rejects_release_validation_path_drift() {
   local work="${TMP_DIR}/release-validation-path-drift"
   write_good_workflows "${work}"
-  python3 - "${work}/.github/workflows/test_coverage.yml" <<'PY'
+  python3 - "${work}/.github/workflows/ci.yml" <<'PY'
 import pathlib
 import sys
 
@@ -593,7 +574,28 @@ PY
     return 1
   fi
 
-  grep -q "Test & Coverage push paths are missing release inputs" "${output}"
+  grep -q "CI push paths are missing release inputs" "${output}"
+}
+
+test_rejects_release_validation_path_exclusions() {
+  local event_name work
+  for event_name in push pull_request; do
+    work="${TMP_DIR}/release-validation-path-exclusions-${event_name}"
+    write_good_workflows "${work}"
+    if [[ "${event_name}" == push ]]; then
+      replace_text "${work}/.github/workflows/ci.yml" "    paths:" "    paths-ignore:"
+    else
+      replace_text \
+        "${work}/.github/workflows/ci.yml" \
+        $'  pull_request:\n' \
+        $'  pull_request:\n    paths-ignore:\n      - scripts/**\n'
+    fi
+    assert_safety_rejected \
+      "${work}" \
+      "${TMP_DIR}/release-validation-path-exclusions-${event_name}-output.txt" \
+      "CI ${event_name} must not use paths-ignore to exclude release inputs" \
+      "Expected workflow safety check to reject ${event_name} release-input exclusions"
+  done
 }
 
 test_rejects_unpinned_bun_package_manager() {
@@ -698,6 +700,7 @@ test_rejects_missing_release_tooling_entrypoint
 test_accepts_executable_git_mode_without_worktree_execute_bits
 test_rejects_non_executable_release_tooling_entrypoint
 test_rejects_release_validation_path_drift
+test_rejects_release_validation_path_exclusions
 test_rejects_unpinned_bun_package_manager
 test_rejects_mutable_setup_bun_reference
 test_rejects_direct_setup_bun_workflow_reference
