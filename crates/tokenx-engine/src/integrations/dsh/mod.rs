@@ -81,7 +81,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
@@ -130,7 +130,7 @@ fn fold_dsh_units(
     pipeline_cache::fold_units_with_filter(parsed, ctx, sink, |_, messages| {
         messages
             .into_iter()
-            .filter(|message| crate::should_keep_deduped_message(seen, message))
+            .filter(|message| crate::finalization::should_keep_deduped_message(seen, message))
             .collect()
     })
 }

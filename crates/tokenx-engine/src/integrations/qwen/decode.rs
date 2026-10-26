@@ -147,7 +147,7 @@ pub fn parse_qwen_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 .record(RecordRejectionReason::MalformedRecord);
             continue;
         };
-        match crate::positive_token_total(&token_breakdown) {
+        match crate::finalization::positive_token_total(&token_breakdown) {
             Some(0) => continue,
             Some(_) => {}
             None => {

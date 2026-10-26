@@ -43,7 +43,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
@@ -115,10 +115,12 @@ fn fold_opencode_unit(
         mut rejections,
     } = pipeline_cache::resolve_unit(parsed, ctx)?;
     let path = unit.path.clone();
-    rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+    rejections.merge(&crate::finalization::retain_source_eligible_messages(
+        &mut messages,
+    ));
     let cache_write = cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
     let cache_write_outcome = pipeline_cache::write_cache(cache_write, ctx, &messages);
-    rejections.merge(&crate::price_source_eligible_messages(
+    rejections.merge(&crate::finalization::price_source_eligible_messages(
         &mut messages,
         ctx.pricing,
         &ctx.model_mappings,
@@ -330,10 +332,8 @@ mod tests {
             None,
         ));
 
-        let parsed = DRIVER.parse_inputs(
-            vec![unit.into_lookup_miss()],
-            &ParseContext::uncancelled(None),
-        );
+        let parsed =
+            DRIVER.parse_inputs(vec![unit.into_lookup_miss()], &ParseContext::uncancelled());
         assert_eq!(parsed.len(), 1);
         let health = &parsed[0].health;
         assert_eq!(parsed[0].unit.path, path);
@@ -377,7 +377,7 @@ mod tests {
 
         let parsed = DRIVER.parse_inputs(
             vec![unit.clone().into_lookup_miss()],
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         assert_eq!(parsed.len(), 1);
         let health = &parsed[0].health;
@@ -437,10 +437,8 @@ mod tests {
             .prepare_snapshot()
             .unwrap();
         let decoder_version = unit.decoder.version();
-        let parsed = DRIVER.parse_inputs(
-            vec![unit.into_lookup_miss()],
-            &ParseContext::uncancelled(None),
-        );
+        let parsed =
+            DRIVER.parse_inputs(vec![unit.into_lookup_miss()], &ParseContext::uncancelled());
         assert_eq!(parsed.len(), 1);
         let health = &parsed[0].health;
         assert!(matches!(

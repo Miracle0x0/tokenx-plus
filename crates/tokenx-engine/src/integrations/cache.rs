@@ -62,7 +62,7 @@ pub(crate) fn plan_cache_hit(
 /// isolated to this unit.
 pub(crate) fn load_or_scan_unit_with<F>(
     unit: ExecutionInput,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
     scan: F,
 ) -> ParsedUnit
 where
@@ -77,7 +77,7 @@ where
 /// result too, so empty archives do not need decoding on every acquisition.
 pub(crate) fn load_or_scan_unit_including_empty<F>(
     unit: ExecutionInput,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
     scan: F,
 ) -> ParsedUnit
 where
@@ -96,7 +96,7 @@ where
 
 pub(crate) fn load_or_scan_empty_sentinel_with_primary_snapshot<F>(
     unit: ExecutionInput,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
     primary_snapshot: input_record_cache::InputSnapshot,
     scan: F,
 ) -> ParsedUnit
@@ -118,7 +118,7 @@ where
 
 pub(crate) fn load_or_scan_unit_with_dependency_snapshot<F>(
     unit: ExecutionInput,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
     dependency_snapshot: input_record_cache::InputSnapshot,
     scan: F,
 ) -> ParsedUnit
@@ -155,7 +155,7 @@ struct ScanCacheOptions {
 
 fn load_or_scan_unit_cacheable<F>(
     unit: ExecutionInput,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
     options: ScanCacheOptions,
     scan: F,
 ) -> ParsedUnit
@@ -307,7 +307,7 @@ where
 /// (their units never plan cache hits and never write shards).
 pub(crate) fn parse_uncached_unit<F>(
     unit: ExecutionInput,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
     scan: F,
 ) -> ParsedUnit
 where
@@ -329,7 +329,7 @@ where
 fn finalize_uncached_scan(
     unit: DiscoveredInput,
     scanned: ScannedInput,
-    _ctx: &ParseContext<'_>,
+    _ctx: &ParseContext,
 ) -> ParsedUnit {
     let status = match scanned.interrupted {
         None => InputStatus::Complete,
@@ -375,7 +375,7 @@ pub(crate) fn fold_units_deduped(
     seen: &mut std::collections::HashSet<u64>,
 ) -> Result<(), InputPipelineError> {
     fold_units_with_filter(parsed, ctx, sink, |_, mut messages| {
-        messages.retain(|message| crate::should_keep_deduped_message(seen, message));
+        messages.retain(|message| crate::finalization::should_keep_deduped_message(seen, message));
         messages
     })
 }
@@ -407,11 +407,13 @@ where
         } = resolve_unit(parsed_unit, ctx)?;
         let path = unit.path.clone();
         let decoder_version = unit.decoder.version();
-        rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+        rejections.merge(&crate::finalization::retain_source_eligible_messages(
+            &mut messages,
+        ));
         let cache_write =
             cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
         let cache_write_outcome = write_cache(cache_write, ctx, &messages);
-        rejections.merge(&crate::price_source_eligible_messages(
+        rejections.merge(&crate::finalization::price_source_eligible_messages(
             &mut messages,
             ctx.pricing,
             &ctx.model_mappings,
@@ -793,7 +795,7 @@ mod tests {
             .into_lookup_miss();
         input_record_cache::reset_input_read_stats(&path);
 
-        let parsed = load_or_scan_unit_with(unit, &ParseContext::uncancelled(None), |scan_path| {
+        let parsed = load_or_scan_unit_with(unit, &ParseContext::uncancelled(), |scan_path| {
             let bytes = std::fs::read(scan_path).unwrap();
             input_record_cache::record_input_bytes(scan_path, bytes.len());
             Ok(ScannedInput::complete(vec![cached_message()]))
@@ -826,7 +828,7 @@ mod tests {
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_dir.path());
         let cold_parsed = load_or_scan_unit_with(
             execution(unit.clone()),
-            &ParseContext::uncancelled(Some(&first_pricing)),
+            &ParseContext::uncancelled(),
             |_| {
                 Ok(ScannedInput::complete(vec![UsageRecord::new(
                     "gpt-5.4",
@@ -890,7 +892,7 @@ mod tests {
         let pricing = pricing_service(f64::MAX);
         let parsed = load_or_scan_unit_with(
             execution(plain_unit(path, DecoderId::Amp)),
-            &ParseContext::uncancelled(Some(&pricing)),
+            &ParseContext::uncancelled(),
             |_| {
                 Ok(ScannedInput::complete(vec![UsageRecord::new(
                     "gpt-5.4",
@@ -1017,7 +1019,7 @@ mod tests {
         let cold_parsed = vec![
             load_or_scan_unit_with(
                 execution(good_unit.clone()),
-                &ParseContext::uncancelled(None),
+                &ParseContext::uncancelled(),
                 |_| {
                     Ok(ScannedInput::complete(vec![UsageRecord::new(
                         "gpt-5.4",
@@ -1034,7 +1036,7 @@ mod tests {
             ),
             load_or_scan_unit_with(
                 execution(bad_unit.clone()),
-                &ParseContext::uncancelled(None),
+                &ParseContext::uncancelled(),
                 |_| {
                     Ok(ScannedInput::complete(vec![UsageRecord::new(
                         "gpt-5.4",
@@ -1117,7 +1119,7 @@ mod tests {
         let finite_pricing = pricing_service(1e-20);
         let parsed = load_or_scan_unit_with(
             execution(unit.clone()),
-            &ParseContext::uncancelled(Some(&overflowing_pricing)),
+            &ParseContext::uncancelled(),
             |_| {
                 Ok(ScannedInput::complete(vec![UsageRecord::new(
                     "gpt-5.4",
@@ -1274,7 +1276,7 @@ mod tests {
         ));
         let parse_called = std::cell::Cell::new(false);
 
-        let parsed = load_or_scan_unit_with(miss, &ParseContext::uncancelled(None), |_| {
+        let parsed = load_or_scan_unit_with(miss, &ParseContext::uncancelled(), |_| {
             parse_called.set(true);
             Ok(ScannedInput::complete(vec![cached_message()]))
         });
@@ -1295,7 +1297,7 @@ mod tests {
 
         let parsed = load_or_scan_unit_with(
             execute_prepared(unit.prepare_snapshot().unwrap()),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
             |_| {
                 Err(crate::records::error::SessionParseError::invalid(
                     "parse test SQLite",
@@ -1326,10 +1328,9 @@ mod tests {
         std::fs::write(&path, b"").unwrap();
         let unit = plain_unit(path, DecoderId::Amp);
 
-        let parsed =
-            load_or_scan_unit_with(execution(unit), &ParseContext::uncancelled(None), |_| {
-                Ok(ScannedInput::complete(Vec::new()))
-            });
+        let parsed = load_or_scan_unit_with(execution(unit), &ParseContext::uncancelled(), |_| {
+            Ok(ScannedInput::complete(Vec::new()))
+        });
 
         assert!(parsed.cache_write.is_none());
     }
@@ -1341,14 +1342,13 @@ mod tests {
         std::fs::write(&path, b"bad").unwrap();
         let unit = plain_unit(path, DecoderId::Amp);
 
-        let parsed =
-            load_or_scan_unit_with(execution(unit), &ParseContext::uncancelled(None), |_| {
-                let mut scanned = ScannedInput::complete(Vec::new());
-                scanned
-                    .rejections
-                    .record(crate::input_health::RecordRejectionReason::MalformedRecord);
-                Ok(scanned)
-            });
+        let parsed = load_or_scan_unit_with(execution(unit), &ParseContext::uncancelled(), |_| {
+            let mut scanned = ScannedInput::complete(Vec::new());
+            scanned
+                .rejections
+                .record(crate::input_health::RecordRejectionReason::MalformedRecord);
+            Ok(scanned)
+        });
 
         assert!(parsed.cache_write.is_some());
     }
@@ -1472,14 +1472,11 @@ mod tests {
         input_record_cache::reset_input_read_stats(&path);
         let parse_called = std::cell::Cell::new(false);
 
-        let parsed = load_or_scan_unit_with(
-            execute_prepared(unit),
-            &ParseContext::uncancelled(None),
-            |_| {
+        let parsed =
+            load_or_scan_unit_with(execute_prepared(unit), &ParseContext::uncancelled(), |_| {
                 parse_called.set(true);
                 Ok(ScannedInput::complete(vec![cached_message()]))
-            },
-        );
+            });
         assert!(parse_called.get());
         assert!(matches!(
             parsed.messages,
@@ -1493,11 +1490,10 @@ mod tests {
         let path = dir.path().join("session.json");
         std::fs::write(&path, b"before").unwrap();
         let unit = plain_unit(path.clone(), DecoderId::Amp);
-        let parsed =
-            load_or_scan_unit_with(execution(unit), &ParseContext::uncancelled(None), |_| {
-                std::fs::write(&path, b"after-and-different-size").unwrap();
-                Ok(ScannedInput::complete(vec![cached_message()]))
-            });
+        let parsed = load_or_scan_unit_with(execution(unit), &ParseContext::uncancelled(), |_| {
+            std::fs::write(&path, b"after-and-different-size").unwrap();
+            Ok(ScannedInput::complete(vec![cached_message()]))
+        });
 
         assert!(parsed.cache_write.is_none());
         assert!(parsed.invalidate_cache);
@@ -1531,7 +1527,7 @@ mod tests {
             "an unavailable optional related input must force a cache miss",
         );
         let scan_called = std::cell::Cell::new(false);
-        let parsed = load_or_scan_unit_with(miss, &ParseContext::uncancelled(None), |_| {
+        let parsed = load_or_scan_unit_with(miss, &ParseContext::uncancelled(), |_| {
             scan_called.set(true);
             Ok(ScannedInput::complete(vec![scanned_message()]))
         });
@@ -1591,11 +1587,10 @@ mod tests {
         std::fs::write(&path, b"database").unwrap();
         std::fs::write(&wal_path, b"wal-before").unwrap();
         let unit = DiscoveredInput::sqlite_with_wal(path, DecoderKind::plain(DecoderId::Zed));
-        let parsed =
-            load_or_scan_unit_with(execution(unit), &ParseContext::uncancelled(None), |_| {
-                std::fs::write(&wal_path, b"wal-after-and-larger").unwrap();
-                Ok(ScannedInput::complete(vec![cached_message()]))
-            });
+        let parsed = load_or_scan_unit_with(execution(unit), &ParseContext::uncancelled(), |_| {
+            std::fs::write(&wal_path, b"wal-after-and-larger").unwrap();
+            Ok(ScannedInput::complete(vec![cached_message()]))
+        });
 
         assert!(parsed.cache_write.is_none());
         assert!(parsed.invalidate_cache);
@@ -1678,7 +1673,7 @@ mod tests {
         let execution = unit.prepare_snapshot().unwrap().into_lookup_miss();
         let parsed = load_or_scan_unit_with(
             execution,
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
             crate::integrations::pi::decode::parse_pi_file,
         );
         let mut cache = input_record_cache::InputRecordShardStore::with_cache_dir(&cache_path);
@@ -1978,7 +1973,7 @@ mod tests {
         );
         let cold_parsed = load_or_scan_unit_with(
             cold_unit,
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
             crate::integrations::pi::decode::parse_pi_file,
         );
         let mut cold_cache = cold_cache;

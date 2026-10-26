@@ -53,7 +53,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         if units.is_empty() {
             return Vec::new();
@@ -118,7 +118,7 @@ impl IntegrationDriver for Driver {
             let parent_index = decode::build_omp_parent_task_agent_index(&miss_paths);
             let owned_paths = miss_paths.into_iter().collect();
             let mut reparsed = {
-                let parse_ctx = ParseContext::new(ctx.pricing, ctx.calendar(), ctx.cancellation());
+                let parse_ctx = ParseContext::new(ctx.calendar(), ctx.cancellation());
                 parse_omp_miss_units(all_miss_units, &parse_ctx, &parent_index)
             };
             reparsed.extend(omp_parent_health_units(&parent_index, &owned_paths));
@@ -216,7 +216,7 @@ impl IntegrationDriver for Driver {
         pipeline_cache::fold_units(
             parse_parent_health_cache_misses(
                 parent_health_misses,
-                &ParseContext::new(ctx.pricing, ctx.calendar(), ctx.cancellation()),
+                &ParseContext::new(ctx.calendar(), ctx.cancellation()),
                 &parent_index,
             ),
             ctx,
@@ -229,7 +229,7 @@ impl IntegrationDriver for Driver {
                 break;
             }
             let mut parsed = {
-                let parse_ctx = ParseContext::new(ctx.pricing, ctx.calendar(), ctx.cancellation());
+                let parse_ctx = ParseContext::new(ctx.calendar(), ctx.cancellation());
                 parse_omp_miss_units(units, &parse_ctx, &parent_index)
             };
             let recovered_in_batch = remaining_failed_hits.min(parsed.len());
@@ -389,7 +389,7 @@ fn plan_parent_health_cache(
 
 fn parse_parent_health_cache_misses(
     misses: Vec<OmpParentHealthCacheMiss>,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
     parent_index: &decode::OmpParentTaskAgentIndex,
 ) -> Vec<ParsedUnit> {
     let mut misses_by_path = misses
@@ -484,8 +484,10 @@ fn fold_omp_cache_hits(
                     status,
                     mut rejections,
                 } = *health;
-                rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
-                rejections.merge(&crate::price_source_eligible_messages(
+                rejections.merge(&crate::finalization::retain_source_eligible_messages(
+                    &mut messages,
+                ));
+                rejections.merge(&crate::finalization::price_source_eligible_messages(
                     &mut messages,
                     ctx.pricing,
                     &ctx.model_mappings,
@@ -493,9 +495,9 @@ fn fold_omp_cache_hits(
                 message_count += messages.len();
                 if let Some(sink) = sink.as_deref_mut() {
                     rejections.merge(&pipeline_cache::emit_messages(
-                        messages
-                            .into_iter()
-                            .filter(|message| crate::should_keep_deduped_message(seen, message)),
+                        messages.into_iter().filter(|message| {
+                            crate::finalization::should_keep_deduped_message(seen, message)
+                        }),
                         sink,
                     ));
                 }
@@ -529,7 +531,7 @@ fn fold_omp_cache_hits(
 
 fn parse_omp_miss_units(
     units: Vec<crate::integrations::ExecutionInput>,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
     parent_index: &decode::OmpParentTaskAgentIndex,
 ) -> Vec<ParsedUnit> {
     units
@@ -658,7 +660,7 @@ mod tests {
     fn finalized(
         mut messages: Vec<crate::records::UsageRecord>,
     ) -> Vec<crate::AttributedUsageRecord> {
-        crate::finalize_message_identities(&mut messages);
+        crate::finalization::test_support::finalize_message_identities(&mut messages);
         messages
             .into_iter()
             .map(|message| message.attribute(ClientId::Omp))
@@ -671,7 +673,7 @@ mod tests {
     ) -> Vec<crate::AttributedUsageRecord> {
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(units),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let mut messages = Vec::new();
         let binding = binding();
@@ -943,7 +945,7 @@ mod tests {
         let mut cache = input_record_cache::InputRecordShardStore::default();
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(vec![child_unit.clone()]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let first = fold_parsed(parsed, &mut cache);
         assert_eq!(first[0].session_id.as_ref(), "child-session");
@@ -980,7 +982,7 @@ mod tests {
             CacheHitPlan::Miss(unit) => unit,
             CacheHitPlan::Hit(_) => panic!("parent-only change must invalidate child cache"),
         };
-        let parsed = DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled(None));
+        let parsed = DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled());
         let second = fold_parsed(parsed, &mut cache);
         assert_eq!(second[0].session_id.as_ref(), "child-session");
         assert_eq!(second[0].agent.as_deref(), Some("OMP Oracle"));
@@ -1045,7 +1047,7 @@ mod tests {
 
         let parsed = parse_omp_miss_units(
             vec![crate::integrations::test_execute(unit)],
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
             &parent_index,
         );
 
@@ -1076,11 +1078,8 @@ mod tests {
             invalidate_cache: false,
         }];
 
-        let parsed = parse_parent_health_cache_misses(
-            misses,
-            &ParseContext::uncancelled(None),
-            &parent_index,
-        );
+        let parsed =
+            parse_parent_health_cache_misses(misses, &ParseContext::uncancelled(), &parent_index);
 
         assert_eq!(parsed.len(), 1);
         assert!(parsed[0].cache_write.is_none());
@@ -1654,7 +1653,7 @@ mod tests {
         let mut cache = input_record_cache::InputRecordShardStore::default();
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(units),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let binding = binding();
         let mut messages = Vec::new();

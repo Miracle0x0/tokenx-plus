@@ -419,7 +419,7 @@ fn decode_row(
         cache_write_1h: 0,
         reasoning: tokens.reasoning.unwrap_or(0),
     };
-    match crate::positive_token_total(&token_breakdown) {
+    match crate::finalization::positive_token_total(&token_breakdown) {
         Some(0) => return Ok(None),
         Some(_) => {}
         None => return Err(RecordRejectionReason::MalformedRecord),

@@ -1,13 +1,11 @@
 use super::litellm::ModelPricing;
-use super::{cache, emit_warning, PricingDiagnosticSink, PricingDiagnostics};
+use super::{cache, emit_warning, http, PricingDiagnosticSink, PricingDiagnostics};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
 const CACHE_FILENAME: &str = "pricing-models-dev.json";
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
-const MAX_RETRIES: u32 = 3;
-const INITIAL_BACKOFF_MS: u64 = 200;
 const PER_MILLION: f64 = 1_000_000.0;
 
 #[derive(Deserialize)]
@@ -81,14 +79,6 @@ pub async fn fetch(cache_dir: &Path) -> Result<PricingDataset, reqwest::Error> {
     fetch_compatible(cache_dir, true, &mut diagnostics).await
 }
 
-pub(crate) async fn fetch_with_diagnostics(
-    cache_dir: &Path,
-    diagnostics: &mut PricingDiagnostics,
-) -> Result<PricingDataset, reqwest::Error> {
-    let mut diagnostics = Some(diagnostics);
-    fetch_compatible(cache_dir, true, &mut diagnostics).await
-}
-
 pub(crate) async fn refresh_with_diagnostics(
     cache_dir: &Path,
     diagnostics: &mut PricingDiagnostics,
@@ -138,118 +128,54 @@ async fn fetch_inner(
         }
     }
 
-    let client = client_builder
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()?;
-
-    let mut last_error: Option<reqwest::Error> = None;
-
-    for attempt in 0..MAX_RETRIES {
-        match client.get(url).send().await {
-            Ok(response) => {
-                let status = response.status();
-
-                if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    emit_warning(
-                        diagnostics,
-                        format!(
-                            "[tokenx] models.dev HTTP {} (attempt {}/{})",
-                            status,
-                            attempt + 1,
-                            MAX_RETRIES
-                        ),
-                    );
-                    if attempt == MAX_RETRIES - 1 {
-                        return Err(response.error_for_status().unwrap_err().into());
-                    }
-                    let _ = response.bytes().await;
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        INITIAL_BACKOFF_MS * (1 << attempt),
-                    ))
-                    .await;
-                    continue;
-                }
-
-                if !status.is_success() {
-                    emit_warning(diagnostics, format!("[tokenx] models.dev HTTP {status}"));
-                    return Err(response.error_for_status().unwrap_err().into());
-                }
-
-                let content = match response.text().await {
-                    Ok(content) => content,
-                    Err(error) => {
-                        emit_warning(
-                            diagnostics,
-                            format!(
-                                "[tokenx] models.dev response body error (attempt {}/{}): {}",
-                                attempt + 1,
-                                MAX_RETRIES,
-                                error
-                            ),
-                        );
-                        last_error = Some(error);
-                        if attempt < MAX_RETRIES - 1 {
-                            tokio::time::sleep(std::time::Duration::from_millis(
-                                INITIAL_BACKOFF_MS * (1 << attempt),
-                            ))
-                            .await;
-                            continue;
-                        }
-                        break;
-                    }
-                };
-                match parse_dataset(&content) {
-                    Ok(data) => {
-                        if let Err(e) = cache::save_cache(cache_dir, CACHE_FILENAME, &data) {
-                            let cache_path = cache::get_cache_path(cache_dir, CACHE_FILENAME)
-                                .display()
-                                .to_string();
-                            emit_warning(
-                                diagnostics,
-                                format!(
-                                    "[tokenx] Warning: Failed to cache models.dev pricing at {}: {}",
-                                    cache_path,
-                                    e
-                                ),
-                            );
-                        }
-                        return Ok(data);
-                    }
-                    Err(e) => {
-                        emit_warning(
-                            diagnostics,
-                            format!("[tokenx] models.dev JSON parse failed: {e}"),
-                        );
-                        return Err(FetchError::InvalidCatalog(e));
-                    }
-                }
-            }
-            Err(e) => {
+    let client = http::build_client(client_builder)?;
+    for attempt in 0..http::MAX_ATTEMPTS {
+        let Some(response) =
+            http::request_attempt(&client, url, "models.dev", attempt, diagnostics).await?
+        else {
+            continue;
+        };
+        let content = match response.text().await {
+            Ok(content) => content,
+            Err(error) => {
                 emit_warning(
                     diagnostics,
                     format!(
-                        "[tokenx] models.dev network error (attempt {}/{}): {}",
+                        "[tokenx] models.dev response body error (attempt {}/{}): {error}",
                         attempt + 1,
-                        MAX_RETRIES,
-                        e
+                        http::MAX_ATTEMPTS,
                     ),
                 );
-                last_error = Some(e);
-                if attempt < MAX_RETRIES - 1 {
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        INITIAL_BACKOFF_MS * (1 << attempt),
-                    ))
-                    .await;
+                if attempt == http::MAX_ATTEMPTS - 1 {
+                    return Err(error.into());
                 }
+                http::retry_delay(attempt).await;
+                continue;
             }
+        };
+        let data = match parse_dataset(&content) {
+            Ok(data) => data,
+            Err(error) => {
+                emit_warning(
+                    diagnostics,
+                    format!("[tokenx] models.dev JSON parse failed: {error}"),
+                );
+                return Err(FetchError::InvalidCatalog(error));
+            }
+        };
+        if let Err(error) = cache::save_cache(cache_dir, CACHE_FILENAME, &data) {
+            let cache_path = cache::get_cache_path(cache_dir, CACHE_FILENAME);
+            emit_warning(
+                diagnostics,
+                format!(
+                    "[tokenx] Warning: Failed to cache models.dev pricing at {}: {error}",
+                    cache_path.display(),
+                ),
+            );
         }
+        return Ok(data);
     }
-
-    match last_error {
-        Some(error) => Err(error.into()),
-        None => Ok(HashMap::new()),
-    }
+    unreachable!("the final HTTP attempt returns a dataset or an error")
 }
 
 fn map_providers(providers: HashMap<String, Provider>) -> PricingDataset {
@@ -311,9 +237,56 @@ fn per_token(value: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
+    use std::io::{BufRead, Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    #[tokio::test]
+    async fn body_and_status_failures_share_the_same_attempt_budget() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            for response in [
+                "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{",
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{",
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = std::io::BufReader::new(&mut stream);
+                loop {
+                    let mut header = String::new();
+                    assert_ne!(request.read_line(&mut header).unwrap(), 0);
+                    if header == "\r\n" {
+                        break;
+                    }
+                }
+                drop(request);
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let cache_dir = tempfile::TempDir::new().unwrap();
+        let mut diagnostics = Vec::new();
+        let result = fetch_inner(
+            reqwest::Client::builder().no_proxy(),
+            cache_dir.path(),
+            &url,
+            false,
+            &mut Some(&mut diagnostics),
+        )
+        .await;
+        server.join().unwrap();
+
+        assert!(matches!(result, Err(FetchError::Request(_))));
+        assert_eq!(diagnostics.len(), 3);
+        assert!(diagnostics[0]
+            .message()
+            .contains("response body error (attempt 1/3)"));
+        assert!(diagnostics[1].message().contains("models.dev HTTP 503"));
+        assert!(diagnostics[2]
+            .message()
+            .contains("response body error (attempt 3/3)"));
+        assert!(!cache_dir.path().join(CACHE_FILENAME).exists());
+    }
 
     #[test]
     fn context_tiers_preserve_published_rates_without_inventing_duration_prices() {
@@ -349,7 +322,7 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
 
         thread::spawn(move || {
-            for _ in 0..MAX_RETRIES {
+            for _ in 0..http::MAX_ATTEMPTS {
                 let Ok((mut stream, _)) = listener.accept() else {
                     return;
                 };

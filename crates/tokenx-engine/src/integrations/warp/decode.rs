@@ -489,7 +489,7 @@ mod tests {
         .unwrap();
 
         let mut messages = parse_warp_sqlite(&db_path).unwrap().messages;
-        crate::finalize_message_identities(&mut messages);
+        crate::finalization::test_support::finalize_message_identities(&mut messages);
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].session_id.as_ref(), "conversation-1");

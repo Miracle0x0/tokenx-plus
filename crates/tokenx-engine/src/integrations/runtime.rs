@@ -132,7 +132,7 @@ impl<'a> FoldContext<'a> {
         };
         let mut reparsed = self.binding.driver.parse_inputs(
             vec![unit],
-            &ParseContext::new(self.pricing, self.calendar, &self.cancellation),
+            &ParseContext::new(self.calendar, &self.cancellation),
         );
         if reparsed.len() != 1 {
             return Err(InputPipelineError::contract(format!(

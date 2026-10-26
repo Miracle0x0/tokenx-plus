@@ -68,7 +68,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
@@ -513,7 +513,7 @@ mod tests {
         let units = paths.into_iter().map(kiro_global_unit).collect::<Vec<_>>();
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(units),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let mut cache = crate::input_record_cache::InputRecordShardStore::default();
         let mut messages = Vec::new();
@@ -540,7 +540,7 @@ mod tests {
 
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(vec![kiro_file_unit(path)]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
 
         let health = &parsed[0].health;
@@ -577,7 +577,7 @@ mod tests {
 
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
 
         let health = &parsed[0].health;

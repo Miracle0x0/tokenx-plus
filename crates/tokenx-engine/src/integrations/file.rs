@@ -126,7 +126,7 @@ impl IntegrationDriver for CachedFileDriver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         let parse = self.parse;
         units
@@ -224,7 +224,7 @@ not-json
     }
 
     fn finalized(client: ClientId, mut messages: Vec<UsageRecord>) -> Vec<AttributedUsageRecord> {
-        crate::finalize_message_identities(&mut messages);
+        crate::finalization::test_support::finalize_message_identities(&mut messages);
         let messages: Vec<_> = messages
             .into_iter()
             .map(|message| message.attribute(client))
@@ -253,7 +253,7 @@ not-json
         units: Vec<crate::integrations::ExecutionInput>,
         cache: &mut input_record_cache::InputRecordShardStore,
     ) -> Vec<AttributedUsageRecord> {
-        let parsed = driver.parse_inputs(units, &ParseContext::uncancelled(None));
+        let parsed = driver.parse_inputs(units, &ParseContext::uncancelled());
         let (sink, _) = fold_parsed(client, driver, parsed, cache);
         assert!(sink.iter().all(|message| message.client == client));
         sink
@@ -407,7 +407,7 @@ model = "claude-sonnet-4"
 
         let parsed = KIMI_ADAPTER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         assert_eq!(parsed.len(), 1);
         assert!(matches!(
@@ -663,7 +663,7 @@ model = "claude-sonnet-4"
 
         let parsed = COMMANDCODE_ADAPTER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         assert_eq!(parsed.len(), 1);
         assert!(matches!(
@@ -699,7 +699,7 @@ model = "claude-sonnet-4"
 
         let parsed = QWEN_ADAPTER.parse_inputs(
             vec![unit.clone().into_lookup_miss()],
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         assert_eq!(parsed.len(), 1);
         let health = &parsed[0].health;
@@ -749,7 +749,7 @@ model = "claude-sonnet-4"
 
         let parsed = GROK_ADAPTER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit.clone()]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let health = &parsed[0].health;
         assert!(matches!(
@@ -801,7 +801,7 @@ model = "claude-sonnet-4"
         let mut cache = input_record_cache::InputRecordShardStore::default();
         let parsed = GROK_ADAPTER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit.clone()]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let (sink, _) = fold_parsed(ClientId::Grok, &GROK_ADAPTER, parsed, &mut cache);
         assert_eq!(sink.len(), 1);
@@ -840,7 +840,7 @@ model = "claude-sonnet-4"
 
         let parsed = GROK_ADAPTER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let health = &parsed[0].health;
         assert!(matches!(
@@ -879,7 +879,7 @@ model = "claude-sonnet-4"
 
         let parsed = DROID_ADAPTER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
 
         assert_eq!(parsed.len(), 1);
@@ -1064,7 +1064,7 @@ model = "claude-sonnet-4"
 
         let parsed = DROID_ADAPTER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         assert_eq!(parsed.len(), 1);
         assert!(matches!(
@@ -1235,7 +1235,7 @@ model = "claude-sonnet-4"
         )];
         let parsed = GEMINI_ADAPTER.parse_inputs(
             crate::integrations::test_execute_all(units),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
 
         assert_eq!(parsed.len(), 1);

@@ -941,7 +941,7 @@ impl RawClaudeScan {
                 .cache_write_1h
                 .min(message.tokens.cache_write);
         }
-        messages.retain(|message| crate::has_positive_tokens(&message.tokens));
+        messages.retain(|message| crate::finalization::has_positive_tokens(&message.tokens));
         if let Some(snapshot) = state.last_cost_state {
             messages.extend(snapshot.records);
             rejections.merge(&snapshot.rejections);
@@ -1170,7 +1170,7 @@ pub(super) fn parse_claude_reader(
                     .as_ref()
                     .map(ClaudeUsage::tokens)
                     .unwrap_or_default();
-                if crate::positive_token_total(&token_breakdown).is_none() {
+                if crate::finalization::positive_token_total(&token_breakdown).is_none() {
                     let error = SessionParseError::at_path(
                         path,
                         "validate Claude assistant usage",
@@ -1189,7 +1189,7 @@ pub(super) fn parse_claude_reader(
                     );
                     continue;
                 }
-                let has_positive_usage = crate::has_positive_tokens(&token_breakdown);
+                let has_positive_usage = crate::finalization::has_positive_tokens(&token_breakdown);
 
                 if message
                     .model
@@ -1490,7 +1490,7 @@ fn advisor_records(
             continue;
         };
         let tokens = usage.tokens();
-        if crate::positive_token_total(&tokens).is_none() {
+        if crate::finalization::positive_token_total(&tokens).is_none() {
             rejections.record(RecordRejectionReason::MalformedRecord);
             continue;
         }

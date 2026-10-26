@@ -57,7 +57,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         let project_resolver = units
             .iter()
@@ -241,7 +241,9 @@ impl ClaudeFold {
             } = incremental::resolve_unit(parsed_unit, ctx)?;
             let path = unit.path.clone();
             ctx.label_records(&path, &mut messages);
-            rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+            rejections.merge(&crate::finalization::retain_source_eligible_messages(
+                &mut messages,
+            ));
             let cache_write =
                 cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
             let cache_write_outcome = pipeline_cache::write_cache(cache_write, ctx, &messages);
@@ -286,8 +288,8 @@ impl ClaudeFold {
             let (next_input, message) =
                 entry.map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?;
             if matches!(
-                crate::record_finalization(&message),
-                crate::RecordFinalization::Accept
+                crate::finalization::record_finalization(&message),
+                crate::finalization::RecordFinalization::Accept
             ) {
                 self.cost_states.subtract_transcript(&message);
             }
@@ -320,8 +322,10 @@ impl ClaudeFold {
     ) {
         // Maxima from valid records may together overflow; revalidate before
         // pricing. Shards retain each input's unmerged, cost-free observations.
-        rejections.merge(&crate::retain_source_eligible_messages(messages));
-        rejections.merge(&crate::price_source_eligible_messages(
+        rejections.merge(&crate::finalization::retain_source_eligible_messages(
+            messages,
+        ));
+        rejections.merge(&crate::finalization::price_source_eligible_messages(
             messages,
             ctx.pricing,
             &ctx.model_mappings,
@@ -445,7 +449,7 @@ mod tests {
         unit: crate::integrations::ExecutionInput,
         cache: &mut input_record_cache::InputRecordShardStore,
     ) -> (Vec<crate::AttributedUsageRecord>, InputHealth) {
-        let parsed = DRIVER.parse_inputs(vec![unit], &ParseContext::uncancelled(None));
+        let parsed = DRIVER.parse_inputs(vec![unit], &ParseContext::uncancelled());
         let health = input_health(&parsed[0]);
         let messages = fold_parsed(parsed, cache);
         (messages, health)
@@ -463,7 +467,7 @@ mod tests {
     fn finalized(
         mut messages: Vec<crate::records::UsageRecord>,
     ) -> Vec<crate::AttributedUsageRecord> {
-        crate::finalize_message_identities(&mut messages);
+        crate::finalization::test_support::finalize_message_identities(&mut messages);
         messages
             .into_iter()
             .map(|message| message.attribute(ClientId::Claude))
@@ -599,7 +603,7 @@ mod tests {
 
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(sidechains),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let mut cache = input_record_cache::InputRecordShardStore::default();
         let messages = fold_parsed(parsed, &mut cache);
@@ -638,7 +642,7 @@ mod tests {
 
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(sidechains),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
 
         assert_eq!(parsed.len(), 2);
@@ -751,7 +755,7 @@ mod tests {
                         crate::integrations::CacheHitPlan::Hit(parsed) => parsed,
                         _ => panic!("first input must remain a cache hit"),
                     };
-                    let mut second = DRIVER.parse_inputs(vec![changed.into_lookup_miss()], &ParseContext::uncancelled(None));
+                    let mut second = DRIVER.parse_inputs(vec![changed.into_lookup_miss()], &ParseContext::uncancelled());
                     let mixed = fold_parsed(vec![first, second.remove(0)], &mut cache);
                     assert_eq!(mixed.len(), 1);
                     assert_eq!(mixed[0].tokens, cold[0].tokens);
@@ -903,7 +907,7 @@ mod tests {
         let unit = input_unit(session_path.clone(), home.path().to_path_buf());
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let actual = fold_parsed(parsed, &mut cache);
 
@@ -934,7 +938,7 @@ mod tests {
 
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
 
         assert_eq!(parsed.len(), 1);
@@ -983,7 +987,7 @@ mod tests {
 
         let cold = DRIVER.parse_inputs(
             vec![unit.clone().into_lookup_miss()],
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         assert_eq!(cold[0].health.rejections.total(), 1);
         let messages = fold_parsed(cold, &mut cache);

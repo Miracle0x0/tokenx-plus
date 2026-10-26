@@ -80,7 +80,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
@@ -230,7 +230,9 @@ fn fold_codex_units(
             status = health.status;
             rejections = health.rejections;
         }
-        rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+        rejections.merge(&crate::finalization::retain_source_eligible_messages(
+            &mut messages,
+        ));
         let cache_write = cache_write
             .or(extra_write)
             .map(|plan| Box::new(plan.with_rejections(rejections.clone())));
@@ -253,7 +255,7 @@ fn fold_codex_units(
         rejections.merge(&pipeline_cache::emit_messages(
             messages
                 .into_iter()
-                .filter(|message| crate::should_keep_deduped_message(seen, message)),
+                .filter(|message| crate::finalization::should_keep_deduped_message(seen, message)),
             sink,
         ));
         ctx.record_health(path.clone(), status, rejections);
@@ -385,7 +387,7 @@ fn finalize_codex_messages(
     pricing: Option<&pricing::PricingService>,
     model_mappings: &crate::ModelMappings,
 ) -> crate::input_health::RejectionSummary {
-    crate::price_source_eligible_messages(messages, pricing, model_mappings)
+    crate::finalization::price_source_eligible_messages(messages, pricing, model_mappings)
 }
 
 struct CodexCacheMaterial {
@@ -908,7 +910,7 @@ mod tests {
         units: Vec<DiscoveredInput>,
         cache: &mut input_record_cache::InputRecordShardStore,
     ) -> Vec<AttributedUsageRecord> {
-        let parsed = plan_and_parse(units, cache, None);
+        let parsed = plan_and_parse(units, cache);
         fold_parsed(parsed, cache)
     }
 
@@ -917,7 +919,7 @@ mod tests {
         cache: &mut input_record_cache::InputRecordShardStore,
         pricing: &PricingService,
     ) -> Vec<AttributedUsageRecord> {
-        let parsed = plan_and_parse(units, cache, Some(pricing));
+        let parsed = plan_and_parse(units, cache);
         let mut sink = Vec::new();
         fold_codex_into(
             parsed,
@@ -932,7 +934,6 @@ mod tests {
     fn plan_and_parse(
         units: Vec<DiscoveredInput>,
         cache: &input_record_cache::InputRecordShardStore,
-        pricing: Option<&PricingService>,
     ) -> Vec<ParsedUnit> {
         let mut parsed = Vec::with_capacity(units.len());
         for unit in units {
@@ -945,8 +946,9 @@ mod tests {
                 .expect("Codex cache planning must succeed")
             {
                 CacheHitPlan::Hit(hit) => parsed.push(hit),
-                CacheHitPlan::Miss(miss) => parsed
-                    .extend(DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled(pricing))),
+                CacheHitPlan::Miss(miss) => {
+                    parsed.extend(DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled()))
+                }
             }
         }
         parsed
@@ -1276,7 +1278,7 @@ mod tests {
 
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(vec![codex_unit(&path)]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
 
         assert_eq!(parsed.len(), 1);
@@ -1318,7 +1320,7 @@ mod tests {
 
         let mut cache =
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_home.path());
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &cache);
         let health = &parsed[0].health;
         assert!(matches!(
             health.status,
@@ -1361,7 +1363,7 @@ mod tests {
 
         let mut cache =
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_home.path());
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &cache);
         let health = &parsed[0].health;
         assert!(matches!(
             health.status,
@@ -1401,7 +1403,7 @@ mod tests {
 
         let mut cache =
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_home.path());
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &cache);
         let health = &parsed[0].health;
         assert!(matches!(health.status, InputStatus::Partial { .. }));
         assert_eq!(health.rejections.total(), 1);
@@ -1593,7 +1595,7 @@ mod tests {
 
         let mut append_cache =
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_home.path());
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &append_cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &append_cache);
         let mut appended_messages = Vec::new();
         let mut append_ctx = codex_fold_context(&mut append_cache, None);
         fold_codex_into(parsed, &mut append_ctx, &mut appended_messages).unwrap();
@@ -1635,7 +1637,7 @@ mod tests {
 
         let mut append_cache =
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_home.path());
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &append_cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &append_cache);
         let health = &parsed[0].health;
         assert!(matches!(health.status, InputStatus::Complete));
         assert_eq!(health.rejections.total(), 1);
@@ -1677,7 +1679,7 @@ mod tests {
 
         let mut append_cache =
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_home.path());
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &append_cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &append_cache);
         let health = &parsed[0].health;
         assert!(matches!(health.status, InputStatus::Partial { .. }));
         assert_eq!(health.rejections.total(), 1);
@@ -1723,7 +1725,7 @@ mod tests {
 
         let mut append_cache =
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_home.path());
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &append_cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &append_cache);
         let health = &parsed[0].health;
         assert!(matches!(health.status, InputStatus::Partial { .. }));
         assert_eq!(health.rejections.total(), 1);
@@ -1955,7 +1957,7 @@ mod tests {
         assert_eq!(parse_and_fold(vec![codex_unit(&path)], &mut cache).len(), 1);
         input_record_cache::reset_input_read_stats(&path);
 
-        let parsed = DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled(None));
+        let parsed = DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled());
 
         assert!(matches!(
             parsed[0].messages,
@@ -1992,7 +1994,7 @@ mod tests {
         let mut warm_cache =
             input_record_cache::InputRecordShardStore::with_cache_dir(cache_home.path());
         input_record_cache::reset_input_read_stats(&path);
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &warm_cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &warm_cache);
         assert!(matches!(
             parsed[0].messages,
             UnitRecordPayload::CodexCacheHit(_)
@@ -2054,7 +2056,7 @@ mod tests {
             miss.snapshot().unwrap(),
             &miss.input_policy().snapshot().unwrap()
         );
-        let parsed = DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled(None));
+        let parsed = DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled());
 
         assert_eq!(parsed.len(), 1);
         assert!(matches!(
@@ -2151,7 +2153,7 @@ mod tests {
             "persisted file identity must reject the replaced input",
         );
         let reparsed = fold_parsed(
-            DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled(None)),
+            DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled()),
             &mut cache,
         );
         assert_eq!(reparsed[0].tokens.input, 9);
@@ -2176,14 +2178,14 @@ mod tests {
         let expected = parser_messages(&path);
 
         let mut cache_a = input_record_cache::InputRecordShardStore::load().unwrap();
-        let parsed_a = plan_and_parse(vec![codex_unit(&path)], &cache_a, None);
+        let parsed_a = plan_and_parse(vec![codex_unit(&path)], &cache_a);
         assert!(matches!(
             parsed_a[0].messages,
             UnitRecordPayload::CodexAppend(_)
         ));
 
         let mut cache_b = input_record_cache::InputRecordShardStore::load().unwrap();
-        let parsed_b = plan_and_parse(vec![codex_unit(&path)], &cache_b, None);
+        let parsed_b = plan_and_parse(vec![codex_unit(&path)], &cache_b);
         assert!(matches!(
             parsed_b[0].messages,
             UnitRecordPayload::CodexAppend(_)
@@ -2221,7 +2223,7 @@ mod tests {
         let expected = parser_messages(&path);
 
         let mut cache = input_record_cache::InputRecordShardStore::load().unwrap();
-        let parsed = plan_and_parse(vec![codex_unit(&path)], &cache, None);
+        let parsed = plan_and_parse(vec![codex_unit(&path)], &cache);
         assert!(matches!(
             parsed[0].messages,
             UnitRecordPayload::CodexAppend(_)

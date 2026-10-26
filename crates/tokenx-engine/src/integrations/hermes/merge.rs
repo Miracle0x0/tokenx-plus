@@ -57,7 +57,9 @@ impl HermesFold {
                 mut rejections,
                 ..
             } = cache::resolve_unit(unit, ctx)?;
-            rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+            rejections.merge(&crate::finalization::retain_source_eligible_messages(
+                &mut messages,
+            ));
             let mut groups: BTreeMap<GroupKey, Vec<UsageRecord>> = BTreeMap::new();
             let mut counts: BTreeMap<Arc<str>, i32> = BTreeMap::new();
             for record in messages {
@@ -149,7 +151,7 @@ impl HermesFold {
                 first.message_count = self.counts.remove(&key.0).unwrap_or(0);
             }
             let rejections = &mut self.health[candidate.owner].2;
-            rejections.merge(&crate::price_source_eligible_messages(
+            rejections.merge(&crate::finalization::price_source_eligible_messages(
                 &mut records,
                 ctx.pricing,
                 &ctx.model_mappings,

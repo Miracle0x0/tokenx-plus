@@ -270,14 +270,6 @@ impl CustomPricing {
         Self::load_from_path_with_sink(path, &mut diagnostics)
     }
 
-    pub(crate) fn load_from_path_with_diagnostics(
-        path: &Path,
-        diagnostics: &mut PricingDiagnostics,
-    ) -> Self {
-        let mut diagnostics = Some(diagnostics);
-        Self::load_from_path_with_sink(path, &mut diagnostics)
-    }
-
     pub(crate) fn load_from_bytes_with_diagnostics(
         bytes: &[u8],
         path: &Path,
@@ -912,7 +904,7 @@ mod tests {
         fs::write(&path, r#"{"models": {"#).unwrap();
         let mut diagnostics = Vec::new();
 
-        let loaded = CustomPricing::load_from_path_with_diagnostics(&path, &mut diagnostics);
+        let loaded = CustomPricing::load_from_path_with_sink(&path, &mut Some(&mut diagnostics));
 
         assert!(loaded.is_empty());
         assert_eq!(diagnostics.len(), 1);
@@ -1094,7 +1086,7 @@ mod tests {
         file.set_len(MAX_CUSTOM_PRICING_FILE_BYTES + 1).unwrap();
         let mut diagnostics = Vec::new();
 
-        let loaded = CustomPricing::load_from_path_with_diagnostics(&path, &mut diagnostics);
+        let loaded = CustomPricing::load_from_path_with_sink(&path, &mut Some(&mut diagnostics));
 
         assert!(loaded.is_empty());
         assert_eq!(diagnostics.len(), 1);

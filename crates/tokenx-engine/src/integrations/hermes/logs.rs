@@ -145,7 +145,8 @@ fn parse_call(line: &str, calendar: CalendarContext) -> Result<Option<Call>, ()>
         cache_write,
         ..Default::default()
     };
-    if number < 0 || timestamp <= 0 || crate::positive_token_total(&tokens).is_none() {
+    if number < 0 || timestamp <= 0 || crate::finalization::positive_token_total(&tokens).is_none()
+    {
         return Err(());
     }
     let model = model.filter(|model| !model.is_empty()).ok_or(())?;
@@ -260,7 +261,7 @@ fn split(record: &UsageRecord, calls: &[Call]) -> Option<Vec<UsageRecord>> {
         cache_write: record.tokens.cache_write.checked_sub(summed.cache_write)?,
         ..Default::default()
     };
-    crate::positive_token_total(&residual)?;
+    crate::finalization::positive_token_total(&residual)?;
     let mut parts = Vec::new();
     for call in calls {
         if call.tokens.checked_total()? == 0 {

@@ -40,7 +40,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
@@ -103,11 +103,13 @@ fn fold_antigravity_units(
             mut rejections,
         } = pipeline_cache::resolve_unit(parsed_unit, ctx)?;
         let path = unit.path.clone();
-        rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+        rejections.merge(&crate::finalization::retain_source_eligible_messages(
+            &mut messages,
+        ));
         let cache_write =
             cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
         let cache_write_outcome = pipeline_cache::write_cache(cache_write, ctx, &messages);
-        rejections.merge(&crate::price_source_eligible_messages(
+        rejections.merge(&crate::finalization::price_source_eligible_messages(
             &mut messages,
             ctx.pricing,
             &ctx.model_mappings,
@@ -115,7 +117,7 @@ fn fold_antigravity_units(
         rejections.merge(&pipeline_cache::emit_messages(
             messages
                 .into_iter()
-                .filter(|message| crate::should_keep_deduped_message(seen, message)),
+                .filter(|message| crate::finalization::should_keep_deduped_message(seen, message)),
             sink,
         ));
         ctx.record_health(unit.path.clone(), status, rejections);

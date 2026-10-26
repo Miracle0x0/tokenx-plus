@@ -93,7 +93,7 @@ pub(super) fn plan_cache_hit(
 pub(super) fn parse_unit(
     mut unit: ExecutionInput,
     resolver: &ClaudeProjectResolver,
-    ctx: &ParseContext<'_>,
+    ctx: &ParseContext,
 ) -> ParsedUnit {
     if decode::is_workflow_journal(&unit.path) {
         return cache::load_or_scan_unit_with(unit, ctx, |path| {

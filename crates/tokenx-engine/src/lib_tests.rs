@@ -1,12 +1,21 @@
 use super::{
-    apply_canonical_token_pricing, finalize_token_priced_messages, input_record_cache,
-    load_test_usage, load_test_usage_with_health, normalize_model_for_grouping,
+    input_record_cache, normalize_model_for_grouping, pricing, scanner, AcquisitionConfig,
+    AcquisitionEngine, AttributedUsageRecord, ClientId, ClientUniverse, DateRange, GroupBy,
+    PreparedAcquisition, TokenBreakdown, UNKNOWN_WORKSPACE_LABEL,
+};
+use crate::acquisition::test_support::{
+    filter_usage_records, fold_prepared_local_inputs_with_pricing, input_cache_dir_for_test_home,
+    load_prepared_test_usage, load_test_usage, load_test_usage_with_health,
     parse_all_messages_with_health, parse_all_messages_with_health_with_settings,
     parse_all_messages_with_pricing, parse_all_messages_with_pricing_with_settings,
-    positive_token_total, pricing, scanner, AcquisitionConfig, AcquisitionEngine,
-    AttributedUsageRecord, ClientId, ClientUniverse, DateRange, GroupBy, PreparedAcquisition,
-    TestAcquisitionRequest, TokenBreakdown, UNKNOWN_WORKSPACE_LABEL,
+    prepare_test_inventory, TestAcquisitionRequest,
 };
+use crate::acquisition::{
+    inventory_input_footprint, prepare_selected_integrations, source_fingerprint,
+    PreparedIntegrationOutcome,
+};
+use crate::finalization::test_support::finalize_token_priced_messages;
+use crate::finalization::{apply_canonical_token_pricing, positive_token_total};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::Write;
@@ -67,11 +76,10 @@ impl TestClientCounts {
 fn load_local_messages_for_test(
     options: TestAcquisitionRequest,
 ) -> Result<LocalMessagesForTest, super::AcquisitionError> {
-    let prepared = super::prepare_test_inventory(options.clone())?;
+    let prepared = prepare_test_inventory(options.clone())?;
     let mut messages = Vec::new();
-    let health =
-        super::fold_prepared_local_inputs_with_pricing(prepared, None, &mut messages)?.health;
-    let messages = super::filter_usage_records(messages, &options);
+    let health = fold_prepared_local_inputs_with_pricing(prepared, None, &mut messages)?.health;
+    let messages = filter_usage_records(messages, &options);
     let counts = TestClientCounts::from_messages(&messages);
     Ok(LocalMessagesForTest {
         messages,
@@ -81,9 +89,7 @@ fn load_local_messages_for_test(
 }
 
 fn input_cache_for_test_home(home: &Path) -> input_record_cache::InputRecordShardStore {
-    input_record_cache::InputRecordShardStore::with_cache_dir(
-        &super::input_cache_dir_for_test_home(home),
-    )
+    input_record_cache::InputRecordShardStore::with_cache_dir(&input_cache_dir_for_test_home(home))
 }
 
 fn test_decoder(decoder_id: input_record_cache::DecoderId) -> crate::integrations::DecoderKind {
@@ -120,14 +126,14 @@ fn parse_all_messages_with_pricing_in_cache(
         .iter()
         .map(|client| ClientId::from_str(client).unwrap())
         .collect();
-    let mut prepared = super::prepare_test_inventory(TestAcquisitionRequest {
+    let mut prepared = prepare_test_inventory(TestAcquisitionRequest {
         home_dir: Some(PathBuf::from(home_dir)),
         clients: Some(clients),
         ..TestAcquisitionRequest::default()
     })?;
     prepared.input_cache_dir = cache_dir.to_path_buf();
     let mut messages = Vec::new();
-    super::fold_prepared_local_inputs_with_pricing(prepared, None, &mut messages)?;
+    fold_prepared_local_inputs_with_pricing(prepared, None, &mut messages)?;
     Ok(messages)
 }
 
@@ -399,14 +405,11 @@ fn generation_carries_prepared_input_footprint() {
         pricing.context().clone(),
     )
     .unwrap();
-    let generation = super::AcquisitionEngine::new(
-        config,
-        pricing,
-        super::input_cache_dir_for_test_home(home.path()),
-    )
-    .unwrap()
-    .acquire()
-    .unwrap();
+    let generation =
+        super::AcquisitionEngine::new(config, pricing, input_cache_dir_for_test_home(home.path()))
+            .unwrap()
+            .acquire()
+            .unwrap();
 
     assert_ne!(generation.source_fingerprint().as_bytes(), &[0_u8; 32]);
     let footprint = generation.input_footprint();
@@ -433,11 +436,11 @@ fn disabled_input_cache_reports_one_global_issue_and_retries_next_acquisition() 
         ..TestAcquisitionRequest::default()
     };
     let acquire = |cache_path: &Path| {
-        let mut prepared = super::prepare_test_inventory(request.clone()).unwrap();
+        let mut prepared = prepare_test_inventory(request.clone()).unwrap();
         prepared.input_cache_dir = cache_path.to_path_buf();
         let mut messages = Vec::new();
         let outcome =
-            super::fold_prepared_local_inputs_with_pricing(prepared, None, &mut messages).unwrap();
+            fold_prepared_local_inputs_with_pricing(prepared, None, &mut messages).unwrap();
         (messages, outcome.health.summarize())
     };
 
@@ -1646,16 +1649,15 @@ fn kimi_unavailable_optional_config_preserves_current_wire_usage_in_production_p
     write_kimi_code_usage_fixture(input_home.path());
 
     let options = inventory_options(input_home.path(), &["kimi"]);
-    let prepared = super::prepare_test_inventory(options.clone()).unwrap();
+    let prepared = prepare_test_inventory(options.clone()).unwrap();
     let wire_path = input_home
         .path()
         .join(".kimi-code/sessions/wd-project/session_1/agents/main/wire.jsonl");
     let decoder_version = prepared.groups[0].units[0].decoder.version();
     let mut cold_messages = Vec::new();
-    let cold_health =
-        super::fold_prepared_local_inputs_with_pricing(prepared, None, &mut cold_messages)
-            .unwrap()
-            .health;
+    let cold_health = fold_prepared_local_inputs_with_pricing(prepared, None, &mut cold_messages)
+        .unwrap()
+        .health;
     assert_eq!(cold_messages.len(), 2);
     assert_eq!(cold_health.issue_count(), 0);
     assert!(input_cache_for_test_home(input_home.path())
@@ -1663,18 +1665,18 @@ fn kimi_unavailable_optional_config_preserves_current_wire_usage_in_production_p
         .unwrap()
         .is_some());
 
-    let prepared = super::prepare_test_inventory(options.clone()).unwrap();
+    let prepared = prepare_test_inventory(options.clone()).unwrap();
     let regular_config_signature = prepared.source_fingerprint();
     let config_path = input_home.path().join(".kimi-code/config.toml");
     std::fs::remove_file(&config_path).unwrap();
     std::fs::create_dir(&config_path).unwrap();
-    let prepared = super::prepare_test_inventory(options).unwrap();
+    let prepared = prepare_test_inventory(options).unwrap();
     let unavailable_config_signature = prepared.source_fingerprint();
     assert_ne!(regular_config_signature, unavailable_config_signature);
     assert_eq!(prepared.health.failed_inputs(), 0);
 
     let mut messages = Vec::new();
-    let health = super::fold_prepared_local_inputs_with_pricing(prepared, None, &mut messages)
+    let health = fold_prepared_local_inputs_with_pricing(prepared, None, &mut messages)
         .unwrap()
         .health;
     assert_eq!(messages.len(), 2);
@@ -1813,8 +1815,7 @@ fn prepare_generation_sources(
     )
     .unwrap();
     let engine =
-        AcquisitionEngine::new(config, pricing, super::input_cache_dir_for_test_home(home))
-            .unwrap();
+        AcquisitionEngine::new(config, pricing, input_cache_dir_for_test_home(home)).unwrap();
     let sources = engine.prepare().unwrap();
     (engine, sources)
 }
@@ -1832,7 +1833,7 @@ fn signature_for_test_units(
             .collect(),
     );
     let universe = ClientUniverse::new(requested_clients.iter().copied()).unwrap();
-    super::source_fingerprint(&universe, &[group])
+    source_fingerprint(&universe, &[group])
 }
 
 fn prepared_test_group(
@@ -1864,7 +1865,7 @@ fn input_footprint_counts_related_inputs_once_by_file_identity() {
 
     let group = prepared_test_group(ClientId::Amp, vec![with_dependency, duplicate]);
     let universe = ClientUniverse::new([ClientId::Amp]).unwrap();
-    let footprint = super::inventory_input_footprint(&universe, std::slice::from_ref(&group));
+    let footprint = inventory_input_footprint(&universe, std::slice::from_ref(&group));
     assert_eq!(footprint.bytes_for(ClientId::Amp), 13);
 }
 
@@ -1877,10 +1878,9 @@ fn prepared_inventory_is_stable_sensitive_and_reads_no_input_bytes() {
     std::fs::write(&first, r#"{"id":"amp-first"}"#).unwrap();
     input_record_cache::reset_input_read_stats(&first);
 
-    let first_inventory =
-        super::prepare_test_inventory(inventory_options(home.path(), &["amp"])).unwrap();
+    let first_inventory = prepare_test_inventory(inventory_options(home.path(), &["amp"])).unwrap();
     let first_signature = first_inventory.source_fingerprint();
-    let second_signature = super::prepare_test_inventory(inventory_options(home.path(), &["amp"]))
+    let second_signature = prepare_test_inventory(inventory_options(home.path(), &["amp"]))
         .unwrap()
         .source_fingerprint();
     assert_eq!(first_signature, second_signature);
@@ -1891,18 +1891,18 @@ fn prepared_inventory_is_stable_sensitive_and_reads_no_input_bytes() {
     );
 
     std::fs::write(&first, r#"{"id":"amp-first","grew":true}"#).unwrap();
-    let changed = super::prepare_test_inventory(inventory_options(home.path(), &["amp"]))
+    let changed = prepare_test_inventory(inventory_options(home.path(), &["amp"]))
         .unwrap()
         .source_fingerprint();
     assert_ne!(first_signature, changed);
 
     std::fs::write(amp_dir.join("T-second.json"), r#"{"id":"amp-second"}"#).unwrap();
-    let added = super::prepare_test_inventory(inventory_options(home.path(), &["amp"]))
+    let added = prepare_test_inventory(inventory_options(home.path(), &["amp"]))
         .unwrap()
         .source_fingerprint();
     assert_ne!(changed, added);
 
-    let other_client = super::prepare_test_inventory(inventory_options(home.path(), &["claude"]))
+    let other_client = prepare_test_inventory(inventory_options(home.path(), &["claude"]))
         .unwrap()
         .source_fingerprint();
     assert_ne!(added, other_client);
@@ -1917,7 +1917,7 @@ fn inventory_signature_changes_for_same_size_same_mtime_atomic_replacement() {
     let replacement = amp_dir.join("replacement.json");
     std::fs::write(&input, b"aaaaaaaa").unwrap();
     let original_mtime = std::fs::metadata(&input).unwrap().modified().unwrap();
-    let before = super::prepare_test_inventory(inventory_options(home.path(), &["amp"]))
+    let before = prepare_test_inventory(inventory_options(home.path(), &["amp"]))
         .unwrap()
         .source_fingerprint();
 
@@ -1930,7 +1930,7 @@ fn inventory_signature_changes_for_same_size_same_mtime_atomic_replacement() {
     std::fs::remove_file(&input).unwrap();
     std::fs::rename(&replacement, &input).unwrap();
 
-    let after = super::prepare_test_inventory(inventory_options(home.path(), &["amp"]))
+    let after = prepare_test_inventory(inventory_options(home.path(), &["amp"]))
         .unwrap()
         .source_fingerprint();
     assert_ne!(before, after);
@@ -2084,9 +2084,8 @@ fn inventory_signature_tracks_order_paths_related_stamps_and_unit_identity() {
         )
     };
     let universe = ClientUniverse::new([ClientId::Amp, ClientId::CodeBuddy]).unwrap();
-    let group_order = super::source_fingerprint(&universe, &[amp_group(), codebuddy_group()]);
-    let reversed_group_order =
-        super::source_fingerprint(&universe, &[codebuddy_group(), amp_group()]);
+    let group_order = source_fingerprint(&universe, &[amp_group(), codebuddy_group()]);
+    let reversed_group_order = source_fingerprint(&universe, &[codebuddy_group(), amp_group()]);
     assert_ne!(
         group_order, reversed_group_order,
         "integration order is significant"
@@ -2117,9 +2116,9 @@ fn selected_integrations_prepare_concurrently_and_restore_catalog_order() {
 
     let prepared = pool
         .install(move || {
-            super::prepare_selected_integrations(selected, |binding| {
+            prepare_selected_integrations(selected, |binding| {
                 barrier.wait();
-                Ok(super::PreparedIntegrationOutcome {
+                Ok(PreparedIntegrationOutcome {
                     group: super::integrations::PreparedIntegrationInputs {
                         machine_labels: Default::default(),
                         binding,
@@ -2175,7 +2174,7 @@ fn execute_consumes_the_prepared_inventory_without_rediscovery() {
     let amp_dir = home.path().join(".local/share/amp/threads");
     std::fs::create_dir_all(&amp_dir).unwrap();
 
-    let prepared = super::prepare_test_inventory(inventory_options(home.path(), &["amp"])).unwrap();
+    let prepared = prepare_test_inventory(inventory_options(home.path(), &["amp"])).unwrap();
 
     std::fs::write(
         amp_dir.join("T-added-after-prepare.json"),
@@ -2196,10 +2195,10 @@ fn execute_consumes_the_prepared_inventory_without_rediscovery() {
     )
     .unwrap();
 
-    let frozen = super::load_prepared_test_usage(prepared, GroupBy::Model, None).unwrap();
+    let frozen = load_prepared_test_usage(prepared, GroupBy::Model, None).unwrap();
     assert_eq!(frozen.total_tokens, 0);
 
-    let ordinary = super::load_test_usage(
+    let ordinary = load_test_usage(
         inventory_options(home.path(), &["amp"]),
         GroupBy::Model,
         None,
@@ -2238,8 +2237,8 @@ fn prepared_aggregation_projection_retains_only_live_interned_identities() {
 
     let externally_live = crate::records::intern::intern("c5-production-lifecycle-live");
     let prune_before = crate::records::intern::prune_count();
-    let prepared = super::prepare_test_inventory(inventory_options(home.path(), &["amp"])).unwrap();
-    let usage = super::load_prepared_test_usage(prepared, GroupBy::Model, None).unwrap();
+    let prepared = prepare_test_inventory(inventory_options(home.path(), &["amp"])).unwrap();
+    let usage = load_prepared_test_usage(prepared, GroupBy::Model, None).unwrap();
 
     assert_eq!(usage.models[0].model_id.as_ref(), model);
     assert_eq!(usage.models[0].display_name.as_ref(), model);

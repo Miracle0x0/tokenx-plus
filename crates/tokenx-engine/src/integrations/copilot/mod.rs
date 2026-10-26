@@ -55,7 +55,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         let workspace_index = decode::CopilotWorkspaceIndex::discover(units.iter().map(|unit| {
             let DecoderKind::Copilot {
@@ -148,7 +148,9 @@ impl CopilotFold {
                 status,
                 mut rejections,
             } = cache::resolve_unit(parsed, ctx)?;
-            rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
+            rejections.merge(&crate::finalization::retain_source_eligible_messages(
+                &mut messages,
+            ));
             let cache_write =
                 cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
             let outcome = cache::write_cache(cache_write, ctx, &messages);
@@ -182,8 +184,10 @@ impl CopilotFold {
             for (owner, message) in group.map_err(InputPipelineError::CopilotReconciliation)? {
                 let mut messages = vec![message];
                 let rejections = &mut self.health[owner].2;
-                rejections.merge(&crate::retain_source_eligible_messages(&mut messages));
-                rejections.merge(&crate::price_source_eligible_messages(
+                rejections.merge(&crate::finalization::retain_source_eligible_messages(
+                    &mut messages,
+                ));
+                rejections.merge(&crate::finalization::price_source_eligible_messages(
                     &mut messages,
                     ctx.pricing,
                     &ctx.model_mappings,
