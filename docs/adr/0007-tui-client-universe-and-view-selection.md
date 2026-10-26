@@ -20,7 +20,7 @@ This ADR defines the complete contract for those responsibilities.
 ### Product boundary
 
 Bare `tokenx` and `tokenx tui` launch the complete interactive product.
-`--tab` changes only initial focus among Overview, Usage, Models, Monthly,
+`--tab` changes only initial focus among Overview, Subscription, Models, Monthly,
 Weekly, Daily, Hourly, Stats, Agents, and Sessions. Every tab participates in
 the same process, navigation, and action system. The local-usage tabs share
 one generation and Client scope; Subscription Usage follows ADR 0005's

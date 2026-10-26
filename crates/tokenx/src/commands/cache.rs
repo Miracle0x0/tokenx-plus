@@ -23,6 +23,7 @@ pub(crate) fn run_warm_generation_cache(
     use crate::generation_cache::save_generation_cache;
 
     let crate::cli::StartupSnapshot {
+        offline: _,
         paths,
         input,
         settings,

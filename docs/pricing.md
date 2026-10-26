@@ -39,6 +39,15 @@ before pricing.
 
 See [ADR 0004](adr/0004-period-views-derive-from-daily.md).
 
+## Catalog refresh and offline use
+
+Reports normally refresh stale or missing public catalogs. `--offline` binds
+only local catalogs and custom overrides, retaining explicit diagnostics for
+unavailable pricing. The TUI also skips background pricing refresh in this mode.
+Use `tokenx pricing refresh --no-spinner` to force refresh all public catalogs.
+Each source replaces its cache atomically; failed sources retain their old file,
+and refresh diagnostics produce a nonzero command status.
+
 ## Pricing Source authority
 
 Exact custom overrides from `custom-pricing.json` are checked first: a matching
@@ -293,12 +302,12 @@ Pricing data is cached under `${TOKENX_CONFIG_DIR}/cache/`:
 - `pricing-openrouter.json`
 - `pricing-models-dev.json`
 
-Pricing cache schema 4 retains declared native provider identity alongside
-prices in the `version` and `data` envelope; file modification time
+Pricing cache schema 5 retains declared native provider identity and
+request-tier prices in the `version` and `data` envelope; file modification time
 determines the one-hour freshness window. Older formats are refreshed.
 Identical fetched data renews only the file timestamp; changed data replaces
-the cache atomically. Deleting these files forces a fetch on the next lookup
-or usage load that needs pricing.
+the cache atomically. Deleting these files forces a fetch on the next online lookup
+or usage load that needs pricing; offline runs report missing catalogs.
 
 Input-record shards are cost-free: they retain token buckets, timestamps, and
 model/provider identity, separate billing evidence, observed service tier, and
@@ -307,7 +316,7 @@ but not derived prices. The Generation cache contains aggregated costs and is
 invalidated when the pricing
 context, including source order, changes.
 
-Headless usage commands refresh missing or expired public catalogs before
+In online mode, headless usage commands refresh missing or expired public catalogs before
 building their generation. The TUI enters immediately from its captured local
 snapshot and performs the same refresh in its supervised background acquisition
 lifecycle, reusing already loaded fresh catalogs while their file identities,
@@ -331,7 +340,8 @@ tokenx pricing lookup gpt-5 --pricing-source custom --billing-provider gateway-a
 tokenx pricing overrides --json
 ```
 
-Custom-only lookup and override listing are offline. JSON lookup and listing
+Custom-only lookup and override listing never access the network. Other lookups
+use cached catalogs when `--offline` is set. JSON lookup and listing
 identify a matched scope with `billingProvider`; an omitted custom scope is
 global. Missing lookup rates are null; explicit zero rates remain zero.
 

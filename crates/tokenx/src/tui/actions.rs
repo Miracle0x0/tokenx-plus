@@ -139,7 +139,8 @@ impl ActionSet {
             Action::Theme,
             Action::Language,
         ]);
-        if app.has_enabled_subscription_providers() && !presentation.is_refreshing() {
+        if !app.offline && app.has_enabled_subscription_providers() && !presentation.is_refreshing()
+        {
             actions.push(Action::RefreshSubscription);
         }
         actions.push(Action::Quit);

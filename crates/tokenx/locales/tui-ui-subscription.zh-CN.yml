@@ -1,6 +1,7 @@
 tui:
   ui:
     subscription:
+      offline: "离线模式：订阅用量仅使用本地缓存"
       panel_title: " 订阅 "
       prompt_fetch: "按 'u' 获取订阅数据"
       prompt_no_providers: "未启用远程订阅提供商；请配置 subscription.providers"

@@ -44,6 +44,7 @@ pub(crate) async fn run_pricing_lookup(
     pricing_source: Option<&str>,
     billing_provider: Option<&str>,
     no_spinner: bool,
+    offline: bool,
 ) -> Result<()> {
     use colored::Colorize;
     use indicatif::ProgressBar;
@@ -53,7 +54,7 @@ pub(crate) async fn run_pricing_lookup(
 
     let pricing_source_normalized = pricing_source.map(|value| value.to_lowercase());
 
-    let spinner = if no_spinner {
+    let spinner = if no_spinner || offline {
         None
     } else {
         let message = match pricing_source {
@@ -70,6 +71,24 @@ pub(crate) async fn run_pricing_lookup(
     };
 
     let result = match async {
+        if offline && pricing_source_normalized.as_deref() != Some("custom") {
+            let snapshot = tokenx_engine::pricing::ResolvedPricingSnapshot::resolve_from(
+                &paths.custom_pricing_file(),
+                &paths.cache_dir(),
+            )
+            .with_source_order(settings.pricing_source_order);
+            for diagnostic in snapshot.diagnostics() {
+                eprintln!("{}", diagnostic.message());
+            }
+            return Ok(snapshot.service().and_then(|service| {
+                service.lookup_canonical_with_billing_provider(
+                    &settings.model_mappings.canonicalize(model_id),
+                    pricing_source_normalized.as_deref(),
+                    None,
+                    billing_provider,
+                )
+            }));
+        }
         let svc = if pricing_source_normalized.as_deref() == Some("custom") {
             std::sync::Arc::new(PricingService::new_with_custom(
                 tokenx_engine::pricing::custom::CustomPricing::load_from_path(
@@ -538,5 +557,25 @@ pub(crate) fn run_pricing_list_overrides(
     }
     println!();
 
+    Ok(())
+}
+
+pub(crate) async fn run_pricing_refresh(
+    paths: &crate::product_paths::ProductPaths,
+    no_spinner: bool,
+) -> Result<()> {
+    let spinner = (!no_spinner)
+        .then(|| super::render::LightSpinner::start(rust_i18n::t!("commands.pricing.fetching")));
+    let diagnostics = tokenx_engine::pricing::refresh_catalog_cache(&paths.cache_dir()).await;
+    if let Some(spinner) = spinner {
+        spinner.stop();
+    }
+    for diagnostic in &diagnostics {
+        eprintln!("{}", diagnostic.message());
+    }
+    if !diagnostics.is_empty() {
+        anyhow::bail!(rust_i18n::t!("commands.pricing.refresh_diagnostics").to_string());
+    }
+    println!("{}", rust_i18n::t!("commands.pricing.refreshed"));
     Ok(())
 }

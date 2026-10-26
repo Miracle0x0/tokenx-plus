@@ -29,6 +29,7 @@ tokenx tui --tab models
 # Script-friendly usage projection
 tokenx models --no-spinner
 tokenx models --json --no-spinner
+tokenx models --offline --json --no-spinner
 tokenx models --client codex --group-by client,provider,model --no-spinner
 tokenx models --group-by machine,model --json --no-spinner
 
@@ -38,6 +39,7 @@ tokenx models --since 2026-01-01 --until 2026-01-31 --no-spinner
 
 # Pricing catalog
 tokenx pricing lookup claude-sonnet-4-5 --no-spinner
+tokenx pricing refresh --no-spinner
 tokenx pricing overrides --json
 
 # Editable model aliases for grouping and pricing

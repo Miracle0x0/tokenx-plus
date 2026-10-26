@@ -195,6 +195,9 @@ impl GenerationController {
         cache_dir: std::path::PathBuf,
         needs_generation_load: bool,
     ) {
+        if app.offline {
+            return;
+        }
         self.pricing_refresh = Some(ActivePricingRefresh {
             needs_generation_load,
             started_at: Instant::now(),
@@ -1038,6 +1041,28 @@ mod tests {
                 if diagnostic.contains("illegal unchanged")
         ));
         assert!(!app.is_background_loading());
+    }
+
+    #[test]
+    fn offline_startup_does_not_schedule_a_pricing_refresh() {
+        let (mut app, mut controller) = harness(false);
+        app.offline = true;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut tasks = TaskSupervisor::new(runtime.handle().clone(), tx);
+        let cache = tempfile::tempdir().unwrap();
+        controller.start_initial_pricing_refresh(
+            &mut app,
+            &mut tasks,
+            cache.path().to_owned(),
+            false,
+        );
+        assert!(controller.pricing_refresh.is_none());
+        tasks.signal_cancel();
+        tasks.drain();
     }
 
     #[test]

@@ -100,9 +100,13 @@ fn bind_pricing(
     runtime: &tokio::runtime::Runtime,
 ) -> ExecutionPlan<cli::RuntimePricing> {
     let spinner = match &plan {
-        ExecutionPlan::Models(plan) if !effective_no_spinner(plan.json, plan.no_spinner) => Some(
-            LightSpinner::start(rust_i18n::t!("main.pricing.refreshing")),
-        ),
+        ExecutionPlan::Models(plan)
+            if !plan.startup.offline && !effective_no_spinner(plan.json, plan.no_spinner) =>
+        {
+            Some(LightSpinner::start(rust_i18n::t!(
+                "main.pricing.refreshing"
+            )))
+        }
         _ => None,
     };
     let plan = runtime.block_on(plan.bind_pricing());
@@ -141,7 +145,14 @@ fn execute(
             let no_spinner = effective_no_spinner(plan.json, plan.no_spinner);
             run_models(plan, no_spinner)
         }
-        ExecutionPlan::Pricing { paths, subcommand } => match subcommand {
+        ExecutionPlan::Pricing {
+            paths,
+            subcommand,
+            offline,
+        } => match subcommand {
+            PricingSubcommand::Refresh { no_spinner } => {
+                runtime.block_on(commands::pricing::run_pricing_refresh(&paths, no_spinner))
+            }
             PricingSubcommand::Lookup {
                 model_id,
                 json,
@@ -155,6 +166,7 @@ fn execute(
                 pricing_source.map(PricingSource::as_str),
                 billing_provider.as_deref(),
                 effective_no_spinner(json, no_spinner),
+                offline,
             )),
             PricingSubcommand::Overrides { json } => run_pricing_list_overrides(&paths, json),
         },
