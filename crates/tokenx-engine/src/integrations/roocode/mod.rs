@@ -46,7 +46,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
@@ -196,7 +196,7 @@ mod tests {
         let mut cache = input_record_cache::InputRecordShardStore::with_cache_dir(cache_dir.path());
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(vec![unit.clone()]),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         assert_eq!(parsed.len(), 1);
         let health = &parsed[0].health;

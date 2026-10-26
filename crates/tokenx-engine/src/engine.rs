@@ -1,7 +1,10 @@
+use crate::acquisition::{
+    prepare_inventory, stream_local_inputs_into_accumulator_with_cancellation, FoldOutcome,
+    PreparedInventory,
+};
 use crate::{
-    prepare_inventory, records, stream_local_inputs_into_accumulator_with_cancellation,
-    AcquisitionConfig, AcquisitionError, DataHealth, FoldOutcome, FrozenUsageIndex, Generation,
-    GenerationError, InputFootprint, PreparedInventory, SessionUsage, SourceFingerprint,
+    records, AcquisitionConfig, AcquisitionError, DataHealth, FrozenUsageIndex, Generation,
+    GenerationError, InputFootprint, SessionUsage, SourceFingerprint,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

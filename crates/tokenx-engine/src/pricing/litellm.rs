@@ -1,4 +1,4 @@
-use super::{cache, emit_warning, PricingDiagnosticSink, PricingDiagnostics};
+use super::{cache, emit_warning, http, PricingDiagnosticSink, PricingDiagnostics};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -6,8 +6,6 @@ use std::path::Path;
 const CACHE_FILENAME: &str = "pricing-litellm.json";
 const PRICING_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
-const MAX_RETRIES: u32 = 3;
-const INITIAL_BACKOFF_MS: u64 = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TimePeriodPrice {
@@ -84,21 +82,6 @@ pub async fn fetch(cache_dir: &Path) -> Result<PricingDataset, reqwest::Error> {
     .await
 }
 
-pub(crate) async fn fetch_with_diagnostics(
-    cache_dir: &Path,
-    diagnostics: &mut PricingDiagnostics,
-) -> Result<PricingDataset, reqwest::Error> {
-    let mut diagnostics = Some(diagnostics);
-    fetch_inner(
-        reqwest::Client::builder(),
-        cache_dir,
-        PRICING_URL,
-        true,
-        &mut diagnostics,
-    )
-    .await
-}
-
 pub(crate) async fn refresh_with_diagnostics(
     cache_dir: &Path,
     diagnostics: &mut PricingDiagnostics,
@@ -128,109 +111,90 @@ async fn fetch_inner(
         }
     }
 
-    let client = client_builder
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()?;
-
-    let mut last_error: Option<reqwest::Error> = None;
-
-    for attempt in 0..MAX_RETRIES {
-        match client.get(url).send().await {
-            Ok(response) => {
-                let status = response.status();
-
-                if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    if let Err(error) = response.error_for_status_ref() {
-                        last_error = Some(error);
-                    }
-                    emit_warning(
-                        diagnostics,
-                        format!(
-                            "[tokenx] LiteLLM HTTP {} (attempt {}/{})",
-                            status,
-                            attempt + 1,
-                            MAX_RETRIES
-                        ),
-                    );
-                    if attempt == MAX_RETRIES - 1 {
-                        return Err(response.error_for_status().unwrap_err());
-                    }
-                    let _ = response.bytes().await;
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        INITIAL_BACKOFF_MS * (1 << attempt),
-                    ))
-                    .await;
-                    continue;
-                }
-
-                if !status.is_success() {
-                    emit_warning(diagnostics, format!("[tokenx] LiteLLM HTTP {status}"));
-                    return Err(response.error_for_status().unwrap_err());
-                }
-
-                match response.json::<PricingDataset>().await {
-                    Ok(data) => {
-                        if let Err(e) = cache::save_cache(cache_dir, CACHE_FILENAME, &data) {
-                            let cache_path = cache::get_cache_path(cache_dir, CACHE_FILENAME)
-                                .display()
-                                .to_string();
-                            emit_warning(
-                                diagnostics,
-                                format!(
-                                    "[tokenx] Warning: Failed to cache LiteLLM pricing at {}: {}",
-                                    cache_path, e
-                                ),
-                            );
-                        }
-                        return Ok(data);
-                    }
-                    Err(e) => {
-                        emit_warning(
-                            diagnostics,
-                            format!("[tokenx] LiteLLM JSON parse failed: {e}"),
-                        );
-                        return Err(e);
-                    }
-                }
-            }
-            Err(e) => {
+    let client = http::build_client(client_builder)?;
+    for attempt in 0..http::MAX_ATTEMPTS {
+        let Some(response) =
+            http::request_attempt(&client, url, "LiteLLM", attempt, diagnostics).await?
+        else {
+            continue;
+        };
+        let data = match response.json::<PricingDataset>().await {
+            Ok(data) => data,
+            Err(error) => {
                 emit_warning(
                     diagnostics,
-                    format!(
-                        "[tokenx] LiteLLM network error (attempt {}/{}): {}",
-                        attempt + 1,
-                        MAX_RETRIES,
-                        e
-                    ),
+                    format!("[tokenx] LiteLLM JSON parse failed: {error}"),
                 );
-                last_error = Some(e);
-                if attempt < MAX_RETRIES - 1 {
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        INITIAL_BACKOFF_MS * (1 << attempt),
-                    ))
-                    .await;
-                }
+                return Err(error);
             }
+        };
+        if let Err(error) = cache::save_cache(cache_dir, CACHE_FILENAME, &data) {
+            let cache_path = cache::get_cache_path(cache_dir, CACHE_FILENAME);
+            emit_warning(
+                diagnostics,
+                format!(
+                    "[tokenx] Warning: Failed to cache LiteLLM pricing at {}: {error}",
+                    cache_path.display(),
+                ),
+            );
         }
+        return Ok(data);
     }
-
-    Err(last_error.expect("should have error after retries"))
+    unreachable!("the final HTTP attempt returns a response or an error")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
+    use std::io::{BufRead, Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    #[tokio::test]
+    async fn truncated_response_body_remains_a_terminal_json_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = std::io::BufReader::new(&mut stream);
+            loop {
+                let mut header = String::new();
+                assert_ne!(request.read_line(&mut header).unwrap(), 0);
+                if header == "\r\n" {
+                    break;
+                }
+            }
+            drop(request);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{")
+                .unwrap();
+        });
+        let cache_dir = tempfile::TempDir::new().unwrap();
+        let mut diagnostics = Vec::new();
+        let result = fetch_inner(
+            reqwest::Client::builder().no_proxy(),
+            cache_dir.path(),
+            &url,
+            false,
+            &mut Some(&mut diagnostics),
+        )
+        .await;
+        server.join().unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0]
+            .message()
+            .contains("LiteLLM JSON parse failed"));
+        assert!(!cache_dir.path().join(CACHE_FILENAME).exists());
+    }
 
     fn retryable_status_server(status_line: &'static str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
 
         thread::spawn(move || {
-            for _ in 0..MAX_RETRIES {
+            for _ in 0..http::MAX_ATTEMPTS {
                 let Ok((mut stream, _)) = listener.accept() else {
                     return;
                 };

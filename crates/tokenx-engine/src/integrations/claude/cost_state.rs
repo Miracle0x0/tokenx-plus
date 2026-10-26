@@ -75,10 +75,10 @@ pub(super) fn append_records(
         record.is_aggregate = true;
         record.claude_input_is_split = true;
         record.message_count = 0;
-        match crate::record_finalization(&record) {
-            crate::RecordFinalization::Accept => messages.push(record),
-            crate::RecordFinalization::Filter => {}
-            crate::RecordFinalization::Reject(reason) => rejections.record(reason),
+        match crate::finalization::record_finalization(&record) {
+            crate::finalization::RecordFinalization::Accept => messages.push(record),
+            crate::finalization::RecordFinalization::Filter => {}
+            crate::finalization::RecordFinalization::Reject(reason) => rejections.record(reason),
         }
     }
 }
@@ -147,16 +147,16 @@ impl CostStateReconciliation {
         mut reject: impl FnMut(usize, crate::input_health::RecordRejectionReason),
     ) {
         self.totals.retain(|_, totals| {
-            totals.retain(
-                |_, (owner, record)| match crate::record_finalization(record) {
-                    crate::RecordFinalization::Accept => true,
-                    crate::RecordFinalization::Filter => false,
-                    crate::RecordFinalization::Reject(reason) => {
+            totals.retain(|_, (owner, record)| {
+                match crate::finalization::record_finalization(record) {
+                    crate::finalization::RecordFinalization::Accept => true,
+                    crate::finalization::RecordFinalization::Filter => false,
+                    crate::finalization::RecordFinalization::Reject(reason) => {
                         reject(*owner, reason);
                         false
                     }
-                },
-            );
+                }
+            });
             !totals.is_empty()
         });
     }

@@ -26,7 +26,7 @@ fn scan_with_health(
     Vec<AttributedUsageRecord>,
     crate::input_health::HealthSummary,
 ) {
-    let parsed = plan_and_parse(discover(home), cache, None);
+    let parsed = plan_and_parse(discover(home), cache);
     let mut ctx = codex_fold_context(cache, None);
     let mut messages = Vec::new();
     fold_codex_into(parsed, &mut ctx, &mut messages).unwrap();
@@ -292,7 +292,7 @@ fn codex_archive_mutation_after_preparation_is_partial_and_not_cached() {
         &archive,
         &format!("{FIRST_CODEX_ENTRY}{APPENDED_CODEX_ENTRY}"),
     );
-    let parsed = DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled(None));
+    let parsed = DRIVER.parse_inputs(vec![miss], &ParseContext::uncancelled());
     assert!(matches!(
         parsed[0].health.status,
         InputStatus::Partial { .. }

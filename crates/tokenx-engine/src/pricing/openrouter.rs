@@ -377,22 +377,6 @@ pub async fn fetch_all_models(cache_dir: &Path) -> HashMap<String, ModelPricing>
     .unwrap_or_default()
 }
 
-pub(crate) async fn fetch_all_models_with_diagnostics(
-    cache_dir: &Path,
-    diagnostics: &mut PricingDiagnostics,
-) -> HashMap<String, ModelPricing> {
-    let mut diagnostics = Some(diagnostics);
-    fetch_all_models_with_sink(
-        reqwest::Client::builder(),
-        cache_dir,
-        MODELS_URL,
-        true,
-        &mut diagnostics,
-    )
-    .await
-    .unwrap_or_default()
-}
-
 pub(crate) async fn refresh_with_diagnostics(
     cache_dir: &Path,
     diagnostics: &mut PricingDiagnostics,
@@ -566,17 +550,6 @@ async fn fetch_all_models_with_sink(
     }
 
     Ok(result)
-}
-
-pub async fn fetch_all_mapped(cache_dir: &Path) -> HashMap<String, ModelPricing> {
-    fetch_all_models(cache_dir).await
-}
-
-pub(crate) async fn fetch_all_mapped_with_diagnostics(
-    cache_dir: &Path,
-    diagnostics: &mut PricingDiagnostics,
-) -> HashMap<String, ModelPricing> {
-    fetch_all_models_with_diagnostics(cache_dir, diagnostics).await
 }
 
 #[cfg(test)]

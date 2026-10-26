@@ -222,6 +222,8 @@ pub(crate) const DECODER_CONTRACTS: &[DecoderContractSpec] = &[
 pub(crate) fn production_sources(crate_dir: &Path) -> Vec<PathBuf> {
     let mut paths = vec![
         crate_dir.join("src/lib.rs"),
+        crate_dir.join("src/acquisition.rs"),
+        crate_dir.join("src/finalization.rs"),
         crate_dir.join("src/model_aliases.rs"),
         crate_dir.join("src/provider_identity.rs"),
         crate_dir.join("src/token_imputation.rs"),

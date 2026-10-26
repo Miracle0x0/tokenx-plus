@@ -1,4 +1,5 @@
 use super::*;
+use crate::pricing::PricingService;
 use chrono::{TimeZone, Utc};
 
 fn pricing(input: f64, output: f64) -> ModelPricing {
@@ -77,7 +78,7 @@ fn native_claude_catalog_identity_prices_hourly_writes_and_preserves_source_auth
         "../../tests/fixtures/litellm_claude_pricing.json"
     ))
     .unwrap();
-    let lookup = PricingLookup::new(
+    let service = PricingService::new(
         litellm,
         HashMap::from([("anthropic/claude-opus-5.5".into(), pricing(4e-6, 20e-6))]),
     );
@@ -90,11 +91,11 @@ fn native_claude_catalog_identity_prices_hourly_writes_and_preserves_source_auth
         ..Default::default()
     };
     for spelling in ["claude-opus-5-5", "claude-opus-5.5", "claude-opus-5-5[1m]"] {
-        let selected = lookup.lookup(spelling).unwrap();
+        let selected = service.lookup.lookup(spelling).unwrap();
         assert_eq!(selected.pricing_source, "LiteLLM");
         assert_eq!(selected.matched_key, "claude-opus-5-5");
         assert!(
-            (lookup
+            (service
                 .calculate_cost_with_provider(spelling, Some("anthropic"), &usage)
                 .unwrap()
                 - 0.000508)
@@ -102,22 +103,30 @@ fn native_claude_catalog_identity_prices_hourly_writes_and_preserves_source_auth
                 < 1e-12
         );
     }
-    let forced = lookup
+    let forced = service
         .lookup_with_pricing_source("claude-opus-5.5", Some("litellm"))
         .unwrap();
     assert_eq!(forced.matched_key, "claude-opus-5-5");
     let mut order = SourceOrder::default();
     order.swap(0, 1);
-    let reordered = lookup.with_order(order);
+    let reordered = PricingService {
+        custom: Default::default(),
+        lookup: service.lookup.with_order(order),
+    };
     assert_eq!(
-        reordered.lookup("claude-opus-5.5").unwrap().pricing_source,
+        reordered
+            .lookup
+            .lookup("claude-opus-5.5")
+            .unwrap()
+            .pricing_source,
         "OpenRouter"
     );
     assert_eq!(
         reordered.calculate_cost_with_provider("claude-opus-5.5", Some("anthropic"), &usage),
         Err(PricingComputationError::MissingCacheWrite1hRate)
     );
-    assert!(lookup
+    assert!(service
+        .lookup
         .lookup_with_provider("claude-opus-5.5", Some("google"))
         .is_none());
 }
@@ -426,12 +435,12 @@ fn lookup_cache_keeps_provider_scopes_separate() {
 
 #[test]
 fn calculate_cost_combines_reasoning_with_output_and_clamps_negative_tokens() {
-    let lookup = PricingLookup::new(
+    let service = PricingService::new(
         HashMap::from([("mystery-model".into(), pricing(0.5, 2.0))]),
         HashMap::new(),
     );
 
-    let cost = lookup
+    let cost = service
         .calculate_cost("mystery-model", -10, 3, -20, -30, 2)
         .unwrap();
 
@@ -440,7 +449,7 @@ fn calculate_cost_combines_reasoning_with_output_and_clamps_negative_tokens() {
 
 #[test]
 fn deepseek_v4_cost_selects_utc_hhmm_periods_at_boundaries() {
-    let lookup = PricingLookup::new(
+    let service = PricingService::new(
         HashMap::new(),
         HashMap::from([(
             "deepseek/deepseek-v4-flash".into(),
@@ -488,7 +497,7 @@ fn deepseek_v4_cost_selects_utc_hhmm_periods_at_boundaries() {
         ..Default::default()
     };
     let cost_at = |timestamp_ms| {
-        lookup
+        service
             .calculate_cost_with_provider_and_time(
                 "deepseek-v4-flash",
                 Some("deepseek"),
@@ -508,7 +517,7 @@ fn deepseek_v4_cost_selects_utc_hhmm_periods_at_boundaries() {
 
 #[test]
 fn matching_time_periods_merge_in_source_order() {
-    let lookup = PricingLookup::new(
+    let service = PricingService::new(
         HashMap::new(),
         HashMap::from([(
             "deepseek/deepseek-v4-pro".into(),
@@ -538,7 +547,7 @@ fn matching_time_periods_merge_in_source_order() {
         ..Default::default()
     };
 
-    let cost = lookup
+    let cost = service
         .calculate_cost_with_provider_and_time(
             "deepseek-v4-pro",
             Some("deepseek"),
@@ -552,7 +561,7 @@ fn matching_time_periods_merge_in_source_order() {
 
 #[test]
 fn invalid_explicit_pricing_timestamp_is_an_error() {
-    let lookup = PricingLookup::new(
+    let service = PricingService::new(
         HashMap::new(),
         HashMap::from([(
             "deepseek/deepseek-v4-pro".into(),
@@ -568,7 +577,7 @@ fn invalid_explicit_pricing_timestamp_is_an_error() {
         )]),
     );
 
-    let error = lookup
+    let error = service
         .calculate_cost_with_provider_and_time(
             "deepseek-v4-pro",
             Some("deepseek"),
@@ -739,7 +748,7 @@ fn compute_cost_prices_one_hour_cache_writes_across_the_200k_tier() {
 #[test]
 fn one_hour_only_pricing_rows_are_usable_and_accept_explicit_zero_rates() {
     for rate in [0.0, 2e-5] {
-        let lookup = PricingLookup::new(
+        let service = PricingService::new(
             HashMap::from([(
                 "claude-sonnet-4.6".into(),
                 ModelPricing {
@@ -749,14 +758,14 @@ fn one_hour_only_pricing_rows_are_usable_and_accept_explicit_zero_rates() {
             )]),
             HashMap::new(),
         );
-        assert!(lookup.lookup("claude-sonnet-4.6").is_some());
+        assert!(service.lookup.lookup("claude-sonnet-4.6").is_some());
         let usage = TokenBreakdown {
             cache_write: 100_000,
             cache_write_1h: 100_000,
             ..Default::default()
         };
         assert_eq!(
-            lookup
+            service
                 .calculate_cost_with_provider("claude-sonnet-4.6", Some("anthropic"), &usage)
                 .unwrap(),
             100_000.0 * rate
@@ -806,7 +815,7 @@ fn one_hour_pricing_keeps_selected_provider_and_catalog_authority() {
         cache_write_1h: 100,
         ..Default::default()
     };
-    let scoped = PricingLookup::new(
+    let scoped = PricingService::new(
         HashMap::from([("claude-sonnet-4.6".into(), complete.clone())]),
         HashMap::from([("anthropic/claude-sonnet-4.6".into(), incomplete.clone())]),
     );
@@ -814,7 +823,8 @@ fn one_hour_pricing_keeps_selected_provider_and_catalog_authority() {
         scoped.calculate_cost_with_provider("claude-sonnet-4.6", Some("anthropic"), &usage),
         Err(PricingComputationError::MissingCacheWrite1hRate)
     );
-    let ordered = PricingLookup::new_with_models_dev_and_order(
+    let ordered = PricingService::new_with_custom_and_order(
+        Default::default(),
         HashMap::from([("claude-sonnet-4.6".into(), complete)]),
         HashMap::from([("claude-sonnet-4.6".into(), incomplete)]),
         HashMap::new(),
@@ -824,7 +834,7 @@ fn one_hour_pricing_keeps_selected_provider_and_catalog_authority() {
         ordered.calculate_cost_with_provider("claude-sonnet-4.6", Some("anthropic"), &usage),
         Err(PricingComputationError::MissingCacheWrite1hRate)
     );
-    let empty = PricingLookup::new(HashMap::new(), HashMap::new());
+    let empty = PricingService::new(HashMap::new(), HashMap::new());
     assert_eq!(
         empty.calculate_cost_with_provider("claude-sonnet-4.6", Some("anthropic"), &usage),
         Err(PricingComputationError::MissingCacheWrite1hRate)

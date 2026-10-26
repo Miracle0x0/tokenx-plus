@@ -1393,7 +1393,7 @@ fn test_report_load_does_not_prune_orphaned_input_shards() {
     assert!(shard.exists());
 
     drop(input);
-    crate::parse_all_messages_with_pricing(
+    crate::acquisition::test_support::parse_all_messages_with_pricing(
         input_home.path().to_str().unwrap(),
         &["qwen".to_string()],
         None,

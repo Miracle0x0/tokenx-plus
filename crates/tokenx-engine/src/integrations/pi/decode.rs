@@ -148,7 +148,7 @@ pub(crate) fn parse_pi_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 continue;
             }
         };
-        if !crate::has_positive_tokens(&tokens) {
+        if !crate::finalization::has_positive_tokens(&tokens) {
             continue;
         }
 

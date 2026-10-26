@@ -938,7 +938,7 @@ fn parse_file(
                 continue;
             }
         };
-        if !crate::has_positive_tokens(&tokens) {
+        if !crate::finalization::has_positive_tokens(&tokens) {
             continue;
         }
 

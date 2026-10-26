@@ -68,7 +68,7 @@ pub(crate) trait IntegrationDriver: Sync {
         ctx: &DiscoveryContext<'_>,
     ) -> Result<Vec<DiscoveredInput>, InputDiscoveryError>;
 
-    fn parse_inputs(&self, units: Vec<ExecutionInput>, ctx: &ParseContext<'_>) -> Vec<ParsedUnit>;
+    fn parse_inputs(&self, units: Vec<ExecutionInput>, ctx: &ParseContext) -> Vec<ParsedUnit>;
 
     fn plan_cache_hit(
         &self,
@@ -110,29 +110,25 @@ pub(crate) struct DiscoveryContext<'a> {
     pub cancellation: crate::engine::AcquisitionCancellation,
 }
 
-pub(crate) struct ParseContext<'a> {
-    _pricing: Option<&'a pricing::PricingService>,
+pub(crate) struct ParseContext {
     calendar: crate::CalendarContext,
     cancellation: crate::engine::AcquisitionCancellation,
 }
 
-impl<'a> ParseContext<'a> {
+impl ParseContext {
     pub(crate) fn new(
-        pricing: Option<&'a pricing::PricingService>,
         calendar: crate::CalendarContext,
         cancellation: &crate::engine::AcquisitionCancellation,
     ) -> Self {
         Self {
-            _pricing: pricing,
             calendar,
             cancellation: cancellation.clone(),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn uncancelled(pricing: Option<&'a pricing::PricingService>) -> Self {
+    pub(crate) fn uncancelled() -> Self {
         Self {
-            _pricing: pricing,
             calendar: crate::CalendarContext::explicit("UTC")
                 .expect("UTC is a valid IANA timezone"),
             cancellation: crate::engine::AcquisitionCancellation::default(),
@@ -868,7 +864,7 @@ impl ParsedBatchInput {
             self.check_cancelled(crate::engine::AcquisitionPhase::Parsing)?;
             self.binding.driver.parse_inputs(
                 miss_units,
-                &ParseContext::new(ctx.pricing, ctx.calendar(), &self.cancellation),
+                &ParseContext::new(ctx.calendar(), &self.cancellation),
             )
         };
         self.check_cancelled(crate::engine::AcquisitionPhase::Parsing)?;
@@ -1111,7 +1107,7 @@ mod tests {
         fn parse_inputs(
             &self,
             units: Vec<crate::integrations::ExecutionInput>,
-            _ctx: &ParseContext<'_>,
+            _ctx: &ParseContext,
         ) -> Vec<ParsedUnit> {
             self.batch_sizes.lock().unwrap().push(units.len());
             units
@@ -1155,7 +1151,7 @@ mod tests {
         fn parse_inputs(
             &self,
             units: Vec<crate::integrations::ExecutionInput>,
-            _ctx: &ParseContext<'_>,
+            _ctx: &ParseContext,
         ) -> Vec<ParsedUnit> {
             let mut previous = self.previous_batch_message.lock().unwrap();
             assert!(
@@ -1212,7 +1208,7 @@ mod tests {
         fn parse_inputs(
             &self,
             units: Vec<crate::integrations::ExecutionInput>,
-            _ctx: &ParseContext<'_>,
+            _ctx: &ParseContext,
         ) -> Vec<ParsedUnit> {
             self.parse_batch_sizes.lock().unwrap().push(units.len());
             units

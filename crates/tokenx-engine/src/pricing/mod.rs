@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod custom;
+mod http;
 pub mod litellm;
 pub mod lookup;
 pub mod models_dev;
@@ -297,7 +298,7 @@ impl PricingService {
     async fn fetch_public_catalogs(cache_dir: &Path) -> Result<PublicPricingCatalogs, String> {
         let (litellm_result, openrouter_data, models_dev_result) = tokio::join!(
             litellm::fetch(cache_dir),
-            openrouter::fetch_all_mapped(cache_dir),
+            openrouter::fetch_all_models(cache_dir),
             models_dev::fetch(cache_dir)
         );
 
@@ -316,57 +317,6 @@ impl PricingService {
             openrouter: openrouter_data,
             models_dev: models_dev_data,
         })
-    }
-
-    async fn fetch_public_catalogs_with_diagnostics(
-        cache_dir: &Path,
-        diagnostics: &mut PricingDiagnostics,
-    ) -> Result<PublicPricingCatalogs, String> {
-        let mut litellm_diagnostics = PricingDiagnostics::new();
-        let mut openrouter_diagnostics = PricingDiagnostics::new();
-        let mut models_dev_diagnostics = PricingDiagnostics::new();
-
-        let (litellm_result, openrouter_data, models_dev_result) = tokio::join!(
-            litellm::fetch_with_diagnostics(cache_dir, &mut litellm_diagnostics),
-            openrouter::fetch_all_mapped_with_diagnostics(cache_dir, &mut openrouter_diagnostics),
-            models_dev::fetch_with_diagnostics(cache_dir, &mut models_dev_diagnostics)
-        );
-
-        diagnostics.extend(litellm_diagnostics);
-        diagnostics.extend(openrouter_diagnostics);
-        diagnostics.extend(models_dev_diagnostics);
-
-        let litellm_data = litellm_result.map_err(|e| e.to_string())?;
-        let litellm_data = Self::filter_litellm_data(litellm_data);
-        let models_dev_data = match models_dev_result {
-            Ok(data) => data,
-            Err(e) => {
-                diagnostics.push(PricingDiagnostic::warning(format!(
-                    "[tokenx] models.dev fetch failed: {e}"
-                )));
-                HashMap::new()
-            }
-        };
-
-        Ok(PublicPricingCatalogs {
-            litellm: litellm_data,
-            openrouter: openrouter_data,
-            models_dev: models_dev_data,
-        })
-    }
-
-    async fn fetch_inner_with_diagnostics(
-        custom_path: &Path,
-        cache_dir: &Path,
-        diagnostics: &mut PricingDiagnostics,
-    ) -> Result<Self, String> {
-        let catalogs = Self::fetch_public_catalogs_with_diagnostics(cache_dir, diagnostics).await?;
-        Ok(Self::new_with_custom_and_models_dev(
-            CustomPricing::load_from_path_with_diagnostics(custom_path, diagnostics),
-            catalogs.litellm,
-            catalogs.openrouter,
-            catalogs.models_dev,
-        ))
     }
 
     fn from_resolved_datasets(
@@ -391,26 +341,10 @@ impl PricingService {
         ))
     }
 
-    pub fn load_cached_any_age(custom_path: &Path, cache_dir: &Path) -> Option<Self> {
-        Self::from_resolved_datasets(
-            CustomPricing::load_from_path(custom_path),
-            litellm::load_cached_any_age(cache_dir),
-            openrouter::load_cached_any_age(cache_dir),
-            models_dev::load_cached_any_age(cache_dir),
-        )
-    }
-
     /// Fetch a fresh immutable pricing catalog.
     ///
     /// No process-global service is retained: each explicit refresh observes
     /// the current custom-pricing file and the catalogs fetched in that call.
-    pub async fn fetch_current(
-        custom_path: &Path,
-        cache_dir: &Path,
-    ) -> Result<Arc<PricingService>, String> {
-        Self::fetch_current_with_order(custom_path, cache_dir, SourceOrder::default()).await
-    }
-
     pub async fn fetch_current_with_order(
         custom_path: &Path,
         cache_dir: &Path,
@@ -427,16 +361,6 @@ impl PricingService {
                     order,
                 ))
             })
-    }
-
-    pub async fn fetch_current_with_diagnostics(
-        custom_path: &Path,
-        cache_dir: &Path,
-        diagnostics: &mut PricingDiagnostics,
-    ) -> Result<Arc<PricingService>, String> {
-        Self::fetch_inner_with_diagnostics(custom_path, cache_dir, diagnostics)
-            .await
-            .map(Arc::new)
     }
 
     pub fn lookup_with_pricing_source(
@@ -571,17 +495,17 @@ impl PricingService {
             provider_id,
             context.billing_provider,
         ) else {
-            let cost = self
-                .lookup
-                .calculate_canonical_cost_with_provider_and_time(
-                    canonical_model_id,
-                    provider_id,
-                    usage,
-                    context.timestamp_ms,
-                    context.service_tier,
-                )?;
+            if usage.cache_write_1h > 0 {
+                return Err(PricingComputationError::MissingCacheWrite1hRate);
+            }
+            if let Some(tier) = context.service_tier.filter(|tier| *tier != "default") {
+                return Err(PricingComputationError::MissingServiceTierRate {
+                    tier: tier.to_string(),
+                    component: "model",
+                });
+            }
             return Ok(CostEstimate {
-                cost,
+                cost: 0.0,
                 origin: None,
                 complete: false,
             });
@@ -1277,6 +1201,64 @@ fn finish_pricing_fingerprint(digest: Sha256) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_model_preserves_incomplete_estimates_and_required_rate_errors() {
+        let service = PricingService::new(HashMap::new(), HashMap::new());
+        let usage = TokenBreakdown {
+            input: 10,
+            ..Default::default()
+        };
+        for service_tier in [None, Some("default")] {
+            let estimate = service
+                .estimate_canonical_usage(
+                    "unpriced-model",
+                    None,
+                    &usage,
+                    UsagePricingContext {
+                        service_tier,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(estimate.cost, 0.0);
+            assert!(estimate.origin.is_none());
+            assert!(!estimate.complete);
+        }
+        for tier in ["priority", "flex", "unrecognized"] {
+            assert!(matches!(
+                service.estimate_canonical_usage(
+                    "unpriced-model",
+                    None,
+                    &usage,
+                    UsagePricingContext {
+                        service_tier: Some(tier),
+                        ..Default::default()
+                    },
+                ),
+                Err(PricingComputationError::MissingServiceTierRate {
+                    tier: actual,
+                    component: "model",
+                }) if actual == tier
+            ));
+        }
+        assert!(matches!(
+            service.estimate_canonical_usage(
+                "unpriced-model",
+                None,
+                &TokenBreakdown {
+                    cache_write: 1,
+                    cache_write_1h: 1,
+                    ..usage
+                },
+                UsagePricingContext {
+                    service_tier: Some("priority"),
+                    ..Default::default()
+                },
+            ),
+            Err(PricingComputationError::MissingCacheWrite1hRate)
+        ));
+    }
 
     #[test]
     fn pricing_status_classifies_resolution_diagnostics() {

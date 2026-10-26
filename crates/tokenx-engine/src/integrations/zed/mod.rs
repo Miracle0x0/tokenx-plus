@@ -53,7 +53,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         use rayon::prelude::*;
 
@@ -179,7 +179,7 @@ mod tests {
     fn finalized(
         mut messages: Vec<crate::records::UsageRecord>,
     ) -> Vec<crate::AttributedUsageRecord> {
-        crate::finalize_message_identities(&mut messages);
+        crate::finalization::test_support::finalize_message_identities(&mut messages);
         messages
             .into_iter()
             .map(|message| message.attribute(ClientId::Zed))
@@ -244,7 +244,7 @@ mod tests {
         let mut cache = input_record_cache::InputRecordShardStore::default();
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(units),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let mut sink = Vec::new();
         let binding = crate::integrations::integration_for(ClientId::Zed);
@@ -292,7 +292,7 @@ mod tests {
                 .unwrap();
         let cold = DRIVER.parse_inputs(
             vec![unit.clone().into_lookup_miss()],
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let mut sink = Vec::new();
         let binding = crate::integrations::integration_for(ClientId::Zed);
@@ -334,7 +334,7 @@ mod tests {
         let mut cache = input_record_cache::InputRecordShardStore::default();
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(units),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let mut actual = Vec::new();
         let binding = crate::integrations::integration_for(ClientId::Zed);

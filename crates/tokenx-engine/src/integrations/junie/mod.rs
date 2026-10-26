@@ -40,7 +40,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
@@ -119,7 +119,7 @@ mod tests {
     ) -> Vec<crate::AttributedUsageRecord> {
         let parsed = DRIVER.parse_inputs(
             crate::integrations::test_execute_all(units),
-            &ParseContext::uncancelled(pricing),
+            &ParseContext::uncancelled(),
         );
         let mut messages = Vec::new();
         let binding = crate::integrations::integration_for(ClientId::Junie);
@@ -135,7 +135,7 @@ mod tests {
     fn finalized(
         mut messages: Vec<crate::records::UsageRecord>,
     ) -> Vec<crate::AttributedUsageRecord> {
-        crate::finalize_message_identities(&mut messages);
+        crate::finalization::test_support::finalize_message_identities(&mut messages);
         messages
             .into_iter()
             .map(|message| message.attribute(ClientId::Junie))

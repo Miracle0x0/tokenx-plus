@@ -42,7 +42,7 @@ impl IntegrationDriver for Driver {
     fn parse_inputs(
         &self,
         units: Vec<crate::integrations::ExecutionInput>,
-        ctx: &ParseContext<'_>,
+        ctx: &ParseContext,
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
@@ -111,7 +111,7 @@ mod tests {
     fn finalized(
         mut messages: Vec<crate::records::UsageRecord>,
     ) -> Vec<crate::AttributedUsageRecord> {
-        crate::finalize_message_identities(&mut messages);
+        crate::finalization::test_support::finalize_message_identities(&mut messages);
         messages
             .into_iter()
             .map(|message| message.attribute(ClientId::Pi))
@@ -125,7 +125,7 @@ mod tests {
     ) -> Vec<crate::AttributedUsageRecord> {
         let parsed = driver.parse_inputs(
             crate::integrations::test_execute_all(units),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
         let mut sink = Vec::new();
         let binding = crate::integrations::integration_for(ClientId::Pi);
@@ -212,7 +212,7 @@ mod tests {
             vec![crate::integrations::test_execute(
                 DiscoveredInput::plain_file(path.clone(), DecoderKind::plain(DecoderId::Pi)),
             )],
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
         );
 
         assert_eq!(parsed.len(), 1);
@@ -234,7 +234,7 @@ mod tests {
 
         let parsed = pipeline_cache::load_or_scan_unit_with(
             crate::integrations::test_execute(unit),
-            &ParseContext::uncancelled(None),
+            &ParseContext::uncancelled(),
             |input_path| {
                 let mut scanned = decode::parse_pi_file(input_path)?;
                 scanned.interrupted = Some(crate::input_health::InputFailure::new(
