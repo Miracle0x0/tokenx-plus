@@ -113,6 +113,76 @@ fn snapshot(input: i64) -> Value {
 }
 
 #[test]
+fn claude_advisors_survive_append_mirrors_and_cost_state_reconciliation() {
+    let mut row = assistant("parent", 10, 2, 0, None);
+    let fixture = Fixture::new(&[
+        json!({"type":"user","message":{"content":"hello"}}),
+        row.clone(),
+    ]);
+    fixture.load();
+    let before = fixture.decoded();
+    row["message"]["usage"]["iterations"] = json!([
+        {"type":"message","model":"claude-sonnet-4.6","input_tokens":10},
+        {"type":"advisor_message","model":"claude-sonnet-4.6","input_tokens":20,
+         "output_tokens":3,"cache_creation_input_tokens":4,
+         "cache_creation":{"ephemeral_1h_input_tokens":4}},
+        {"type":"advisor_message","model":"claude-sonnet-4.6","input_tokens":7}
+    ]);
+    fixture.append(&[row.clone()]);
+    let appended = fixture.load();
+    assert_eq!(fixture.decoded() - before, 1);
+    fixture.assert_full_equivalent(&appended);
+    assert_eq!(appended.sessions()[0].turn_count, 1);
+    let models = appended
+        .project_models(
+            &ClientSelection::new([ClientId::Claude]).unwrap(),
+            GroupBy::Model,
+        )
+        .unwrap();
+    assert_eq!(models.total_cost, 50.0);
+    let copy = fixture.path.with_file_name("mirror.jsonl");
+    std::fs::copy(&fixture.path, &copy).unwrap();
+    let mut totals = snapshot(37);
+    totals["modelUsage"]["claude-sonnet-4.6"]["outputTokens"] = json!(5);
+    totals["modelUsage"]["claude-sonnet-4.6"]["cacheCreationInputTokens"] = json!(4);
+    fixture.append(&[row, totals]);
+    let mirrored = fixture.load();
+    assert_eq!(
+        mirrored
+            .project_models(
+                &ClientSelection::new([ClientId::Claude]).unwrap(),
+                GroupBy::Model,
+            )
+            .unwrap(),
+        models
+    );
+    fixture.assert_full_equivalent(&mirrored);
+}
+
+#[test]
+fn claude_bad_advisors_do_not_erase_parent_or_valid_siblings() {
+    let mut row = assistant("parent", 10, 2, 0, None);
+    row["message"]["usage"]["iterations"] = json!([
+        {"type":"advisor_message","model":"claude-opus-4.6","input_tokens":8},
+        {"type":"advisor_message","input_tokens":4},
+        {"type":"advisor_message","model":"claude-sonnet-4.6","input_tokens":-1},
+        {"type":"advisor_message","model":"claude-sonnet-4.6","input_tokens":"bad"}
+    ]);
+    let fixture = Fixture::new(&[row]);
+    let first = fixture.load();
+    assert_eq!(first.health().rejected_records(), 3);
+    let models = first
+        .project_models(
+            &ClientSelection::new([ClientId::Claude]).unwrap(),
+            GroupBy::Model,
+        )
+        .unwrap();
+    assert_eq!(models.total_tokens, 20);
+    assert_eq!(models.models.len(), 2);
+    fixture.assert_full_equivalent(&fixture.load());
+}
+
+#[test]
 fn claude_append_decodes_only_tail_and_keeps_unclamped_streaming_metadata() {
     let fixture = Fixture::new(&[
         json!({"type":"user","message":{"content":"hello"}}),

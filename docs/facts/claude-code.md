@@ -10,7 +10,8 @@ Committed fixtures are synthetic and contain no local prompts or tool output.
 
 Tokenx reads `~/.claude/projects/**/*.jsonl` and
 `~/.claude/transcripts/**/*.jsonl`, including subagents. The accounting sources
-are assistant response usage and the last `cost-state.modelUsage` snapshot.
+are assistant response usage, recorded advisor iterations, and the last
+`cost-state.modelUsage` snapshot.
 
 | Source field | Meaning and Tokenx handling |
 | --- | --- |
@@ -25,7 +26,8 @@ are assistant response usage and the last `cost-state.modelUsage` snapshot.
 | `usage.cache_creation.ephemeral_5m_input_tokens` | Five-minute detail. Tokenx uses combined writes minus the bounded one-hour subset, rather than adding this field again. |
 | `usage.service_tier`, `usage.speed`, `usage.inference_geo` | Samples reported `standard`, `standard`, and `global`. These fields are not currently applied as Claude pricing modifiers; nonstandard service or geography is outside this verified pricing scope. |
 | `usage.server_tool_use` | Samples contained zero `web_search_requests` and `web_fetch_requests`. Server-tool request charges are not token buckets and are not included in Tokenx token pricing. |
-| `usage.iterations`, `usage.fallback_credit` | Observed as `[]` and `null`; no additional accounting semantics are inferred. |
+| `usage.iterations` | `advisor_message` entries record additional model calls; ordinary iterations are already included in parent counters. Advisors retain the parent timestamp and add no message or turn count. |
+| `usage.fallback_credit` | Observed as `null`; no additional accounting semantics are inferred. |
 
 Streaming copies reconcile counters before pricing. The input convention
 determines input authority; other counters use per-field maxima. Malformed or
@@ -63,7 +65,7 @@ supply agent attribution, and genuine user prompts still mark turns.
 `thinkingTokens` is included in `outputTokens`. `costUSD` and the top-level
 `totalCostUSD` are not Tokenx pricing inputs.
 
-Tokenx subtracts deduplicated assistant usage, including matching subagents,
+Tokenx subtracts deduplicated assistant and advisor usage, including matching subagents,
 from the final snapshot and adds only positive per-bucket remainders. This
 retains background-only models such as Haiku without double counting.
 Model spellings and `[1m]` context suffixes are reconciled before user model
