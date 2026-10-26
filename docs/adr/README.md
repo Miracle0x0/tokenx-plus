@@ -35,6 +35,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0029](0029-machine-attribution.md) | Machine attribution as a generation projection | Accepted |
 | [0030](0030-price-provenance.md) | Captured catalog price provenance | Accepted |
 | [0031](0031-claude-advisor-usage.md) | Claude advisor usage reconciliation | Accepted |
+| [0032](0032-roocode-current-task-usage.md) | Roo Code current task usage | Accepted |
 
 ## Conventions
 

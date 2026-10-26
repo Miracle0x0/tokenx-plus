@@ -60,8 +60,17 @@ pub fn parse_roocode_file(path: &Path) -> SessionParseResult<ScannedInput> {
             }
         };
 
+        let Some(input) = payload
+            .tokens_in
+            .checked_sub(payload.cache_reads)
+            .and_then(|input| input.checked_sub(payload.cache_writes))
+            .filter(|input| *input >= 0)
+        else {
+            rejections.record(RecordRejectionReason::MalformedRecord);
+            continue;
+        };
         let token_breakdown = TokenBreakdown {
-            input: payload.tokens_in,
+            input,
             output: payload.tokens_out,
             cache_read: payload.cache_reads,
             cache_write: payload.cache_writes,
@@ -80,8 +89,15 @@ pub fn parse_roocode_file(path: &Path) -> SessionParseResult<ScannedInput> {
             rejections.record(RecordRejectionReason::MissingTimestamp);
             continue;
         };
-        let provider = provider_from_api_protocol(payload.api_protocol.as_deref());
         let info = entry.get("modelInfo");
+        // A bare API protocol describes transport, not the serving provider.
+        let provider = provider_from_api_protocol(payload.api_protocol.as_deref()).or_else(|| {
+            info.and_then(|info| info.get("providerId"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|provider| !provider.is_empty())
+                .map(str::to_owned)
+        });
         let observed_model = info
             .and_then(|info| info.get("modelId"))
             .and_then(Value::as_str)
@@ -327,7 +343,7 @@ fn parse_token_field(value: &Value, field: &'static str) -> Option<i64> {
 fn provider_from_api_protocol(api_protocol: Option<&str>) -> Option<String> {
     api_protocol
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| value.contains('/'))
         .map(str::to_string)
 }
 
@@ -354,6 +370,44 @@ mod tests {
             fs::write(task_dir.join("api_conversation_history.json"), history).unwrap();
         }
         task_dir.join("ui_messages.json")
+    }
+
+    #[test]
+    fn gross_input_and_transport_protocol_do_not_duplicate_or_misattribute_usage() {
+        for protocol in ["openai", "anthropic", ""] {
+            let dir = TempDir::new().unwrap();
+            let payload = serde_json::json!({"tokensIn":1000,"tokensOut":10,
+                "cacheReads":600,"cacheWrites":100,"apiProtocol":protocol});
+            let rows = serde_json::json!([{"type":"say","say":"api_req_started",
+                "ts":"2026-10-25T00:00:00Z","text":payload.to_string(),
+                "modelInfo":{"modelId":"claude-sonnet-4.6"}}]);
+            let path = setup_task(&dir, "gross", &rows.to_string(), None);
+            let messages = parse_roocode_file(&path);
+            assert_eq!(messages[0].tokens.input, 300);
+            assert_eq!(messages[0].tokens.total(), 1010);
+            assert_eq!(messages[0].provider_id.as_ref(), "anthropic");
+        }
+    }
+
+    #[test]
+    fn impossible_cache_subset_rejects_only_its_record() {
+        let dir = TempDir::new().unwrap();
+        let rows: Vec<_> = [50, 100].into_iter().map(|input| serde_json::json!({
+            "type":"say","say":"api_req_started","ts":"2026-10-25T00:00:00Z",
+            "text":serde_json::json!({"tokensIn":input,"tokensOut":10,"cacheReads":60}).to_string(),
+            "modelInfo":{"modelId":"private-model","providerId":"my-gateway"}
+        })).collect();
+        let path = setup_task(
+            &dir,
+            "invalid",
+            &serde_json::to_string(&rows).unwrap(),
+            None,
+        );
+        let scanned = super::parse_roocode_file(&path).unwrap();
+        assert_eq!(scanned.rejections.total(), 1);
+        assert_eq!(scanned.messages.len(), 1);
+        assert_eq!(scanned.messages[0].tokens.input, 40);
+        assert_eq!(scanned.messages[0].provider_id.as_ref(), "my-gateway");
     }
 
     #[test]
@@ -387,7 +441,7 @@ after"#;
         assert_eq!(messages[0].model_id.as_ref(), "claude-sonnet-4");
         assert_eq!(messages[0].provider_id.as_ref(), "anthropic");
         assert_eq!(messages[0].session_id.as_ref(), "task-abc");
-        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[0].tokens.input, 75);
         assert_eq!(messages[0].tokens.output, 50);
         assert_eq!(messages[0].tokens.cache_read, 20);
         assert_eq!(messages[0].tokens.cache_write, 5);
@@ -425,7 +479,7 @@ after"#;
 
         assert_eq!(scanned.messages.len(), 2);
         assert_eq!(scanned.messages[0].tokens.input, 4);
-        assert_eq!(scanned.messages[1].tokens.input, 10);
+        assert_eq!(scanned.messages[1].tokens.input, 9);
         assert_eq!(scanned.rejections.total(), 1);
         let rejection = scanned.rejections.entries().next().unwrap();
         assert_eq!(rejection.key, "malformed-record");
