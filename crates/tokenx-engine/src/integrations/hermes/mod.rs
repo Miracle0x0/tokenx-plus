@@ -1,6 +1,6 @@
 pub(crate) mod decode;
-
-use std::collections::HashSet;
+pub(crate) mod logs;
+mod merge;
 
 use rayon::prelude::*;
 
@@ -38,12 +38,17 @@ impl IntegrationDriver for Driver {
             SOURCE.matcher(),
         )?);
 
-        let units = source_discovery::input_units_from_paths_preserving_order(
+        let mut units = source_discovery::input_units_from_paths_preserving_order(
             client,
             paths,
             FingerprintPolicy::SqliteWithWal,
             DecoderKind::plain(DecoderId::Hermes),
         )?;
+        for unit in &mut units {
+            unit.fingerprint_policy = FingerprintPolicy::HermesWithLogs {
+                logs: logs::discover(&unit.path),
+            };
+        }
         Ok(units)
     }
 
@@ -54,7 +59,35 @@ impl IntegrationDriver for Driver {
     ) -> Vec<ParsedUnit> {
         units
             .into_par_iter()
-            .map(|unit| pipeline_cache::parse_uncached_unit(unit, ctx, decode::parse_hermes_sqlite))
+            .map(|unit| {
+                let FingerprintPolicy::HermesWithLogs { logs: inputs } = &unit.fingerprint_policy
+                else {
+                    unreachable!("Hermes discovery supplies its log inventory");
+                };
+                let inputs = inputs.clone();
+                let snapshot = unit.snapshot().cloned();
+                let policy = unit.input_policy();
+                pipeline_cache::parse_uncached_unit(unit, ctx, |path| {
+                    let mut scanned = decode::parse_hermes_sqlite(path)?;
+                    logs::allocate(&mut scanned, &inputs, ctx.calendar());
+                    match policy.snapshot() {
+                        Ok(current) if snapshot.as_ref() == Some(&current) => {}
+                        Ok(_) => {
+                            scanned.interrupted = Some(crate::input_health::InputFailure::new(
+                                "verify Hermes inputs",
+                                "database or call logs changed during parsing",
+                            ))
+                        }
+                        Err(error) => {
+                            scanned.interrupted = Some(crate::input_health::InputFailure::new(
+                                "verify Hermes inputs",
+                                error.to_string(),
+                            ))
+                        }
+                    }
+                    Ok(scanned)
+                })
+            })
             .collect()
     }
 
@@ -64,8 +97,9 @@ impl IntegrationDriver for Driver {
         ctx: &mut FoldContext<'_>,
         sink: &mut BoundUsageSink<'_>,
     ) -> Result<(), crate::integrations::InputPipelineError> {
-        let mut seen = HashSet::new();
-        fold_hermes_units(parsed, ctx, sink, &mut seen)
+        let mut fold = merge::HermesFold::new()?;
+        fold.consume(parsed, ctx)?;
+        fold.finish(ctx, sink)
     }
 
     fn fold_batches(
@@ -74,26 +108,12 @@ impl IntegrationDriver for Driver {
         ctx: &mut FoldContext<'_>,
         sink: &mut BoundUsageSink<'_>,
     ) -> Result<(), crate::integrations::InputPipelineError> {
-        let mut seen = HashSet::new();
+        let mut fold = merge::HermesFold::new()?;
         while let Some(parsed) = batches.next(ctx)? {
-            fold_hermes_units(parsed, ctx, sink, &mut seen)?;
+            fold.consume(parsed, ctx)?;
         }
-        Ok(())
+        fold.finish(ctx, sink)
     }
-}
-
-fn fold_hermes_units(
-    parsed: Vec<ParsedUnit>,
-    ctx: &mut FoldContext<'_>,
-    sink: &mut BoundUsageSink<'_>,
-    seen: &mut HashSet<u64>,
-) -> Result<(), crate::integrations::InputPipelineError> {
-    pipeline_cache::fold_units_with_filter(parsed, ctx, sink, |_, messages| {
-        messages
-            .into_iter()
-            .filter(|message| crate::should_keep_deduped_message(seen, message))
-            .collect()
-    })
 }
 
 pub(crate) static DRIVER: Driver = Driver;

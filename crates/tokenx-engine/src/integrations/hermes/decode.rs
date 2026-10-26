@@ -2,7 +2,6 @@
 //!
 //! Parses aggregated session rows from Hermes Agent's SQLite state database:
 //! - `~/.hermes/state.db`
-//! - `~/.hermes/state.db`
 //!
 //! App-reported estimated and actual costs are ignored. Tokenx reports cost
 //! only from token usage and its own pricing table.
@@ -12,6 +11,7 @@ use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::{open_readonly_sqlite, parse_epoch_f64_millis};
 use crate::records::UsageRecord;
 use crate::{provider_identity, TokenBreakdown};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 const HERMES_AGENT_NAME: &str = "Hermes Agent";
@@ -26,7 +26,10 @@ fn resolved_provider(billing_provider: Option<String>, model_id: &str) -> String
 pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
     let conn = open_readonly_sqlite(db_path)?;
 
-    let query = r#"
+    let has_model_usage: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_model_usage')", [], |row| row.get(0),
+    ).map_err(|error| SessionParseError::new("inspect Hermes usage schema", error))?;
+    let session_query = r#"
         SELECT
             id,
             model,
@@ -41,8 +44,23 @@ pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
         FROM sessions
     "#;
 
+    let per_model_query = r#"
+        SELECT smu.session_id, smu.model, smu.billing_provider, s.started_at,
+               s.message_count, smu.input_tokens, smu.output_tokens,
+               smu.cache_read_tokens, smu.cache_write_tokens, smu.reasoning_tokens
+        FROM session_model_usage smu JOIN sessions s ON s.id = smu.session_id
+        UNION ALL
+        SELECT id, model, billing_provider, started_at, message_count, input_tokens,
+               output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+        FROM sessions s WHERE NOT EXISTS (SELECT 1 FROM session_model_usage u WHERE u.session_id = s.id)
+        ORDER BY 1, 2, 3
+    "#;
     let mut stmt = conn
-        .prepare(query)
+        .prepare(if has_model_usage {
+            per_model_query
+        } else {
+            session_query
+        })
         .map_err(|error| SessionParseError::new("prepare Hermes session query", error))?;
 
     let mut rows = stmt
@@ -50,6 +68,8 @@ pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
         .map_err(|error| SessionParseError::new("execute Hermes session query", error))?;
 
     let mut scanned = ScannedInput::default();
+    let mut groups: BTreeMap<super::logs::GroupKey, UsageRecord> = BTreeMap::new();
+    let mut invalid_groups = BTreeSet::new();
     loop {
         let row = match rows.next() {
             Ok(Some(row)) => row,
@@ -109,6 +129,7 @@ pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
         if [input, output, cache_read, cache_write, reasoning]
             .into_iter()
             .any(|tokens| tokens < 0)
+            || message_count < 0
         {
             scanned
                 .rejections
@@ -163,8 +184,37 @@ pub fn parse_hermes_sqlite(db_path: &Path) -> SessionParseResult<ScannedInput> {
         );
         msg.billing_provider = billing;
         msg.message_count = message_count;
-        msg.dedup_key = Some(crate::records::dedup_hash_str(&session_id));
-        scanned.messages.push(msg);
+        msg.is_aggregate = true;
+        let key = super::logs::group_key(&msg);
+        if invalid_groups.contains(&key) {
+            continue;
+        }
+        if let Some(existing) = groups.get_mut(&key) {
+            match existing
+                .tokens
+                .checked_add(&msg.tokens)
+                .filter(|tokens| tokens.checked_total().is_some())
+            {
+                Some(tokens) => existing.tokens = tokens,
+                None => {
+                    groups.remove(&key);
+                    invalid_groups.insert(key);
+                    scanned
+                        .rejections
+                        .record(RecordRejectionReason::MalformedRecord);
+                }
+            }
+        } else {
+            groups.insert(key, msg);
+        }
+    }
+    let mut counted_sessions = BTreeSet::new();
+    for mut record in groups.into_values() {
+        if !counted_sessions.insert(record.session_id.clone()) {
+            record.message_count = 0;
+        }
+        record.dedup_key = Some(super::logs::group_hash(&record));
+        scanned.messages.push(record);
     }
     Ok(scanned)
 }
