@@ -1,5 +1,6 @@
 //! Stream one physical snapshot without materializing the decoded transcript.
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -51,12 +52,8 @@ impl Transcript {
             finished: false,
         })
     }
-}
 
-impl Iterator for Transcript {
-    type Item = SessionParseResult<String>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    pub(super) fn next_line(&mut self) -> Option<SessionParseResult<Cow<'_, str>>> {
         if self.finished {
             return None;
         }
@@ -74,7 +71,7 @@ impl Iterator for Transcript {
                 } else {
                     &self.line
                 };
-                Some(Ok(String::from_utf8_lossy(bytes).into_owned()))
+                Some(Ok(String::from_utf8_lossy(bytes)))
             }
             Err(error) => {
                 self.finished = true;

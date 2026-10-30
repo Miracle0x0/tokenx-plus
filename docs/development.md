@@ -110,6 +110,13 @@ Commit the root `THIRD_PARTY_LICENSES.html` together with the dependency change.
 
 Engine microbenchmarks use `codspeed-criterion-compat` and run through `.github/workflows/codspeed.yml`. The workflow authenticates with GitHub OIDC and does not require a long-lived `CODSPEED_TOKEN`.
 
+The `parsing` benchmark measures cold acquisition of synthetic Codex response
+histories at increasing lengths and DSH records with large message bodies. Each
+iteration uses a fresh record-cache directory so cache hits cannot hide decoder
+regressions. Input discovery, fixture setup, and cache and worker cleanup are
+outside the timed build. Run it locally with
+`cargo bench --locked -p tokenx-engine --bench parsing`.
+
 Use `target/release/tokenx` for startup, acquisition, and comparative RSS benchmarks.
 The automated Copilot memory regression uses the test profile to check a broad RSS
 budget and cold/warm cache correctness; its timing is not a performance baseline.
