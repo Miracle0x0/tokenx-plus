@@ -16,11 +16,13 @@ use crate::records::{
 };
 use crate::{provider_identity, TokenBreakdown};
 
+#[path = "projection.rs"]
+mod projection;
 #[path = "reader.rs"]
 mod reader;
 
 pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
-    let lines = reader::Transcript::open(path)?;
+    let mut lines = reader::Transcript::open(path)?;
     let mut scanned = ScannedInput::default();
 
     let session_id_from_path = path
@@ -44,21 +46,23 @@ pub(crate) fn parse_dsh_file(path: &Path) -> SessionParseResult<ScannedInput> {
     let mut pending_user_turn = false;
     let mut last_settlement: Option<(i64, i64, usize)> = None;
 
-    for (line_index, line) in lines.enumerate() {
+    let mut completed_line = false;
+    while let Some(line) = lines.next_line() {
         let line = match line {
             Ok(line) => line,
-            Err(error) if line_index == 0 => return Err(error),
+            Err(error) if !completed_line => return Err(error),
             Err(error) => {
                 scanned.interrupted = Some(InputFailure::from(&error));
                 break;
             }
         };
+        completed_line = true;
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
 
-        let value = match serde_json::from_str::<Value>(line) {
+        let value = match projection::parse(line) {
             Ok(value) => value,
             Err(_) => {
                 scanned
@@ -705,6 +709,46 @@ mod tests {
         let scanned = parse_dsh_file(&path).unwrap();
         assert!(scanned.messages.is_empty());
         assert_eq!(scanned.rejections.total(), 1);
+    }
+
+    #[test]
+    fn unused_payloads_are_validated_without_affecting_usage() {
+        let root = tempfile::tempdir().unwrap();
+        let healthy = r#"{"type":"assistant/message","time":1786669450000,"data":{"message":{"source":{"model":"m"},"content":[{"text":"ignored\\ntext","nested":[null,true,1.5,{"escaped\u006bey":"\ud83d\ude00"}]}]},"usage":{"inputTokens":10}}}"#;
+        let path = write_plain_session(
+            root.path(),
+            "validated-body",
+            &[
+                // Value decoding rejected these even when the field was unused.
+                r#"{"type":"tool/result","data":{"body":{"number":1e400}}}"#,
+                r#"{"type":"tool/result","data":{"body":{"text":"\ud800"}}}"#,
+                r#"{"type":"tool/result","data":{"body":{"\ud800":1}}}"#,
+                r#"{"type":"tool/result","data":{"body":[1,]}}"#,
+                r#"{"type":"tool/result"} {}"#,
+                healthy,
+            ],
+        );
+        let scanned = parse_dsh_file(&path).unwrap();
+        assert!(scanned.interrupted.is_none());
+        assert_eq!(scanned.rejections.total(), 5);
+        assert_eq!(scanned.messages.len(), 1);
+        assert_eq!(scanned.messages[0].tokens.input, 10);
+    }
+
+    #[test]
+    fn borrowed_lines_preserve_bom_lossy_utf8_and_final_record() {
+        let root = tempfile::tempdir().unwrap();
+        let path = session_path(root.path(), "line-encoding", false);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut bytes = b"\xef\xbb\xbf{\"type\":\"session\",\"id\":\"session\"}\r\n".to_vec();
+        bytes.extend_from_slice(b"{\"type\":\"assistant/message\",\"time\":1786669450000,\"data\":{\"message\":{\"source\":{\"model\":\"m\"},\"text\":\"\xff\"},\"usage\":{\"inputTokens\":10}}}");
+        std::fs::write(&path, bytes).unwrap();
+        let scanned = parse_dsh_file(&path).unwrap();
+        assert!(scanned.interrupted.is_none());
+        assert!(scanned.rejections.is_empty());
+        assert_eq!(scanned.messages.len(), 1);
+        assert_eq!(scanned.messages[0].session_id.as_ref(), "session");
+        assert_eq!(scanned.messages[0].tokens.input, 10);
     }
 
     #[test]

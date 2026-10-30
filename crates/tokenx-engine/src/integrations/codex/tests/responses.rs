@@ -273,3 +273,39 @@ fn late_confirmation_remains_deduplicated_after_many_settlements() {
         (0..24).map(|i| 120 + i).sum::<i64>()
     );
 }
+
+#[test]
+fn failed_counter_rolls_back_new_settlement_and_preserves_history_for_append() {
+    let prefix = vec![
+        response("settled", 100, 20),
+        terminal("task_complete"),
+        response("pending", 50, 10),
+        entry("compacted", json!({})),
+    ];
+    let mut file = file(prefix);
+    let expected = parse(file.path());
+    let mut invalid = count(usage(200, 40), usage(200, 40));
+    invalid["timestamp"] = json!("invalid");
+    writeln!(file, "{invalid}").unwrap();
+    let failed = parse(file.path());
+    assert!(failed.interrupted.is_some());
+    assert_eq!(failed.rejections.total(), 1);
+    assert_eq!(failed.messages.len(), 1);
+    assert_eq!(failed.messages[0].tokens.total(), 120);
+    assert_eq!(
+        bincode::serialize(&failed.state).unwrap(),
+        bincode::serialize(&expected.state).unwrap(),
+        "the invalid counter must not settle the pending response or change historical evidence"
+    );
+
+    // Continue at the record boundary after a parser-state serialization round trip.
+    let state = bincode::deserialize(&bincode::serialize(&failed.state).unwrap()).unwrap();
+    writeln!(file, "{}", terminal("task_complete")).unwrap();
+    writeln!(file, "{}", count(usage(100, 20), usage(100, 20))).unwrap();
+    writeln!(file, "{}", count(usage(150, 30), usage(50, 10))).unwrap();
+    let appended =
+        parse_codex_file_incremental(file.path(), failed.consumed_offset, state).unwrap();
+    assert_eq!(total(&appended), 60);
+    assert!(appended.rejections.is_empty());
+    assert!(appended.state.settled_responses.is_empty());
+}

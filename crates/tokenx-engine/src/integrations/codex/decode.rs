@@ -287,6 +287,36 @@ pub(crate) struct CodexParseState {
     seen_responses: std::sync::Arc<std::collections::BTreeSet<u64>>,
 }
 
+/// A record can append settlements before its final validation. Roll those
+/// appends back by length instead of copying the session's entire history.
+/// Removing a historical signature or inserting a response identity commits
+/// the record and must release this checkpoint first.
+struct RecordCheckpoint {
+    state: CodexParseState,
+    settled_len: usize,
+}
+
+impl RecordCheckpoint {
+    fn capture(state: &mut CodexParseState) -> Self {
+        let history = std::mem::take(&mut state.settled_responses);
+        let checkpoint = Self {
+            state: state.clone(),
+            settled_len: history.len(),
+        };
+        state.settled_responses = history;
+        checkpoint
+    }
+
+    fn restore(mut self, state: &mut CodexParseState) {
+        std::mem::swap(
+            &mut self.state.settled_responses,
+            &mut state.settled_responses,
+        );
+        self.state.settled_responses.truncate(self.settled_len);
+        *state = self.state;
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ResponseSignature {
     usage: CodexTotals,
@@ -589,14 +619,14 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
         // A line is the Codex record boundary. Parsing is transactional so a
         // rejected record cannot leak a model, token baseline, pending turn,
         // or provisional message into later records.
-        let state_before = state.clone();
+        let state_before = RecordCheckpoint::capture(&mut state);
         let messages_len_before = messages.len();
         let pending_before = pending_model_messages.clone();
 
         macro_rules! reject_record {
             ($reason:expr) => {{
                 let reason = $reason;
-                state = state_before.clone();
+                state_before.restore(&mut state);
                 messages.truncate(messages_len_before);
                 pending_model_messages = pending_before.clone();
                 rejections.record(reason);
@@ -608,7 +638,7 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
             ($reason:expr, $error:expr) => {{
                 let reason = $reason;
                 let error = $error;
-                state = state_before.clone();
+                state_before.restore(&mut state);
                 messages.truncate(messages_len_before);
                 pending_model_messages = pending_before.clone();
                 rejections.record(reason);
@@ -1002,6 +1032,7 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                             event_model.as_deref(),
                         )
                     }) {
+                        drop(state_before);
                         state.settled_responses.remove(index);
                         continue;
                     } else if state.pending_response.as_ref().is_some_and(|p| {
