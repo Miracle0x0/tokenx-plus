@@ -24,7 +24,7 @@ bun run test:release-tooling
 bun run test:launchers
 ```
 
-Pass `--no-spinner` whenever an automated command runs Tokenx, unless spinner behavior is under test.
+Pass `--no-spinner` when an automated Tokenx command supports it, unless spinner behavior is under test.
 
 ## Tests
 

@@ -189,6 +189,7 @@ mod tests {
             theme: Some(crate::theme::ThemeName::Blue),
             refresh: 0,
             no_refresh: false,
+            no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::new([tokenx_engine::ClientId::Codex])
                 .unwrap(),
             initial_tab: None,

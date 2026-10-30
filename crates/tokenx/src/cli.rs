@@ -290,6 +290,8 @@ pub(crate) struct TuiArgs {
     pub(crate) refresh: Option<u64>,
     #[arg(long, conflicts_with = "refresh", help = rust_i18n::t!("cli.help.no_refresh"))]
     pub(crate) no_refresh: bool,
+    #[arg(long, help = rust_i18n::t!("cli.help.no_spinner"))]
+    pub(crate) no_spinner: bool,
     #[arg(long)]
     pub(crate) debug: bool,
     #[command(flatten)]
@@ -549,6 +551,7 @@ pub(crate) struct TuiPlan {
     pub(crate) theme: Option<ThemeName>,
     pub(crate) refresh: Option<u64>,
     pub(crate) no_refresh: bool,
+    pub(crate) no_spinner: bool,
     pub(crate) debug: bool,
     pub(crate) startup: StartupSnapshot<PendingPricing>,
     pub(crate) date: ResolvedDateRange,
@@ -720,6 +723,7 @@ fn resolve_tui(
         theme: args.theme,
         refresh: args.refresh,
         no_refresh: args.no_refresh,
+        no_spinner: args.no_spinner,
         debug: args.debug,
         startup,
         date,

@@ -76,6 +76,21 @@ pub(super) fn render(frame: &mut Frame, app: &TuiModel, area: Rect, message: Cow
         return;
     }
 
+    if app.no_spinner {
+        let row = Rect {
+            y: area.y + area.height / 2,
+            height: 1,
+            ..area
+        };
+        frame.render_widget(
+            Paragraph::new(format!("{message}..."))
+                .style(Style::default().fg(app.theme.text.secondary))
+                .alignment(Alignment::Center),
+            row,
+        );
+        return;
+    }
+
     let show_pond = area.width >= POND_WIDTH + 4 && area.height >= 12;
 
     if !show_pond {
@@ -172,6 +187,46 @@ fn pond_line(app: &TuiModel, row: &str) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::tui::model::TuiConfig;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn no_spinner_renders_static_loading_messages_at_all_sizes() {
+        let config = TuiConfig {
+            theme: None,
+            refresh: 0,
+            no_refresh: false,
+            no_spinner: true,
+            client_universe: tokenx_engine::ClientUniverse::all(),
+            initial_tab: None,
+            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        };
+        let mut app = TuiModel::new_for_test(config).unwrap();
+        for (width, height) in [(80, 20), (40, 4), (40, 1)] {
+            for message in ["Scanning local data", "Fetching subscription data"] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                let mut draw = |app: &TuiModel| {
+                    terminal
+                        .draw(|frame| render(frame, app, frame.area(), Cow::Borrowed(message)))
+                        .unwrap();
+                    terminal.backend().buffer().clone()
+                };
+                let first = draw(&app);
+                app.on_tick();
+                let second = draw(&app);
+                assert_eq!(first, second, "loading display changed at {width}x{height}");
+                let content: String = first.content().iter().map(|cell| cell.symbol()).collect();
+                assert!(
+                    content.contains(message),
+                    "missing loading message: {content}"
+                );
+                assert!(!content.chars().any(|ch| SPINNER_FRAMES.contains(&ch)));
+                assert!(!content.contains('°'), "pond should not be rendered");
+            }
+        }
+    }
+
     #[test]
     fn loading_messages_are_localized() {
         assert_eq!(

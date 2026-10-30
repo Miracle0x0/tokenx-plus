@@ -49,7 +49,7 @@ cross-platform product root:
 
 | Setting | Type | Meaning |
 | --- | --- | --- |
-| `colorPalette` | string | Complete TUI semantic theme, covering surfaces, navigation, selections, metrics, status, and visualizations. Known values include `green`, `halloween`, `teal`, `blue`, `pink`, `purple`, `orange`, `monochrome`, `ylgnbu`, `graphite`, `lagoon`, and `dusk`. An explicit `--theme` overrides this saved value. |
+| `colorPalette` | string | Complete TUI semantic theme, covering surfaces, navigation, selections, metrics, status, and visualizations. Known values include `green`, `halloween`, `teal`, `blue`, `pink`, `purple`, `orange`, `monochrome`, `ylgnbu`, `graphite`, `lagoon`, `dusk`, `inkstone-xuanmo`, `inkstone-xuanmo-dimmed`, `inkstone-xuanzhi`, `inkstone-xuanzhi-dimmed`, `inkstone-canghai`, and `inkstone-qingci`. An explicit `--theme` overrides this saved value. |
 | `autoRefreshEnabled` | boolean | Enable background TUI refresh of the fixed startup client universe. |
 | `autoRefreshMs` | number | Background TUI refresh interval in milliseconds. View changes do not reset it. |
 | `defaultClients` | string[] | Default scan scope when no `--client/-c` flag is passed. Reports use it for that invocation; the TUI fixes it as the startup client universe, never as persisted picker selection. |

@@ -62,7 +62,7 @@ Options live on the narrowest command that owns them:
 - date scope: one preset or inclusive `--since` and `--until`;
 - Models grouping: `--group-by`;
 - Models presentation: `--json`, `--benchmark`, and `--no-spinner`;
-- TUI behavior: `--theme`, `--refresh`, `--no-refresh`, `--debug`, and
+- TUI behavior: `--theme`, `--refresh`, `--no-refresh`, `--no-spinner`, `--debug`, and
   `--tab`.
 
 Parsing is followed by one resolve-and-validate pass that creates a typed

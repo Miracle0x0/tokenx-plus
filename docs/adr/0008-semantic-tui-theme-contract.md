@@ -81,13 +81,13 @@ renderers perform a direct lookup and never recompute WCAG blending per frame.
 Status roles retain stable meaning across themes. A theme may choose its own
 shade, but success, warning, and danger must remain distinguishable.
 
-All twelve themes are RGB themes. The TUI does not inspect terminal color
+All themes are RGB themes. The TUI does not inspect terminal color
 capability and does not maintain an ANSI downgrade palette. `NO_COLOR`,
 `TERM=dumb`, and terminal-brand detection do not alter theme construction. If a
 genuine no-color product requirement appears later, it must be designed as an
 explicit rendering mode rather than folded into theme identity.
 
-The canonical `colorPalette` key accepts exactly the twelve names represented
+The canonical `colorPalette` key accepts exactly the names represented
 by `ThemeName`. Configuration and CLI parsing use the same lowercase names.
 
 ## Consequences

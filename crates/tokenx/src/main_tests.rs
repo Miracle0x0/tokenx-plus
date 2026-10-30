@@ -607,6 +607,7 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
         input_home.path().to_str().unwrap(),
         "--tab",
         "subscription",
+        "--no-spinner",
     ])
     .unwrap();
     let plan = ExecutionPlan::resolve(
@@ -620,6 +621,7 @@ fn one_startup_snapshot_resolves_all_settings_driven_policy() {
     let ExecutionPlan::Tui(plan) = plan else {
         panic!("expected TUI plan");
     };
+    assert!(plan.no_spinner);
 
     assert_eq!(
         plan.startup.input.home,

@@ -965,6 +965,7 @@ fn test_help_exposes_only_leaf_owned_options() {
         .success()
         .stdout(predicate::str::contains("--tab"))
         .stdout(predicate::str::contains("--theme"))
+        .stdout(predicate::str::contains("--no-spinner"))
         .stdout(predicate::str::contains("--json").not());
 }
 
@@ -1164,7 +1165,7 @@ fn test_theme_flag_is_owned_by_tui() {
 
 #[test]
 fn test_tui_accepts_every_canonical_theme_before_terminal_validation() {
-    const THEME_NAMES: [&str; 12] = [
+    const THEME_NAMES: [&str; 18] = [
         "green",
         "halloween",
         "teal",
@@ -1177,11 +1178,17 @@ fn test_tui_accepts_every_canonical_theme_before_terminal_validation() {
         "graphite",
         "lagoon",
         "dusk",
+        "inkstone-xuanmo",
+        "inkstone-xuanmo-dimmed",
+        "inkstone-xuanzhi",
+        "inkstone-xuanzhi-dimmed",
+        "inkstone-canghai",
+        "inkstone-qingci",
     ];
 
     for theme in THEME_NAMES {
         cargo_bin_cmd!("tokenx")
-            .args(["tui", "--theme", theme, "--language", "en"])
+            .args(["tui", "--theme", theme, "--language", "en", "--no-spinner"])
             .assert()
             .code(2)
             .stderr(predicate::str::contains(
@@ -1217,6 +1224,12 @@ fn test_tui_rejects_unknown_theme_and_lists_valid_values() {
         "graphite",
         "lagoon",
         "dusk",
+        "inkstone-xuanmo",
+        "inkstone-xuanmo-dimmed",
+        "inkstone-xuanzhi",
+        "inkstone-xuanzhi-dimmed",
+        "inkstone-canghai",
+        "inkstone-qingci",
     ] {
         assert!(
             stderr.contains(theme),

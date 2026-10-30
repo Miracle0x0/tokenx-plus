@@ -6,7 +6,8 @@ not TUI tabs. Command meaning is determined entirely by argv; piping or
 redirecting output never selects another feature.
 
 Run commands from a built checkout with `bun run cli --`, or use `tokenx`
-with an installed repository package. Pass `--no-spinner` in automation.
+with an installed repository package. For commands that support it, pass
+`--no-spinner` in automation.
 
 ## Command surface
 
@@ -54,7 +55,11 @@ tokenx tui --tab sessions
 tokenx tui --client opencode,claude --week
 tokenx tui --theme blue --refresh 30
 tokenx tui --no-refresh
+tokenx tui --no-spinner
 ```
+
+`--no-spinner` replaces the loading spinner and pond animation with a static
+loading message.
 
 Press `o` in the TUI to open the pricing-source order panel. Move the selected
 public catalog with `k/j`, press `r` to restore the default order, and press
