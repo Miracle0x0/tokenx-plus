@@ -755,6 +755,7 @@ mod tests {
             theme: Some(crate::theme::ThemeName::Blue),
             refresh: 0,
             no_refresh: false,
+            no_spinner: false,
             client_universe: universe.clone(),
             initial_tab: None,
             effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),

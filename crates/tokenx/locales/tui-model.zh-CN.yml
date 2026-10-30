@@ -49,6 +49,12 @@ tui:
         graphite: "石墨"
         lagoon: "泻湖"
         dusk: "暮色"
+        inkstone_xuanmo: "玄墨"
+        inkstone_xuanmo_dimmed: "玄墨（柔和）"
+        inkstone_xuanzhi: "宣纸"
+        inkstone_xuanzhi_dimmed: "宣纸（柔和）"
+        inkstone_canghai: "沧海"
+        inkstone_qingci: "青瓷"
     unknown_workspace: "未知工作区"
     pricing:
       available_with_warnings: "价格数据不完整；部分费用可能缺失"

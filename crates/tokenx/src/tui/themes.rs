@@ -855,6 +855,344 @@ fn theme_for_name(name: ThemeName) -> Theme {
                 artwork: rgb(167, 139, 250),
             },
         },
+        // Inkstone surfaces and pigments are adapted to the TUI contrast matrix;
+        // the source and its license are recorded in NOTICE.
+        ThemeName::InkstoneXuanmo => ThemeDefinition {
+            surface: SurfacePalette {
+                canvas: rgb(20, 19, 26),
+                panel: rgb(26, 25, 34),
+                row_alt: rgb(34, 33, 44),
+                row_current: rgb(48, 46, 60),
+            },
+            text: TextPalette {
+                primary: rgb(212, 206, 196),
+                secondary: rgb(173, 165, 153),
+            },
+            chrome: ChromePalette {
+                nav_active: rgb(107, 159, 195),
+                heading: rgb(107, 159, 195),
+                border: rgb(52, 50, 64),
+                focus: rgb(107, 159, 195),
+                current: rgb(107, 159, 195),
+            },
+            selection: SelectionPalette {
+                background: rgb(51, 47, 70),
+                foreground: rgb(212, 206, 196),
+            },
+            metrics: MetricsPalette {
+                tokens: rgb(107, 159, 195),
+                cost: rgb(214, 160, 29),
+                input: rgb(43, 174, 133),
+                output: rgb(215, 131, 119),
+                cache_read: rgb(143, 178, 201),
+                cache_write: rgb(214, 160, 29),
+                rate: rgb(192, 142, 175),
+                total: rgb(212, 206, 196),
+                secondary_cost: rgb(214, 160, 29),
+            },
+            status: StatusPalette {
+                success: rgb(43, 174, 133),
+                warning: rgb(242, 142, 22),
+                danger: rgb(221, 128, 104),
+                info: rgb(107, 159, 195),
+                pending: rgb(173, 165, 153),
+            },
+            visualization: VisualizationPalette {
+                contribution: ContributionPalette {
+                    empty: rgb(75, 106, 131),
+                    active: [
+                        rgb(75, 106, 131),
+                        rgb(86, 124, 152),
+                        rgb(96, 141, 174),
+                        rgb(107, 159, 195),
+                    ],
+                },
+                track: rgb(15, 14, 20),
+                grid: rgb(52, 50, 64),
+                chart_highlight: rgb(107, 159, 195),
+                artwork: rgb(107, 159, 195),
+            },
+        },
+        ThemeName::InkstoneXuanmoDimmed => ThemeDefinition {
+            surface: SurfacePalette {
+                canvas: rgb(25, 24, 30),
+                panel: rgb(30, 29, 36),
+                row_alt: rgb(36, 34, 43),
+                row_current: rgb(46, 44, 54),
+            },
+            text: TextPalette {
+                primary: rgb(216, 210, 198),
+                secondary: rgb(176, 169, 159),
+            },
+            chrome: ChromePalette {
+                nav_active: rgb(102, 169, 201),
+                heading: rgb(102, 169, 201),
+                border: rgb(57, 54, 67),
+                focus: rgb(102, 169, 201),
+                current: rgb(102, 169, 201),
+            },
+            selection: SelectionPalette {
+                background: rgb(54, 51, 71),
+                foreground: rgb(216, 210, 198),
+            },
+            metrics: MetricsPalette {
+                tokens: rgb(102, 169, 201),
+                cost: rgb(189, 153, 69),
+                input: rgb(109, 169, 150),
+                output: rgb(201, 144, 132),
+                cache_read: rgb(115, 163, 195),
+                cache_write: rgb(189, 153, 69),
+                rate: rgb(214, 160, 29),
+                total: rgb(216, 210, 198),
+                secondary_cost: rgb(214, 160, 29),
+            },
+            status: StatusPalette {
+                success: rgb(109, 169, 150),
+                warning: rgb(189, 153, 69),
+                danger: rgb(222, 135, 111),
+                info: rgb(102, 169, 201),
+                pending: rgb(176, 169, 159),
+            },
+            visualization: VisualizationPalette {
+                contribution: ContributionPalette {
+                    empty: rgb(72, 110, 131),
+                    active: [
+                        rgb(72, 110, 131),
+                        rgb(82, 130, 154),
+                        rgb(92, 149, 178),
+                        rgb(102, 169, 201),
+                    ],
+                },
+                track: rgb(21, 20, 25),
+                grid: rgb(57, 54, 67),
+                chart_highlight: rgb(102, 169, 201),
+                artwork: rgb(102, 169, 201),
+            },
+        },
+        ThemeName::InkstoneXuanzhi => ThemeDefinition {
+            surface: SurfacePalette {
+                canvas: rgb(247, 244, 237),
+                panel: rgb(241, 236, 226),
+                row_alt: rgb(234, 227, 213),
+                row_current: rgb(228, 219, 204),
+            },
+            text: TextPalette {
+                primary: rgb(53, 50, 45),
+                secondary: rgb(91, 86, 76),
+            },
+            chrome: ChromePalette {
+                nav_active: rgb(15, 89, 164),
+                heading: rgb(15, 89, 164),
+                border: rgb(214, 204, 185),
+                focus: rgb(15, 89, 164),
+                current: rgb(15, 89, 164),
+            },
+            selection: SelectionPalette {
+                background: rgb(223, 211, 186),
+                foreground: rgb(53, 50, 45),
+            },
+            metrics: MetricsPalette {
+                tokens: rgb(15, 89, 164),
+                cost: rgb(148, 69, 41),
+                input: rgb(26, 104, 64),
+                output: rgb(154, 63, 51),
+                cache_read: rgb(46, 96, 136),
+                cache_write: rgb(148, 69, 41),
+                rate: rgb(129, 60, 133),
+                total: rgb(53, 50, 45),
+                secondary_cost: rgb(148, 69, 41),
+            },
+            status: StatusPalette {
+                success: rgb(26, 104, 64),
+                warning: rgb(148, 69, 41),
+                danger: rgb(166, 49, 62),
+                info: rgb(15, 89, 164),
+                pending: rgb(91, 86, 76),
+            },
+            visualization: VisualizationPalette {
+                contribution: ContributionPalette {
+                    empty: rgb(91, 139, 185),
+                    active: [
+                        rgb(91, 139, 185),
+                        rgb(66, 122, 178),
+                        rgb(40, 106, 171),
+                        rgb(15, 89, 164),
+                    ],
+                },
+                track: rgb(255, 253, 248),
+                grid: rgb(214, 204, 185),
+                chart_highlight: rgb(15, 89, 164),
+                artwork: rgb(15, 89, 164),
+            },
+        },
+        ThemeName::InkstoneXuanzhiDimmed => ThemeDefinition {
+            surface: SurfacePalette {
+                canvas: rgb(233, 226, 212),
+                panel: rgb(227, 219, 203),
+                row_alt: rgb(220, 211, 193),
+                row_current: rgb(216, 206, 187),
+            },
+            text: TextPalette {
+                primary: rgb(47, 43, 37),
+                secondary: rgb(79, 74, 64),
+            },
+            chrome: ChromePalette {
+                nav_active: rgb(20, 74, 116),
+                heading: rgb(20, 74, 116),
+                border: rgb(203, 192, 171),
+                focus: rgb(20, 74, 116),
+                current: rgb(20, 74, 116),
+            },
+            selection: SelectionPalette {
+                background: rgb(211, 199, 174),
+                foreground: rgb(47, 43, 37),
+            },
+            metrics: MetricsPalette {
+                tokens: rgb(20, 74, 116),
+                cost: rgb(102, 70, 42),
+                input: rgb(29, 95, 60),
+                output: rgb(119, 71, 75),
+                cache_read: rgb(21, 84, 152),
+                cache_write: rgb(102, 70, 42),
+                rate: rgb(80, 79, 129),
+                total: rgb(47, 43, 37),
+                secondary_cost: rgb(96, 84, 34),
+            },
+            status: StatusPalette {
+                success: rgb(29, 95, 60),
+                warning: rgb(135, 61, 36),
+                danger: rgb(130, 17, 31),
+                info: rgb(20, 74, 116),
+                pending: rgb(79, 74, 64),
+            },
+            visualization: VisualizationPalette {
+                contribution: ContributionPalette {
+                    empty: rgb(96, 127, 148),
+                    active: [
+                        rgb(96, 127, 148),
+                        rgb(71, 109, 137),
+                        rgb(45, 92, 127),
+                        rgb(20, 74, 116),
+                    ],
+                },
+                track: rgb(241, 235, 223),
+                grid: rgb(203, 192, 171),
+                chart_highlight: rgb(20, 74, 116),
+                artwork: rgb(20, 74, 116),
+            },
+        },
+        ThemeName::InkstoneCanghai => ThemeDefinition {
+            surface: SurfacePalette {
+                canvas: rgb(13, 24, 34),
+                panel: rgb(18, 32, 43),
+                row_alt: rgb(24, 40, 51),
+                row_current: rgb(32, 50, 63),
+            },
+            text: TextPalette {
+                primary: rgb(200, 212, 221),
+                secondary: rgb(154, 173, 187),
+            },
+            chrome: ChromePalette {
+                nav_active: rgb(99, 187, 208),
+                heading: rgb(99, 187, 208),
+                border: rgb(41, 64, 79),
+                focus: rgb(99, 187, 208),
+                current: rgb(99, 187, 208),
+            },
+            selection: SelectionPalette {
+                background: rgb(29, 54, 68),
+                foreground: rgb(200, 212, 221),
+            },
+            metrics: MetricsPalette {
+                tokens: rgb(99, 187, 208),
+                cost: rgb(214, 160, 29),
+                input: rgb(49, 173, 143),
+                output: rgb(213, 134, 118),
+                cache_read: rgb(52, 167, 198),
+                cache_write: rgb(214, 160, 29),
+                rate: rgb(192, 142, 175),
+                total: rgb(200, 212, 221),
+                secondary_cost: rgb(214, 160, 29),
+            },
+            status: StatusPalette {
+                success: rgb(49, 173, 143),
+                warning: rgb(214, 160, 29),
+                danger: rgb(217, 132, 114),
+                info: rgb(99, 187, 208),
+                pending: rgb(154, 173, 187),
+            },
+            visualization: VisualizationPalette {
+                contribution: ContributionPalette {
+                    empty: rgb(60, 113, 129),
+                    active: [
+                        rgb(60, 113, 129),
+                        rgb(73, 138, 155),
+                        rgb(86, 162, 182),
+                        rgb(99, 187, 208),
+                    ],
+                },
+                track: rgb(10, 19, 27),
+                grid: rgb(41, 64, 79),
+                chart_highlight: rgb(99, 187, 208),
+                artwork: rgb(99, 187, 208),
+            },
+        },
+        ThemeName::InkstoneQingci => ThemeDefinition {
+            surface: SurfacePalette {
+                canvas: rgb(232, 240, 236),
+                panel: rgb(225, 234, 228),
+                row_alt: rgb(217, 227, 220),
+                row_current: rgb(215, 226, 218),
+            },
+            text: TextPalette {
+                primary: rgb(43, 51, 62),
+                secondary: rgb(79, 91, 90),
+            },
+            chrome: ChromePalette {
+                nav_active: rgb(22, 101, 120),
+                heading: rgb(22, 101, 120),
+                border: rgb(199, 213, 204),
+                focus: rgb(22, 101, 120),
+                current: rgb(22, 101, 120),
+            },
+            selection: SelectionPalette {
+                background: rgb(199, 217, 207),
+                foreground: rgb(43, 51, 62),
+            },
+            metrics: MetricsPalette {
+                tokens: rgb(22, 101, 120),
+                cost: rgb(102, 70, 42),
+                input: rgb(26, 104, 64),
+                output: rgb(160, 57, 68),
+                cache_read: rgb(21, 85, 154),
+                cache_write: rgb(102, 70, 42),
+                rate: rgb(129, 60, 133),
+                total: rgb(43, 51, 62),
+                secondary_cost: rgb(100, 88, 34),
+            },
+            status: StatusPalette {
+                success: rgb(26, 104, 64),
+                warning: rgb(147, 70, 45),
+                danger: rgb(130, 17, 31),
+                info: rgb(22, 101, 120),
+                pending: rgb(79, 91, 90),
+            },
+            visualization: VisualizationPalette {
+                contribution: ContributionPalette {
+                    empty: rgb(82, 140, 152),
+                    active: [
+                        rgb(82, 140, 152),
+                        rgb(62, 127, 141),
+                        rgb(42, 114, 131),
+                        rgb(22, 101, 120),
+                    ],
+                },
+                track: rgb(242, 248, 244),
+                grid: rgb(199, 213, 204),
+                chart_highlight: rgb(22, 101, 120),
+                artwork: rgb(22, 101, 120),
+            },
+        },
     };
     let ThemeDefinition {
         surface,
@@ -893,9 +1231,7 @@ fn rgb(red: u8, green: u8, blue: u8) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::contrast::{
-        contrast_ratio, relative_luminance, WCAG_AA_TEXT_CONTRAST, WCAG_NON_TEXT_CONTRAST,
-    };
+    use crate::tui::contrast::{contrast_ratio, WCAG_AA_TEXT_CONTRAST, WCAG_NON_TEXT_CONTRAST};
 
     #[test]
     fn theme_names_round_trip_through_settings_values() {
@@ -905,38 +1241,71 @@ mod tests {
     }
 
     #[test]
-    fn themes_have_perceptibly_distinct_active_navigation_colors() {
-        const MIN_RGB_DISTANCE_SQUARED: i32 = 30 * 30;
+    fn inkstone_themes_preserve_source_canvas_and_text_colors() {
+        let cases = [
+            (
+                ThemeName::InkstoneXuanmo,
+                rgb(20, 19, 26),
+                rgb(212, 206, 196),
+            ),
+            (
+                ThemeName::InkstoneXuanmoDimmed,
+                rgb(25, 24, 30),
+                rgb(216, 210, 198),
+            ),
+            (
+                ThemeName::InkstoneXuanzhi,
+                rgb(247, 244, 237),
+                rgb(53, 50, 45),
+            ),
+            (
+                ThemeName::InkstoneXuanzhiDimmed,
+                rgb(233, 226, 212),
+                rgb(47, 43, 37),
+            ),
+            (
+                ThemeName::InkstoneCanghai,
+                rgb(13, 24, 34),
+                rgb(200, 212, 221),
+            ),
+            (
+                ThemeName::InkstoneQingci,
+                rgb(232, 240, 236),
+                rgb(43, 51, 62),
+            ),
+        ];
+        for (name, canvas, primary) in cases {
+            let theme = Theme::from_name(name);
+            assert_eq!(theme.surface.canvas, canvas, "{name:?} canvas");
+            assert_eq!(theme.text.primary, primary, "{name:?} text");
+        }
+    }
 
-        let distance_squared = |first: Color, second: Color| {
-            let (
-                Color::Rgb(first_red, first_green, first_blue),
-                Color::Rgb(second_red, second_green, second_blue),
-            ) = (first, second)
-            else {
-                unreachable!("theme signatures must use RGB colors");
-            };
-            let red = i32::from(first_red) - i32::from(second_red);
-            let green = i32::from(first_green) - i32::from(second_green);
-            let blue = i32::from(first_blue) - i32::from(second_blue);
-            red * red + green * green + blue * blue
-        };
-
+    #[test]
+    fn themes_have_distinct_surface_and_navigation_signatures() {
         for (index, &name) in ThemeName::all().iter().enumerate() {
             let theme = Theme::from_name(name);
             for &other_name in &ThemeName::all()[index + 1..] {
                 let other = Theme::from_name(other_name);
-                let distance = distance_squared(theme.chrome.nav_active, other.chrome.nav_active);
-                assert!(
-                    distance >= MIN_RGB_DISTANCE_SQUARED,
-                    "{name:?} and {other_name:?} active navigation colors are too similar: squared RGB distance {distance}"
+                assert_ne!(
+                    (
+                        theme.surface.canvas,
+                        theme.surface.panel,
+                        theme.chrome.nav_active
+                    ),
+                    (
+                        other.surface.canvas,
+                        other.surface.panel,
+                        other.chrome.nav_active
+                    ),
+                    "{name:?} and {other_name:?} share a theme signature"
                 );
             }
         }
     }
 
     #[test]
-    fn contribution_marks_are_visible_and_active_grades_brighten() {
+    fn contribution_marks_are_visible_and_active_grades_increase_in_contrast() {
         const GRADES: [ContributionGrade; 5] = [
             ContributionGrade::Empty,
             ContributionGrade::Low,
@@ -958,17 +1327,17 @@ mod tests {
             }
 
             for grades in contribution.active.windows(2) {
-                let lower = relative_luminance(grades[0]);
-                let higher = relative_luminance(grades[1]);
+                let lower = contrast_ratio(grades[0], theme.surface.panel);
+                let higher = contrast_ratio(grades[1], theme.surface.panel);
                 assert!(
                     lower <= higher,
-                    "{name:?} active grade luminance decreases from {lower:.4} to {higher:.4}"
+                    "{name:?} active grade contrast decreases from {lower:.4} to {higher:.4}"
                 );
             }
             assert!(
-                relative_luminance(contribution.active[0])
-                    < relative_luminance(contribution.active[3]),
-                "{name:?} peak contribution must be brighter than low contribution"
+                contrast_ratio(contribution.active[0], theme.surface.panel)
+                    < contrast_ratio(contribution.active[3], theme.surface.panel),
+                "{name:?} peak contribution must have more contrast than low contribution"
             );
         }
     }

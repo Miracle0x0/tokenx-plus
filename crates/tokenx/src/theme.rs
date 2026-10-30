@@ -14,6 +14,12 @@ pub(crate) enum ThemeName {
     Graphite,
     Lagoon,
     Dusk,
+    InkstoneXuanmo,
+    InkstoneXuanmoDimmed,
+    InkstoneXuanzhi,
+    InkstoneXuanzhiDimmed,
+    InkstoneCanghai,
+    InkstoneQingci,
 }
 
 impl ThemeName {
@@ -31,6 +37,12 @@ impl ThemeName {
             ThemeName::Graphite,
             ThemeName::Lagoon,
             ThemeName::Dusk,
+            ThemeName::InkstoneXuanmo,
+            ThemeName::InkstoneXuanmoDimmed,
+            ThemeName::InkstoneXuanzhi,
+            ThemeName::InkstoneXuanzhiDimmed,
+            ThemeName::InkstoneCanghai,
+            ThemeName::InkstoneQingci,
         ]
     }
 
@@ -54,6 +66,12 @@ impl ThemeName {
             ThemeName::Graphite => "graphite",
             ThemeName::Lagoon => "lagoon",
             ThemeName::Dusk => "dusk",
+            ThemeName::InkstoneXuanmo => "inkstone-xuanmo",
+            ThemeName::InkstoneXuanmoDimmed => "inkstone-xuanmo-dimmed",
+            ThemeName::InkstoneXuanzhi => "inkstone-xuanzhi",
+            ThemeName::InkstoneXuanzhiDimmed => "inkstone-xuanzhi-dimmed",
+            ThemeName::InkstoneCanghai => "inkstone-canghai",
+            ThemeName::InkstoneQingci => "inkstone-qingci",
         }
     }
 
@@ -110,5 +128,30 @@ impl<'de> Deserialize<'de> for ThemeName {
                 valid = Self::valid_list()
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ThemeName;
+
+    #[test]
+    fn inkstone_names_round_trip_through_settings_and_cycle() {
+        let themes = [
+            ThemeName::InkstoneXuanmo,
+            ThemeName::InkstoneXuanmoDimmed,
+            ThemeName::InkstoneXuanzhi,
+            ThemeName::InkstoneXuanzhiDimmed,
+            ThemeName::InkstoneCanghai,
+            ThemeName::InkstoneQingci,
+        ];
+        for (index, &theme) in themes.iter().enumerate() {
+            let json = serde_json::to_string(&theme).unwrap();
+            assert_eq!(serde_json::from_str::<ThemeName>(&json).unwrap(), theme);
+            assert_eq!(
+                theme.next(),
+                themes.get(index + 1).copied().unwrap_or(ThemeName::Green)
+            );
+        }
     }
 }

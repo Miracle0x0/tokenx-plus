@@ -49,6 +49,12 @@ tui:
         graphite: "graphite"
         lagoon: "lagoon"
         dusk: "dusk"
+        inkstone_xuanmo: "inkstone-xuanmo"
+        inkstone_xuanmo_dimmed: "inkstone-xuanmo-dimmed"
+        inkstone_xuanzhi: "inkstone-xuanzhi"
+        inkstone_xuanzhi_dimmed: "inkstone-xuanzhi-dimmed"
+        inkstone_canghai: "inkstone-canghai"
+        inkstone_qingci: "inkstone-qingci"
     unknown_workspace: "Unknown workspace"
     pricing:
       available_with_warnings: "Pricing warnings; some costs may be missing"

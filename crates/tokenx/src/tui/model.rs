@@ -53,6 +53,7 @@ pub struct TuiConfig {
     pub theme: Option<ThemeName>,
     pub refresh: u64,
     pub no_refresh: bool,
+    pub no_spinner: bool,
     pub client_universe: ClientUniverse,
     pub initial_tab: Option<Tab>,
     pub effective_date: NaiveDate,
@@ -349,6 +350,7 @@ pub struct TuiModel {
     pub terminal_width: u16,
     pub terminal_height: u16,
 
+    pub(crate) no_spinner: bool,
     pub spinner_frame: usize,
 
     /// Monotonic tick counter driving the Overview fun-fact ticker (spinner
@@ -489,6 +491,7 @@ impl TuiModel {
             subscription_status_message_tone: StatusTone::Info,
             terminal_width: 80,
             terminal_height: 24,
+            no_spinner: config.no_spinner,
             spinner_frame: 0,
             ticker_tick: 0,
             dialog_stack,

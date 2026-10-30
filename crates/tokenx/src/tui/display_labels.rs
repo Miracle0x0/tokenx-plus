@@ -37,6 +37,12 @@ fn theme_label_for_locale(value: ThemeName, locale: &str) -> Cow<'static, str> {
         ThemeName::Graphite => "tui.model.display.theme.graphite",
         ThemeName::Lagoon => "tui.model.display.theme.lagoon",
         ThemeName::Dusk => "tui.model.display.theme.dusk",
+        ThemeName::InkstoneXuanmo => "tui.model.display.theme.inkstone_xuanmo",
+        ThemeName::InkstoneXuanmoDimmed => "tui.model.display.theme.inkstone_xuanmo_dimmed",
+        ThemeName::InkstoneXuanzhi => "tui.model.display.theme.inkstone_xuanzhi",
+        ThemeName::InkstoneXuanzhiDimmed => "tui.model.display.theme.inkstone_xuanzhi_dimmed",
+        ThemeName::InkstoneCanghai => "tui.model.display.theme.inkstone_canghai",
+        ThemeName::InkstoneQingci => "tui.model.display.theme.inkstone_qingci",
     };
     rust_i18n::t!(key, locale = locale)
 }
@@ -86,6 +92,12 @@ mod tests {
             (ThemeName::Graphite, "石墨"),
             (ThemeName::Lagoon, "泻湖"),
             (ThemeName::Dusk, "暮色"),
+            (ThemeName::InkstoneXuanmo, "玄墨"),
+            (ThemeName::InkstoneXuanmoDimmed, "玄墨（柔和）"),
+            (ThemeName::InkstoneXuanzhi, "宣纸"),
+            (ThemeName::InkstoneXuanzhiDimmed, "宣纸（柔和）"),
+            (ThemeName::InkstoneCanghai, "沧海"),
+            (ThemeName::InkstoneQingci, "青瓷"),
         ];
 
         for (value, expected) in cases {
