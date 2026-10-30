@@ -43,14 +43,14 @@ libc = "0.2"
 
 # HTTP client (async)
 reqwest = { version = "0.12", features = ["json", "native-tls-vendored"], default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "sync", "fs"] }
 
 # Platform directory discovery for external client data
 dirs = "5"
 
 # SQLite database support (bundled for cross-compilation)
 rusqlite = { version = "0.32", features = ["bundled"] }
-zstd = "0.13"
+zstd = "0.14.3"
 
 # CLI framework
 clap = { version = "4.5", features = ["derive", "cargo", "string"] }
