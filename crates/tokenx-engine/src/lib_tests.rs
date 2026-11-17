@@ -654,10 +654,11 @@ fn write_single_antigravity_fixture(home: &Path) {
     .unwrap();
 
     let mut usage = Vec::new();
-    usage.extend(encode_proto_varint_field(1, 12));
+    usage.extend(encode_proto_varint_field(1, 1132));
+    usage.extend(encode_proto_varint_field(2, 12));
     usage.extend(encode_proto_varint_field(5, 2));
-    usage.extend(encode_proto_varint_field(9, 4));
-    usage.extend(encode_proto_varint_field(10, 1));
+    usage.extend(encode_proto_varint_field(9, 1));
+    usage.extend(encode_proto_varint_field(10, 4));
     usage.extend(encode_proto_len_field(11, b"response-1"));
     let mut chat_model = encode_proto_len_field(4, &usage);
     chat_model.extend(encode_proto_len_field(21, b"Gemini 3.5 Flash (Medium)"));

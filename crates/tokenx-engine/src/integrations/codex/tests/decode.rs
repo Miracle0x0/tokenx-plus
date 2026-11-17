@@ -1056,6 +1056,78 @@ fn test_model_info_slug_from_turn_context() {
 }
 
 #[test]
+fn world_state_supplies_initial_model_without_overriding_turn_or_usage_identity() {
+    let snapshot =
+        r#"{"type":"world_state","payload":{"full":true,"state":{"model":"gpt-5.6-luna"}}}"#;
+    let usage = |input: i64, model: Option<&str>| {
+        serde_json::json!({
+            "type":"event_msg", "timestamp":"2026-11-01T00:00:00Z",
+            "payload":{"type":"token_count", "info":{"model":model,
+                "last_token_usage":{"input_tokens":input,"output_tokens":1},
+                "total_token_usage":{"input_tokens":input,"output_tokens":input}}}
+        })
+        .to_string()
+    };
+    for rows in [
+        vec![snapshot.to_string(), usage(1, None)],
+        vec![usage(1, None), snapshot.to_string()],
+    ] {
+        let file = create_test_file(&(rows.join("\n") + "\n"));
+        let parsed = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+        assert!(parsed.interrupted.is_none());
+        assert_eq!(parsed.rejections.total(), 0);
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].model_id.as_ref(), "gpt-5.6-luna");
+        assert_eq!(parsed.messages[0].tokens.total(), 2);
+    }
+
+    let rows = [
+        snapshot.to_string(),
+        usage(1, None),
+        r#"{"type":"turn_context","payload":{"model":"gpt-5.5"}}"#.to_string(),
+        snapshot.to_string(),
+        usage(2, None),
+        usage(3, Some("gpt-5.6-sol")),
+        snapshot.to_string(),
+        usage(4, None),
+    ];
+    let file = create_test_file(&(rows.join("\n") + "\n"));
+    let parsed = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+    assert!(parsed.interrupted.is_none());
+    assert_eq!(
+        parsed
+            .messages
+            .iter()
+            .map(|m| m.model_id.as_ref())
+            .collect::<Vec<_>>(),
+        ["gpt-5.6-luna", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-sol"]
+    );
+}
+
+#[test]
+fn world_state_model_survives_serialized_append_state() {
+    let mut file = create_test_file(concat!(
+        "{\"type\":\"world_state\",\"payload\":{\"state\":{\"model\":\"gpt-5.6-luna\"}}}\n",
+    ));
+    let first = parse_codex_file_incremental(file.path(), 0, CodexParseState::default());
+    let state = bincode::deserialize(&bincode::serialize(&first.state).unwrap()).unwrap();
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({"type":"event_msg", "timestamp":"2026-11-01T00:00:00Z",
+        "payload":{"type":"token_count", "info":{
+            "last_token_usage":{"input_tokens":100,"output_tokens":20},
+            "total_token_usage":{"input_tokens":100,"output_tokens":20}}}})
+    )
+    .unwrap();
+    let resumed = parse_codex_file_incremental(file.path(), first.consumed_offset, state);
+    assert!(resumed.interrupted.is_none());
+    assert_eq!(resumed.messages.len(), 1);
+    assert_eq!(resumed.messages[0].model_id.as_ref(), "gpt-5.6-luna");
+    assert_eq!(resumed.messages[0].tokens.total(), 120);
+}
+
+#[test]
 fn test_session_meta_provider_and_agent() {
     let line1 = r#"{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"source":"interactive","model_provider":"azure","agent_nickname":"my-agent"}}"#;
     let line2 = r#"{"timestamp":"2026-01-01T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.2"}}"#;

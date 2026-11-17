@@ -96,7 +96,7 @@ mod tests {
         DiscoveryContext {
             client: ClientId::Cline,
             home_dir,
-            root_override: None,
+            client_roots: crate::ClientRootOverrides::default(),
             scanner_settings: settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         }

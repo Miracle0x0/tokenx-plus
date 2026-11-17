@@ -39,6 +39,44 @@ fn exact_lookup_is_case_insensitive() {
 }
 
 #[test]
+fn kimi_k31_aliases_select_api_rates_and_never_a_subscription_price() {
+    let mut catalog = HashMap::new();
+    for suffix in ["", "-highspeed"] {
+        catalog.insert(
+            format!("moonshotai/kimi-k3.1-pro{suffix}"),
+            pricing(2e-6, 10e-6),
+        );
+        for plan in [
+            "kimi-code-plan-cn",
+            "kimi-code-plan-global",
+            "kimi-for-coding",
+        ] {
+            catalog.insert(format!("{plan}/k3.1-pro{suffix}"), pricing(0.0, 0.0));
+        }
+    }
+    let lookup = lookup_with_all_catalogs(HashMap::new(), HashMap::new(), catalog);
+    for raw in [
+        "k3.1-pro",
+        "kimi-code/K3.1-PRO",
+        "k3.1-pro-highspeed",
+        "kimi-code/k3.1-pro-highspeed",
+    ] {
+        let result = lookup.lookup(raw).unwrap();
+        assert!(result.matched_key.starts_with("moonshotai/kimi-k3.1-pro"));
+        assert_eq!(result.pricing.input_cost_per_token, Some(2e-6));
+    }
+    let plans_only = lookup_with_all_catalogs(
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::from([
+            ("kimi-for-coding/k3.1-pro".into(), pricing(0.0, 0.0)),
+            ("kimi-code-plan-cn/k3.1-pro".into(), pricing(0.0, 0.0)),
+        ]),
+    );
+    assert!(plans_only.lookup("k3.1-pro").is_none());
+}
+
+#[test]
 fn inferred_provider_enables_provider_scoped_exact_lookup() {
     let lookup = PricingLookup::new(
         HashMap::new(),

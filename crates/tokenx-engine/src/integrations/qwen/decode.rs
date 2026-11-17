@@ -62,7 +62,15 @@ fn token_breakdown(usage: &UsageMetadata) -> Option<TokenBreakdown> {
     let inclusive_total = prompt.checked_add(candidates)?;
     // OpenAI-compatible providers include reasoning in completion tokens;
     // Gemini reports it beside the candidates. The recorded total distinguishes them.
-    let inclusive_reasoning = thoughts > 0 && usage.total_token_count == Some(inclusive_total);
+    // Qwen's OpenAI converter records an explicit zero when the provider
+    // omits total_tokens; completion tokens still include reasoning. An
+    // absent key does not establish that converter's format.
+    let inclusive_reasoning = thoughts > 0
+        && match usage.total_token_count {
+            Some(0) => candidates > 0,
+            Some(total) => total == inclusive_total,
+            None => false,
+        };
     let reasoning = if inclusive_reasoning {
         thoughts.min(candidates)
     } else {
@@ -285,7 +293,9 @@ mod tests {
 
     #[test]
     fn cached_and_reasoning_subsets_count_once_for_both_provider_shapes() {
-        for (total, output, expected_total) in [(10300, 180, 10300), (10420, 300, 10420)] {
+        for (total, output, expected_total) in
+            [(10300, 180, 10300), (10420, 300, 10420), (0, 180, 10300)]
+        {
             let row = serde_json::json!({"type":"assistant","model":"qwen3.5-plus",
                 "timestamp":"2026-10-18T00:00:00Z","sessionId":"subsets",
                 "usageMetadata":{"promptTokenCount":10000,"candidatesTokenCount":300,

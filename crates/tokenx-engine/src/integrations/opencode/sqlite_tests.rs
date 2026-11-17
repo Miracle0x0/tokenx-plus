@@ -351,7 +351,10 @@ fn discovery_uses_the_captured_root_and_keeps_explicit_database_paths() {
     let ctx = DiscoveryContext {
         client: crate::ClientId::OpenCode,
         home_dir: home.path(),
-        root_override: Some(store.path.parent().unwrap()),
+        client_roots: crate::ClientRootOverrides {
+            opencode_data_dir: Some(store.path.parent().unwrap().to_path_buf()),
+            ..Default::default()
+        },
         scanner_settings: &settings,
         cancellation: Default::default(),
     };

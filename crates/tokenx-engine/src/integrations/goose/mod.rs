@@ -127,7 +127,7 @@ mod tests {
         let ctx = DiscoveryContext {
             client: ClientId::Goose,
             home_dir: home.path(),
-            root_override: None,
+            client_roots: crate::ClientRootOverrides::default(),
             scanner_settings: &settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         };
@@ -212,7 +212,7 @@ mod tests {
         let ctx = DiscoveryContext {
             client: ClientId::Goose,
             home_dir: home.path(),
-            root_override: None,
+            client_roots: crate::ClientRootOverrides::default(),
             scanner_settings: &settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         };

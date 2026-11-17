@@ -56,6 +56,9 @@ pub struct CodexPayload {
     pub message: Option<String>,
     /// Structured item carried by modern `item_completed` events.
     pub item: Option<CodexTurnItem>,
+    /// A world_state snapshot can name the initial model before turn_context.
+    /// Other event types may use `state` with an unrelated shape.
+    pub state: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -671,6 +674,10 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                         "validate Codex turn_context event",
                         "payload is missing",
                     )),
+                    "world_state" => Some(SessionParseError::invalid(
+                        "validate Codex world_state event",
+                        "payload is missing",
+                    )),
                     "event_msg" | "token_usage_record" => Some(SessionParseError::invalid(
                         "validate Codex event message",
                         "payload is missing",
@@ -796,6 +803,24 @@ fn parse_codex_reader<R: BufRead + ?Sized>(
                 }
                 if begins_turn {
                     state.current_turn_id = payload.turn_id.clone();
+                }
+
+                if entry.entry_type == "world_state" && state.current_model.is_none() {
+                    if let Some(model) = payload
+                        .state
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.get("model"))
+                        .and_then(Value::as_str)
+                        .filter(|model| !model.trim().is_empty())
+                    {
+                        flush_pending_model_messages(
+                            &mut pending_model_messages,
+                            &mut messages,
+                            model,
+                        );
+                        state.current_model = Some(model.to_string());
+                        handled = true;
+                    }
                 }
 
                 if !pending_model_messages.is_empty()
@@ -1633,7 +1658,11 @@ fn codex_schema_invalid_value_may_affect_state(value: &Value) -> bool {
         .is_some_and(|entry_type| {
             matches!(
                 entry_type,
-                "session_meta" | "turn_context" | "event_msg" | "token_usage_record"
+                "session_meta"
+                    | "turn_context"
+                    | "world_state"
+                    | "event_msg"
+                    | "token_usage_record"
             )
         })
 }
