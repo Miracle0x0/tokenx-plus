@@ -12,6 +12,7 @@
     "build:native": "cargo build --locked --release -p tokenx",
     "build:dev": "cargo build --locked -p tokenx",
     "check": "cargo check --locked --workspace --all-features",
+    "check:ci": "bash scripts/check-local-ci.sh",
     "cli": "./scripts/cli.sh",
     "release:bump": "bash scripts/bump-release-version.sh",
     "licenses:generate": "bash scripts/generate-third-party-licenses.sh",

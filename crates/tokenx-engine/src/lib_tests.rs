@@ -261,10 +261,7 @@ fn aggregate_model_usage_entries(
         crate::CalendarContext::explicit("UTC").unwrap(),
     )
     .unwrap()
-    .project_usage(
-        group_by,
-        chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-    )
+    .project_usage(group_by, jiff::civil::Date::new(2026, 7, 26).unwrap())
     .unwrap()
     .models
 }
@@ -336,7 +333,7 @@ fn reference_usage(options: &TestAcquisitionRequest) -> crate::projection::Usage
         .unwrap()
         .project_usage(
             &GroupBy::ClientModel,
-            chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            jiff::civil::Date::new(2026, 7, 26).unwrap(),
         )
         .unwrap()
 }
@@ -470,8 +467,8 @@ fn acquisition_usage_applies_date_range() {
             home_dir: Some(input_home.path().to_path_buf()),
             clients: Some(vec![ClientId::OpenCode, ClientId::Codex]),
             date_range: DateRange::bounded(
-                Some(chrono::NaiveDate::from_ymd_opt(2024, 12, 1).unwrap()),
-                Some(chrono::NaiveDate::from_ymd_opt(2024, 12, 1).unwrap()),
+                Some(jiff::civil::Date::new(2024, 12, 1).unwrap()),
+                Some(jiff::civil::Date::new(2024, 12, 1).unwrap()),
             )
             .unwrap(),
             scanner_settings: scanner::ScannerSettings::default(),
@@ -485,7 +482,7 @@ fn acquisition_usage_applies_date_range() {
             home_dir: Some(input_home.path().to_path_buf()),
             clients: Some(vec![ClientId::OpenCode, ClientId::Codex]),
             date_range: DateRange::bounded(
-                Some(chrono::NaiveDate::from_ymd_opt(2024, 12, 2).unwrap()),
+                Some(jiff::civil::Date::new(2024, 12, 2).unwrap()),
                 None,
             )
             .unwrap(),
@@ -4076,8 +4073,6 @@ fn test_apply_canonical_token_pricing_overrides_cost_when_pricing_exists() {
 
 #[test]
 fn test_apply_canonical_token_pricing_uses_deepseek_v4_message_timestamp() {
-    use chrono::TimeZone as _;
-
     let openrouter = HashMap::from([(
         "deepseek/deepseek-v4-flash".into(),
         pricing::ModelPricing {
@@ -4093,11 +4088,10 @@ fn test_apply_canonical_token_pricing_uses_deepseek_v4_message_timestamp() {
         },
     )]);
     let pricing = pricing::PricingService::new(HashMap::new(), openrouter);
-    let timestamp_ms = chrono::Utc
-        .with_ymd_and_hms(2026, 8, 31, 0, 30, 0)
-        .single()
+    let timestamp_ms = jiff::tz::Offset::UTC
+        .to_timestamp(jiff::civil::DateTime::new(2026, 8, 31, 0, 30, 0, 0).unwrap())
         .unwrap()
-        .timestamp_millis();
+        .as_millisecond();
     let mut msg = AttributedUsageRecord::new(
         ClientId::Codex,
         "deepseek-v4-flash",

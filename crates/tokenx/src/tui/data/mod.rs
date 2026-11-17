@@ -1,7 +1,7 @@
 #[cfg(test)]
 use anyhow::Result;
 #[cfg(test)]
-use chrono::NaiveDate;
+use jiff::civil::Date;
 
 #[cfg(test)]
 use tokenx_engine::{ClientId, GroupBy, UsageQuery};
@@ -54,7 +54,7 @@ mod tests {
     fn load_usage(
         acquisition: &tokenx_engine::AcquisitionEngine,
         group_by: GroupBy,
-        effective_date: NaiveDate,
+        effective_date: Date,
     ) -> Result<UsageProjection> {
         let prepared = acquisition.prepare()?;
         let generation = build_generation(acquisition, prepared)?;
@@ -161,13 +161,13 @@ mod tests {
 
     #[test]
     fn test_build_contribution_graph_uses_provided_today() {
-        let today = NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
+        let today = Date::new(2026, 3, 8).unwrap();
         let graph = build_contribution_graph_for_today(&[], today).unwrap();
         assert!(graph.weeks.is_empty());
 
         let daily = vec![DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::from_ymd_opt(2026, 3, 2).unwrap(),
+            date: Date::new(2026, 3, 2).unwrap(),
             tokens: UsageTokenBreakdown::default(),
             cost: 0.0,
             client_breakdown: BTreeMap::new(),
@@ -267,12 +267,8 @@ after"#,
             crate::acquisition::test_pricing_snapshot(),
         )
         .unwrap();
-        let usage = load_usage(
-            &acquisition,
-            GroupBy::Model,
-            NaiveDate::from_ymd_opt(2026, 3, 8).unwrap(),
-        )
-        .unwrap();
+        let usage =
+            load_usage(&acquisition, GroupBy::Model, Date::new(2026, 3, 8).unwrap()).unwrap();
 
         assert_eq!(usage.agents.len(), 2);
         assert_eq!(usage.agents[0].agent.as_ref(), "Architect");
@@ -326,7 +322,7 @@ after"#,
         let usage = load_usage(
             &acquisition,
             GroupBy::ClientProviderModel,
-            NaiveDate::from_ymd_opt(2026, 3, 8).unwrap(),
+            Date::new(2026, 3, 8).unwrap(),
         )
         .unwrap();
 
@@ -340,11 +336,11 @@ after"#,
 
     #[test]
     fn test_calculate_streaks_uses_provided_today() {
-        let today = NaiveDate::from_ymd_opt(2026, 3, 3).unwrap();
+        let today = Date::new(2026, 3, 3).unwrap();
         let daily = vec![
             DailyUsage {
                 cost_provenance: Default::default(),
-                date: NaiveDate::from_ymd_opt(2026, 3, 2).unwrap(),
+                date: Date::new(2026, 3, 2).unwrap(),
                 tokens: UsageTokenBreakdown::default(),
                 cost: 0.0,
                 client_breakdown: BTreeMap::new(),
@@ -353,7 +349,7 @@ after"#,
             },
             DailyUsage {
                 cost_provenance: Default::default(),
-                date: NaiveDate::from_ymd_opt(2026, 3, 3).unwrap(),
+                date: Date::new(2026, 3, 3).unwrap(),
                 tokens: UsageTokenBreakdown::default(),
                 cost: 0.0,
                 client_breakdown: BTreeMap::new(),
@@ -395,7 +391,7 @@ after"#,
 
         DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            date: Date::strptime("%Y-%m-%d", date).unwrap(),
             tokens,
             cost,
             client_breakdown,

@@ -210,8 +210,10 @@ fn view_actions(app: &TuiModel, state: &PageStates) -> Vec<Action> {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use chrono::{NaiveDate, NaiveDateTime};
+    use jiff::civil::Date;
+
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use jiff::civil::DateTime;
     use tokenx_engine::{ClientId, FrozenUsageIndex, InputFootprint, SessionUsage};
 
     use super::*;
@@ -233,7 +235,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: Some(tab),
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut settings = Settings::default();
         settings.subscription.enabled = tab == Tab::Subscription;
@@ -269,7 +271,7 @@ mod tests {
         };
         DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
+            date: Date::new(2026, 7, 22).unwrap(),
             tokens: tokens.clone(),
             cost: 0.0,
             client_breakdown: BTreeMap::from([(
@@ -291,9 +293,9 @@ mod tests {
             ..UsageTokenBreakdown::default()
         };
         HourlyUsage {
-            datetime: NaiveDateTime::new(
-                NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
-                chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+            datetime: DateTime::from_parts(
+                Date::new(2026, 7, 22).unwrap(),
+                jiff::civil::Time::new(12, 0, 0, 0).unwrap(),
             ),
             tokens: tokens.clone(),
             cost: 0.0,
@@ -438,7 +440,7 @@ mod tests {
 
         daily.usage_mut_for_test().graph = UsageGraphData {
             weeks: vec![vec![Some(ContributionDay {
-                date: NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
+                date: Date::new(2026, 7, 22).unwrap(),
                 tokens: 0,
                 cost: 0.0,
                 grade: ContributionGrade::Empty,

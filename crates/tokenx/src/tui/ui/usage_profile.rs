@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use ratatui::prelude::*;
 use std::borrow::Cow;
 
@@ -131,7 +131,7 @@ pub(crate) fn summary_lines<I>(
     activity_label: &str,
 ) -> [Line<'static>; 2]
 where
-    I: IntoIterator<Item = NaiveDate>,
+    I: IntoIterator<Item = Date>,
 {
     let date_range = format_date_range(dates);
     [
@@ -218,7 +218,7 @@ pub(crate) fn switch_to_table_line(app: &TuiModel) -> Line<'static> {
 
 fn format_date_range<I>(dates: I) -> String
 where
-    I: IntoIterator<Item = NaiveDate>,
+    I: IntoIterator<Item = Date>,
 {
     let mut dates = dates.into_iter();
     let Some(first) = dates.next() else {
@@ -253,7 +253,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         TuiModel::new_for_test(config).unwrap()
     }
@@ -430,8 +430,8 @@ mod tests {
 
     #[test]
     fn date_range_handles_empty_single_and_multiple_days() {
-        let first = NaiveDate::from_ymd_opt(2026, 7, 13).unwrap();
-        let last = NaiveDate::from_ymd_opt(2026, 7, 17).unwrap();
+        let first = Date::new(2026, 7, 13).unwrap();
+        let last = Date::new(2026, 7, 17).unwrap();
 
         assert_eq!(format_date_range([]), "No data");
         assert_eq!(format_date_range([first]), "2026-07-13");
@@ -443,7 +443,7 @@ mod tests {
         let mut app = make_app();
         app.usage_mut_for_test().total_tokens = 36_400_000_000;
         app.usage_mut_for_test().total_cost = 20_500.0;
-        let date = NaiveDate::from_ymd_opt(2026, 7, 18).unwrap();
+        let date = Date::new(2026, 7, 18).unwrap();
 
         let lines = summary_lines(&app, [date], 174, "active days");
         let summary = line_text(&lines[1]);

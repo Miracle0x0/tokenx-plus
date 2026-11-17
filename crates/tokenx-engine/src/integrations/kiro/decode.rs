@@ -593,9 +593,9 @@ fn checked_context_token_estimate(context_window: i64, percentage: f64) -> Optio
 fn parse_timestamp_value(value: Option<&serde_json::Value>) -> Option<i64> {
     match value? {
         serde_json::Value::Number(number) => number.as_f64().and_then(parse_epoch_f64_millis),
-        serde_json::Value::String(timestamp) => chrono::DateTime::parse_from_rfc3339(timestamp)
+        serde_json::Value::String(timestamp) => str::parse::<jiff::Timestamp>(timestamp)
             .ok()
-            .map(|dt| dt.timestamp_millis())
+            .map(|dt| dt.as_millisecond())
             .or_else(|| {
                 timestamp
                     .parse::<f64>()

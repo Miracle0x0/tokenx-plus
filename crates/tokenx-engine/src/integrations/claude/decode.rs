@@ -1817,8 +1817,8 @@ fn parse_claude_entry_timestamp_checked(
 ) -> SessionParseResult<Option<i64>> {
     match timestamp {
         None => Ok(None),
-        Some(timestamp) => chrono::DateTime::parse_from_rfc3339(timestamp)
-            .map(|parsed| Some(parsed.timestamp_millis()))
+        Some(timestamp) => str::parse::<jiff::Timestamp>(timestamp)
+            .map(|parsed| Some(parsed.as_millisecond()))
             .map_err(|source| {
                 SessionParseError::at_path(
                     path,

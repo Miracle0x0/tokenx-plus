@@ -82,7 +82,7 @@ miss.
 `PathBuf` remains the home-path representation after CLI parsing. Neither is
 lowered to a string and reparsed inside the acquisition pipeline.
 Date flags are likewise resolved once into a `DateRange` whose inclusive
-boundaries are `NaiveDate` values and whose optional calendar year is an
+boundaries are `jiff::civil::Date` values and whose optional calendar year is an
 integer. The same typed range is used by acquisition, generation-cache
 identity, and aggregation; filtering never reparses dates or compares date
 strings.

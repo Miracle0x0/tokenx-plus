@@ -10,7 +10,6 @@ use crate::records::{
     dedup_hash_str, normalize_workspace_key, workspace_label_from_key, UsageRecord,
 };
 use crate::{provider_identity, CalendarContext, TokenBreakdown};
-use chrono::TimeZone;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -346,7 +345,7 @@ pub(crate) fn parse_codebuddy_jsonl_file(path: &Path) -> SessionParseResult<Scan
 
 pub(crate) fn parse_codebuddy_extension_log_file(
     path: &Path,
-    calendar: CalendarContext,
+    calendar: &CalendarContext,
 ) -> SessionParseResult<ScannedInput> {
     let file = std::fs::File::open(path)
         .map_err(|error| SessionParseError::new("open CodeBuddy extension log", error))?;
@@ -536,7 +535,7 @@ fn bracket_value_after(line: &str, marker: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-fn parse_log_timestamp_ms(line: &str, calendar: CalendarContext) -> Option<i64> {
+fn parse_log_timestamp_ms(line: &str, calendar: &CalendarContext) -> Option<i64> {
     let raw = if let Some(rest) = line.strip_prefix('[') {
         rest.split_once(']')?.0.trim()
     } else {
@@ -560,14 +559,10 @@ fn parse_log_timestamp_ms(line: &str, calendar: CalendarContext) -> Option<i64> 
         .or_else(|| crate::records::utils::parse_timestamp_str(&normalized))
 }
 
-fn parse_local_naive_timestamp_ms(value: &str, calendar: CalendarContext) -> Option<i64> {
+fn parse_local_naive_timestamp_ms(value: &str, calendar: &CalendarContext) -> Option<i64> {
     for format in ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M:%S"] {
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(value, format) {
-            return match calendar.timezone().from_local_datetime(&naive) {
-                chrono::LocalResult::Single(dt) => Some(dt.timestamp_millis()),
-                chrono::LocalResult::Ambiguous(earlier, _) => Some(earlier.timestamp_millis()),
-                chrono::LocalResult::None => None,
-            };
+        if let Ok(naive) = jiff::civil::DateTime::strptime(format, value) {
+            return calendar.local_timestamp_ms(naive);
         }
     }
 
@@ -593,7 +588,7 @@ mod tests {
     }
 
     fn parse_codebuddy_extension_log_file(path: &Path) -> Vec<UsageRecord> {
-        super::parse_codebuddy_extension_log_file(path, utc_calendar())
+        super::parse_codebuddy_extension_log_file(path, &utc_calendar())
             .unwrap()
             .messages
     }
@@ -601,10 +596,10 @@ mod tests {
     #[test]
     fn extension_log_timestamp_uses_explicit_calendar() {
         let line = "[2026/7/1 16:56:02.200] [info]";
-        let utc = parse_log_timestamp_ms(line, utc_calendar()).unwrap();
+        let utc = parse_log_timestamp_ms(line, &utc_calendar()).unwrap();
         let shanghai = parse_log_timestamp_ms(
             line,
-            CalendarContext::explicit("Asia/Shanghai")
+            &CalendarContext::explicit("Asia/Shanghai")
                 .expect("Asia/Shanghai is a valid IANA timezone"),
         )
         .unwrap();
@@ -680,7 +675,7 @@ mod tests {
         .unwrap();
 
         let extension =
-            super::parse_codebuddy_extension_log_file(&log_path, utc_calendar()).unwrap();
+            super::parse_codebuddy_extension_log_file(&log_path, &utc_calendar()).unwrap();
         assert_eq!(extension.messages.len(), 1);
         assert_eq!(extension.messages[0].provider_id.as_ref(), "unknown");
         assert!(extension.rejections.is_empty());
@@ -810,7 +805,7 @@ mod tests {
         )
         .unwrap();
 
-        let scanned = super::parse_codebuddy_extension_log_file(&path, utc_calendar()).unwrap();
+        let scanned = super::parse_codebuddy_extension_log_file(&path, &utc_calendar()).unwrap();
         assert_eq!(scanned.rejections.total(), 1);
     }
 
@@ -888,7 +883,7 @@ mod tests {
         )
         .unwrap();
 
-        let scanned = super::parse_codebuddy_extension_log_file(&path, utc_calendar()).unwrap();
+        let scanned = super::parse_codebuddy_extension_log_file(&path, &utc_calendar()).unwrap();
 
         assert_eq!(scanned.messages.len(), 2);
         assert_eq!(scanned.rejections.total(), 1);
@@ -912,7 +907,7 @@ mod tests {
         )
         .unwrap();
 
-        let scanned = super::parse_codebuddy_extension_log_file(&path, utc_calendar()).unwrap();
+        let scanned = super::parse_codebuddy_extension_log_file(&path, &utc_calendar()).unwrap();
 
         assert_eq!(scanned.messages.len(), 2);
         assert_eq!(scanned.messages[1].model_id.as_ref(), "gpt-5");
@@ -940,7 +935,7 @@ mod tests {
         )
         .unwrap();
 
-        let scanned = super::parse_codebuddy_extension_log_file(&path, utc_calendar()).unwrap();
+        let scanned = super::parse_codebuddy_extension_log_file(&path, &utc_calendar()).unwrap();
 
         assert_eq!(scanned.messages.len(), 3);
         assert_eq!(scanned.messages[2].model_id.as_ref(), "claude-sonnet-4.6");
@@ -954,7 +949,7 @@ mod tests {
         assert!(super::parse_codebuddy_jsonl_file(&dir.path().join("missing.jsonl")).is_err());
         assert!(super::parse_codebuddy_extension_log_file(
             &dir.path().join("missing.log"),
-            utc_calendar(),
+            &utc_calendar(),
         )
         .is_err());
     }

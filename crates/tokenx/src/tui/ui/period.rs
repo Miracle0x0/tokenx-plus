@@ -1074,7 +1074,7 @@ mod tests {
 
     use crate::tui::data::{DailyClientInfo, DailyModelInfo, DailyUsage, UsageTokenBreakdown};
     use crate::tui::model::{Tab, TuiConfig};
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use ratatui::{backend::TestBackend, Terminal};
 
     fn token_breakdown(input: u64) -> UsageTokenBreakdown {
@@ -1122,8 +1122,8 @@ mod tests {
             section_label: "2026".to_string(),
             label: "2026-06".to_string(),
             short_label: "06".to_string(),
-            start_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
-            end_date: NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+            start_date: Date::new(2026, 6, 1).unwrap(),
+            end_date: Date::new(2026, 6, 30).unwrap(),
             tokens: token_breakdown(tokens),
             cost: 0.0,
             client_breakdown: BTreeMap::from([(
@@ -1209,7 +1209,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut app = TuiModel::new_for_test(config).unwrap();
         app.terminal_width = width;
@@ -1222,7 +1222,7 @@ mod tests {
     fn workspace_detail_day() -> DailyUsage {
         DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::from_ymd_opt(2026, 6, 9).unwrap(),
+            date: Date::new(2026, 6, 9).unwrap(),
             tokens: token_breakdown(300),
             cost: 3.0,
             client_breakdown: BTreeMap::from([(

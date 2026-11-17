@@ -2353,8 +2353,6 @@ mod tests {
 
     #[test]
     fn custom_deepseek_v4_price_wins_over_openrouter_time_period() {
-        use chrono::TimeZone as _;
-
         let custom = HashMap::from([("deepseek-v4-flash".into(), model_pricing(7.0, 0.0))]);
         let openrouter = HashMap::from([(
             "deepseek/deepseek-v4-flash".into(),
@@ -2369,11 +2367,10 @@ mod tests {
             },
         )]);
         let service = custom_service(custom, HashMap::new(), openrouter);
-        let timestamp_ms = chrono::Utc
-            .with_ymd_and_hms(2026, 8, 31, 12, 0, 0)
-            .single()
+        let timestamp_ms = jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::DateTime::new(2026, 8, 31, 12, 0, 0, 0).unwrap())
             .unwrap()
-            .timestamp_millis();
+            .as_millisecond();
 
         let cost = service
             .calculate_cost_with_provider_and_time(

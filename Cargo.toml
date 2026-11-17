@@ -32,8 +32,7 @@ toml = "0.8"
 walkdir = "2"
 
 # Date/time handling
-chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = { version = "0.10", features = ["serde"] }
+jiff = { version = "1.0", default-features = false, features = ["std", "serde", "tzdb-bundle-always"] }
 iana-time-zone = "0.1"
 
 # Error handling

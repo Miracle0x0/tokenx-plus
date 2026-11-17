@@ -234,15 +234,15 @@ fn pricing_overrides_is_the_registered_user_facing_subcommand() {
 
 #[test]
 fn resolved_custom_date_range_is_typed_and_labeled() {
-    let since = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-    let until = chrono::NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
+    let since = jiff::civil::Date::new(2024, 1, 1).unwrap();
+    let until = jiff::civil::Date::new(2024, 12, 31).unwrap();
     let resolved = resolve_date_for_date(
         DateRangeFlags {
             since: Some(since),
             until: Some(until),
             ..DateRangeFlags::default()
         },
-        chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap(),
+        jiff::civil::Date::new(2026, 3, 8).unwrap(),
     )
     .unwrap();
 
@@ -259,7 +259,7 @@ fn resolved_custom_date_range_is_typed_and_labeled() {
 fn resolved_date_range_without_flags_is_unfiltered() {
     let resolved = resolve_date_for_date(
         DateRangeFlags::default(),
-        chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap(),
+        jiff::civil::Date::new(2026, 3, 8).unwrap(),
     )
     .unwrap();
 
@@ -270,7 +270,7 @@ fn resolved_date_range_without_flags_is_unfiltered() {
 
 #[test]
 fn resolved_today_uses_provided_local_date() {
-    let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
+    let today = jiff::civil::Date::new(2026, 3, 8).unwrap();
     let resolved = resolve_date_for_date(
         DateRangeFlags {
             today: true,
@@ -288,7 +288,7 @@ fn resolved_today_uses_provided_local_date() {
 
 #[test]
 fn resolved_week_uses_provided_local_date() {
-    let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
+    let today = jiff::civil::Date::new(2026, 3, 8).unwrap();
     let resolved = resolve_date_for_date(
         DateRangeFlags {
             week: true,
@@ -300,7 +300,7 @@ fn resolved_week_uses_provided_local_date() {
 
     assert_eq!(
         resolved.range.since(),
-        Some(chrono::NaiveDate::from_ymd_opt(2026, 3, 2).unwrap())
+        Some(jiff::civil::Date::new(2026, 3, 2).unwrap())
     );
     assert_eq!(resolved.range.until(), Some(today));
     assert_eq!(resolved.label.as_deref(), Some("Last 7 days"));
@@ -309,7 +309,7 @@ fn resolved_week_uses_provided_local_date() {
 
 #[test]
 fn resolved_month_uses_provided_local_date() {
-    let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
+    let today = jiff::civil::Date::new(2026, 3, 8).unwrap();
     let resolved = resolve_date_for_date(
         DateRangeFlags {
             month: true,
@@ -321,7 +321,7 @@ fn resolved_month_uses_provided_local_date() {
 
     assert_eq!(
         resolved.range.since(),
-        Some(chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap())
+        Some(jiff::civil::Date::new(2026, 3, 1).unwrap())
     );
     assert_eq!(resolved.range.until(), Some(today));
     assert_eq!(resolved.label.as_deref(), Some("March 2026"));
@@ -330,7 +330,7 @@ fn resolved_month_uses_provided_local_date() {
 
 #[test]
 fn relative_month_re_resolves_when_local_midnight_enters_a_new_month() {
-    let next_month = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+    let next_month = jiff::civil::Date::new(2026, 4, 1).unwrap();
     let range = RelativeDateRange::CurrentMonth.resolve(next_month);
 
     assert_eq!(range.since(), Some(next_month));
@@ -365,7 +365,7 @@ fn resolved_year_is_typed_and_labeled() {
             year: Some(2024),
             ..DateRangeFlags::default()
         },
-        chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap(),
+        jiff::civil::Date::new(2026, 3, 8).unwrap(),
     )
     .unwrap();
 
@@ -377,11 +377,11 @@ fn resolved_year_is_typed_and_labeled() {
 fn resolved_reversed_custom_range_preserves_error_message() {
     let error = resolve_date_for_date(
         DateRangeFlags {
-            since: Some(chrono::NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()),
-            until: Some(chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()),
+            since: Some(jiff::civil::Date::new(2024, 12, 31).unwrap()),
+            until: Some(jiff::civil::Date::new(2024, 1, 1).unwrap()),
             ..DateRangeFlags::default()
         },
-        chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap(),
+        jiff::civil::Date::new(2026, 3, 8).unwrap(),
     )
     .unwrap_err();
 

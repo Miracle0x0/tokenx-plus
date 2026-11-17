@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use chrono::{TimeZone, Utc};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -160,8 +159,8 @@ fn metric_from_window(label: &str, window: &Window) -> UsageMetric {
         remaining_label: None,
         resets_at: window
             .reset_at
-            .and_then(|timestamp| Utc.timestamp_opt(timestamp, 0).single())
-            .map(|date| date.to_rfc3339()),
+            .and_then(|timestamp| jiff::Timestamp::from_second(timestamp).ok())
+            .map(|date| date.to_string()),
     }
 }
 

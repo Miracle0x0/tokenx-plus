@@ -208,7 +208,7 @@ mod tests {
     use super::*;
     use crate::tui::data::{HourlyUsage, UsageTokenBreakdown};
     use crate::tui::model::TuiConfig;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use ratatui::{backend::TestBackend, Terminal};
     use std::collections::BTreeSet;
 
@@ -220,17 +220,19 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         TuiModel::new_for_test(config).unwrap()
     }
 
     fn hour(date: &str, hour: u32, tokens: u64, cost: f64) -> HourlyUsage {
         HourlyUsage {
-            datetime: NaiveDate::parse_from_str(date, "%Y-%m-%d")
-                .unwrap()
-                .and_hms_opt(hour, 0, 0)
-                .unwrap(),
+            datetime: Date::strptime("%Y-%m-%d", date).unwrap().at(
+                i8::try_from(hour).unwrap(),
+                0,
+                0,
+                0,
+            ),
             tokens: UsageTokenBreakdown {
                 input: tokens,
                 ..UsageTokenBreakdown::default()

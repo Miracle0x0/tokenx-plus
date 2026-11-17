@@ -1669,8 +1669,8 @@ fn test_models_dsh_v3_today_usage_replaces_migration_source_with_cold_warm_parit
     let tmp = create_empty_fixture_dir();
     let directory = tmp.path().join(".dsh/sessions/workspace/current-session");
     fs::create_dir_all(&directory).unwrap();
-    let today = chrono::Local::now().timestamp_millis();
-    let earlier = today - chrono::Duration::days(2).num_milliseconds();
+    let today = jiff::Timestamp::now().as_millisecond();
+    let earlier = today - 2 * 24 * 60 * 60 * 1000;
     let usage = |id: &str, time: i64, turn: i64, input: i64| {
         serde_json::json!({
             "type": "assistant/message", "time": time, "seq": turn,

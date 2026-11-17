@@ -1,6 +1,6 @@
 //! Localized presentation adapter for locale-neutral Subscription data.
 
-use chrono::{DateTime, Datelike, Duration, Utc};
+use jiff::Timestamp;
 
 use crate::subscription::{
     SubscriptionError, SubscriptionIssue, SubscriptionIssueCode, SubscriptionOutput,
@@ -481,20 +481,21 @@ fn issue_message_for_locale(issue: &SubscriptionIssue, locale: &str) -> String {
 }
 
 pub(crate) fn format_reset_time(resets_at: &str) -> String {
-    let dt = match DateTime::parse_from_rfc3339(resets_at) {
-        Ok(date) => date.with_timezone(&Utc),
+    let dt = match str::parse::<jiff::Timestamp>(resets_at) {
+        Ok(date) => date,
         Err(_) => return resets_at.to_string(),
     };
-    let diff = dt - Utc::now();
-    if diff <= Duration::zero() {
+    let diff = dt.duration_since(Timestamp::now());
+    let dt = jiff::tz::TimeZone::UTC.to_datetime(dt);
+    if diff <= jiff::SignedDuration::ZERO {
         return rust_i18n::t!("subscription.reset.now").into_owned();
     }
-    let total_mins = diff.num_minutes();
+    let total_mins = diff.as_mins();
     if total_mins < 60 {
         rust_i18n::t!("subscription.reset.in_minutes", mins = total_mins).into_owned()
     } else if total_mins < 24 * 60 {
-        let hours = diff.num_hours();
-        let mins = (diff - Duration::hours(hours)).num_minutes();
+        let hours = diff.as_hours();
+        let mins = (diff - jiff::SignedDuration::from_hours(hours)).as_mins();
         if mins > 0 {
             rust_i18n::t!(
                 "subscription.reset.in_hours_minutes",
@@ -505,17 +506,13 @@ pub(crate) fn format_reset_time(resets_at: &str) -> String {
         } else {
             rust_i18n::t!("subscription.reset.in_hours", hours = hours).into_owned()
         }
-    } else if diff.num_days() < 7 {
-        let datetime = format!(
-            "{} {}",
-            weekday_name(dt.weekday()),
-            format_clock_time(dt.naive_utc())
-        );
+    } else if (diff.as_secs() / 86_400) < 7 {
+        let datetime = format!("{} {}", weekday_name(dt.weekday()), format_clock_time(dt));
         rust_i18n::t!("subscription.reset.at", datetime = datetime).into_owned()
     } else {
         rust_i18n::t!(
             "subscription.reset.at",
-            datetime = format_month_day(dt.date_naive())
+            datetime = format_month_day(dt.date())
         )
         .into_owned()
     }

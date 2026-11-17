@@ -49,7 +49,7 @@ pub(super) fn normalize_openai_cache_writes(result: &mut LookupResult, provider:
         .nth(10)
         .filter(|(index, separator)| {
             *separator == '-'
-                && chrono::NaiveDate::parse_from_str(&model[index + 1..], "%Y-%m-%d").is_ok()
+                && jiff::civil::Date::strptime("%Y-%m-%d", &model[index + 1..]).is_ok()
         })
         .map_or(model, |(index, _)| &model[..index]);
     if !PRE_56_MODELS.contains(&base)

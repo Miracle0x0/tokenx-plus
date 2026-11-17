@@ -95,7 +95,7 @@ pub(crate) fn trim_allocator() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use tokenx_engine::ClientId;
 
     #[test]
@@ -105,8 +105,8 @@ mod tests {
             PathBuf::from("/tmp/sessions"),
             ClientUniverse::new([ClientId::Amp]).unwrap(),
             DateRange::bounded(
-                Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()),
-                Some(NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()),
+                Some(Date::new(2024, 1, 1).unwrap()),
+                Some(Date::new(2024, 12, 31).unwrap()),
             )
             .unwrap(),
             tokenx_engine::scanner::ScannerSettings::default(),
@@ -122,8 +122,8 @@ mod tests {
         assert_eq!(
             acquisition.config().date_range(),
             &DateRange::bounded(
-                Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()),
-                Some(NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()),
+                Some(Date::new(2024, 1, 1).unwrap()),
+                Some(Date::new(2024, 12, 31).unwrap()),
             )
             .unwrap()
         );

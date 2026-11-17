@@ -2,7 +2,7 @@
 use super::model_usage_layout::{
     detail_table_layout as daily_detail_table_layout, MODEL_MIN_WIDTH,
 };
-use chrono::{Datelike, NaiveDate};
+use jiff::civil::Date;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, Table};
 use std::borrow::Cow;
@@ -332,11 +332,11 @@ fn daily_column_sort_field(column: DailyColumn) -> Option<SortField> {
     }
 }
 
-fn format_daily_row_date(date: NaiveDate) -> String {
+fn format_daily_row_date(date: Date) -> String {
     format_day_weekday(date)
 }
 
-fn format_month_separator(date: NaiveDate) -> String {
+fn format_month_separator(date: Date) -> String {
     localized_month_separator(date)
 }
 
@@ -560,7 +560,7 @@ pub fn render(
 
     let mut rows: Vec<Row> = Vec::with_capacity(visible_height.saturating_add(1));
     let mut lines_used = 0usize;
-    let mut prev_month: Option<(i32, u32)> = None;
+    let mut prev_month: Option<(i16, i8)> = None;
     let mut data_idx = start;
 
     while data_idx < daily_len && lines_used < visible_height {
@@ -977,7 +977,7 @@ mod tests {
     fn day(date: &str, cost: f64) -> DailyUsage {
         DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            date: Date::strptime("%Y-%m-%d", date).unwrap(),
             tokens: UsageTokenBreakdown::default(),
             cost,
             client_breakdown: BTreeMap::new(),
@@ -994,7 +994,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut app = TuiModel::new_for_test(config).unwrap();
         app.terminal_width = width;
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn daily_layout_preserves_localized_month_separator_width() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let date = Date::new(2026, 7, 27).unwrap();
         let label = crate::date_display::format_month_separator_for_locale(date, "zh-CN");
         let label_width = display_width(&label);
         let layout = daily_table_layout(

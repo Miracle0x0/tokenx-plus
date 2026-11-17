@@ -3,7 +3,7 @@
 use std::ops::Index;
 use std::sync::Arc;
 
-use chrono::NaiveDate;
+use jiff::civil::Date;
 
 use super::{ModelDetailSelection, PeriodDetailSelection, SortDirection, SortField, TuiModel};
 use crate::date_display::format_period_label;
@@ -29,7 +29,7 @@ struct UsageOrderKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DetailOrderSelection {
-    Daily(NaiveDate),
+    Daily(Date),
     Period(PeriodDetailSelection),
 }
 
@@ -365,7 +365,7 @@ impl TuiModel {
         self.selected_daily_detail_date.is_some()
     }
 
-    pub fn daily_detail_date(&self) -> Option<NaiveDate> {
+    pub fn daily_detail_date(&self) -> Option<Date> {
         self.selected_daily_detail_date
     }
 

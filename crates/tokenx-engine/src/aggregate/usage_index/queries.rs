@@ -3,7 +3,8 @@ use std::{
     sync::Arc,
 };
 
-use chrono::{Datelike, Days, NaiveDate, Timelike, Weekday};
+use jiff::civil::Date;
+use jiff::civil::Weekday;
 
 use crate::aggregate::UsageProjectionError;
 use crate::projection::{
@@ -19,8 +20,8 @@ struct PeriodDescriptor {
     ordinal: u32,
     label: String,
     short_label: String,
-    start_date: NaiveDate,
-    end_date: NaiveDate,
+    start_date: Date,
+    end_date: Date,
 }
 
 pub(super) fn try_add_projection_tokens(
@@ -161,8 +162,8 @@ struct PeriodUsageBucket {
     section_label: String,
     label: String,
     short_label: String,
-    start_date: NaiveDate,
-    end_date: NaiveDate,
+    start_date: Date,
+    end_date: Date,
     tokens: UsageTokenBreakdown,
     cost: f64,
     clients: BTreeMap<ClientId, PeriodClientBucket>,
@@ -242,7 +243,7 @@ impl PeriodUsageBucket {
 }
 
 fn period_descriptor(
-    date: NaiveDate,
+    date: Date,
     kind: PeriodKind,
 ) -> Result<PeriodDescriptor, UsageProjectionError> {
     match kind {
@@ -251,46 +252,47 @@ fn period_descriptor(
     }
 }
 
-fn monthly_period_descriptor(date: NaiveDate) -> Result<PeriodDescriptor, UsageProjectionError> {
-    let start_date = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
-        .ok_or_else(|| UsageProjectionError::new("monthly period start date"))?;
+fn monthly_period_descriptor(date: Date) -> Result<PeriodDescriptor, UsageProjectionError> {
+    let start_date = Date::new(date.year(), date.month(), 1)
+        .map_err(|_| UsageProjectionError::new("monthly period start date"))?;
     let end_date = if date.month() == 12 {
         let next_year = date
             .year()
             .checked_add(1)
             .ok_or_else(|| UsageProjectionError::new("monthly period year"))?;
-        NaiveDate::from_ymd_opt(next_year, 1, 1)
+        Date::new(next_year, 1, 1)
     } else {
-        NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1)
+        Date::new(date.year(), date.month() + 1, 1)
     }
-    .and_then(|next_month| next_month.checked_sub_days(Days::new(1)))
-    .ok_or_else(|| UsageProjectionError::new("monthly period end date"))?;
+    .and_then(|next_month| next_month.checked_sub(jiff::Span::new().days(1)))
+    .map_err(|_| UsageProjectionError::new("monthly period end date"))?;
     Ok(PeriodDescriptor {
-        section_year: date.year(),
-        ordinal: date.month(),
-        label: start_date.format("%B").to_string(),
-        short_label: start_date.format("%b").to_string(),
+        section_year: i32::from(date.year()),
+        ordinal: date.month() as u32,
+        label: start_date.strftime("%B").to_string(),
+        short_label: start_date.strftime("%b").to_string(),
         start_date,
         end_date,
     })
 }
 
-fn weekly_period_descriptor(date: NaiveDate) -> Result<PeriodDescriptor, UsageProjectionError> {
-    let iso = date.iso_week();
-    let start_date = NaiveDate::from_isoywd_opt(iso.year(), iso.week(), Weekday::Mon)
-        .ok_or_else(|| UsageProjectionError::new("weekly period start date"))?;
+fn weekly_period_descriptor(date: Date) -> Result<PeriodDescriptor, UsageProjectionError> {
+    let iso = date.iso_week_date();
+    let start_date = jiff::civil::ISOWeekDate::new(iso.year(), iso.week(), Weekday::Monday)
+        .map(|week| week.date())
+        .map_err(|_| UsageProjectionError::new("weekly period start date"))?;
     let end_date = start_date
-        .checked_add_days(Days::new(6))
-        .ok_or_else(|| UsageProjectionError::new("weekly period end date"))?;
+        .checked_add(jiff::Span::new().days(6))
+        .map_err(|_| UsageProjectionError::new("weekly period end date"))?;
     let label = format!(
         "W{:02} {} - {}",
         iso.week(),
-        start_date.format("%b %d"),
-        end_date.format("%b %d")
+        start_date.strftime("%b %d"),
+        end_date.strftime("%b %d")
     );
     Ok(PeriodDescriptor {
-        section_year: iso.year(),
-        ordinal: iso.week(),
+        section_year: i32::from(iso.year()),
+        ordinal: iso.week() as u32,
         label,
         short_label: format!("W{:02}", iso.week()),
         start_date,
@@ -322,7 +324,7 @@ pub fn build_period_usage(
 
 pub fn build_contribution_graph_for_today(
     daily: &[DailyUsage],
-    today: NaiveDate,
+    today: Date,
 ) -> Result<UsageGraphData, UsageProjectionError> {
     let daily_with_totals = daily
         .iter()
@@ -421,21 +423,20 @@ fn median_of_sorted(values: &[f64]) -> f64 {
 
 fn build_contribution_graph_for_today_by<T>(
     daily: &[T],
-    today: NaiveDate,
-    date_of: impl Fn(&T) -> NaiveDate + Copy,
+    today: Date,
+    date_of: impl Fn(&T) -> Date + Copy,
     tokens_of: impl Fn(&T) -> u64 + Copy,
     cost_of: impl Fn(&T) -> f64 + Copy,
 ) -> Result<UsageGraphData, UsageProjectionError> {
     if daily.is_empty() {
         return Ok(UsageGraphData { weeks: vec![] });
     }
-    let days_to_sunday = today.weekday().num_days_from_sunday();
+    let days_to_sunday = today.weekday().to_sunday_zero_offset();
     let end_date = today;
     let start_date = end_date
-        .checked_sub_days(Days::new(364 + u64::from(days_to_sunday)))
-        .ok_or_else(|| UsageProjectionError::new("contribution graph start date"))?;
-    let daily_map: HashMap<NaiveDate, &T> =
-        daily.iter().map(|usage| (date_of(usage), usage)).collect();
+        .checked_sub(jiff::Span::new().days(364 + i64::from(days_to_sunday)))
+        .map_err(|_| UsageProjectionError::new("contribution graph start date"))?;
+    let daily_map: HashMap<Date, &T> = daily.iter().map(|usage| (date_of(usage), usage)).collect();
     let visible_active_tokens: Vec<u64> = daily_map
         .iter()
         .filter(|(date, _)| **date >= start_date && **date <= end_date)
@@ -465,7 +466,7 @@ fn build_contribution_graph_for_today_by<T>(
             })
         };
         current_week.push(day);
-        if current_date.weekday() == chrono::Weekday::Sat || current_date == end_date {
+        if current_date.weekday() == jiff::civil::Weekday::Saturday || current_date == end_date {
             weeks.push(current_week);
             current_week = Vec::new();
         }
@@ -473,28 +474,28 @@ fn build_contribution_graph_for_today_by<T>(
             break;
         }
         current_date = current_date
-            .checked_add_days(Days::new(1))
-            .ok_or_else(|| UsageProjectionError::new("contribution graph date traversal"))?;
+            .checked_add(jiff::Span::new().days(1))
+            .map_err(|_| UsageProjectionError::new("contribution graph date traversal"))?;
     }
     Ok(UsageGraphData { weeks })
 }
 
 pub fn calculate_streaks_for_today(
     daily: &[DailyUsage],
-    today: NaiveDate,
+    today: Date,
 ) -> Result<(u32, u32), UsageProjectionError> {
     calculate_streaks_for_today_by(daily, today, |usage| usage.date)
 }
 
 fn calculate_streaks_for_today_by<T>(
     daily: &[T],
-    today: NaiveDate,
-    date_of: impl Fn(&T) -> NaiveDate,
+    today: Date,
+    date_of: impl Fn(&T) -> Date,
 ) -> Result<(u32, u32), UsageProjectionError> {
     if daily.is_empty() {
         return Ok((0, 0));
     }
-    let dates: HashSet<NaiveDate> = daily.iter().map(date_of).collect();
+    let dates: HashSet<Date> = daily.iter().map(date_of).collect();
     let mut current_streak = 0u32;
     let mut check_date = today;
     while dates.contains(&check_date) {
@@ -502,31 +503,31 @@ fn calculate_streaks_for_today_by<T>(
             .checked_add(1)
             .ok_or_else(|| UsageProjectionError::new("current streak length"))?;
         check_date = check_date
-            .checked_sub_days(Days::new(1))
-            .ok_or_else(|| UsageProjectionError::new("current streak date traversal"))?;
+            .checked_sub(jiff::Span::new().days(1))
+            .map_err(|_| UsageProjectionError::new("current streak date traversal"))?;
     }
     if current_streak == 0 {
         let yesterday = today
-            .checked_sub_days(Days::new(1))
-            .ok_or_else(|| UsageProjectionError::new("current streak previous date"))?;
+            .checked_sub(jiff::Span::new().days(1))
+            .map_err(|_| UsageProjectionError::new("current streak previous date"))?;
         check_date = yesterday;
         while dates.contains(&check_date) {
             current_streak = current_streak
                 .checked_add(1)
                 .ok_or_else(|| UsageProjectionError::new("current streak length"))?;
             check_date = check_date
-                .checked_sub_days(Days::new(1))
-                .ok_or_else(|| UsageProjectionError::new("current streak date traversal"))?;
+                .checked_sub(jiff::Span::new().days(1))
+                .map_err(|_| UsageProjectionError::new("current streak date traversal"))?;
         }
     }
     let mut longest_streak = 0u32;
-    let mut sorted_dates: Vec<NaiveDate> = dates.into_iter().collect();
+    let mut sorted_dates: Vec<Date> = dates.into_iter().collect();
     sorted_dates.sort();
     let mut streak = 0u32;
-    let mut prev_date: Option<NaiveDate> = None;
+    let mut prev_date: Option<Date> = None;
     for date in sorted_dates {
         if let Some(prev) = prev_date {
-            if prev.checked_add_days(Days::new(1)) == Some(date) {
+            if prev.checked_add(jiff::Span::new().days(1)).ok() == Some(date) {
                 streak = streak
                     .checked_add(1)
                     .ok_or_else(|| UsageProjectionError::new("longest streak length"))?;
@@ -592,7 +593,7 @@ pub fn find_peak_hour(
     let mut hour_totals: HashMap<u32, (u64, f64)> = HashMap::new();
     for entry in hourly {
         let hour = entry.datetime.hour();
-        let entry_totals = hour_totals.entry(hour).or_insert((0, 0.0));
+        let entry_totals = hour_totals.entry(hour as u32).or_insert((0, 0.0));
         let tokens = entry
             .tokens
             .checked_total()

@@ -53,7 +53,9 @@ fn reset_time_rfc3339(epoch_ms: Option<i64>) -> Option<String> {
     if ms <= 0 {
         return None;
     }
-    chrono::DateTime::from_timestamp_millis(ms).map(|dt| dt.to_rfc3339())
+    jiff::Timestamp::from_millisecond(ms)
+        .ok()
+        .map(|dt| dt.to_string())
 }
 
 fn payload_from_parts(quota: QuotaResp, sub: Option<SubResp>) -> SubscriptionPayload {

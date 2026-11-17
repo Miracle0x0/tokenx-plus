@@ -15,8 +15,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use chrono::NaiveDate;
 use crossterm::event::{KeyEvent, MouseEvent};
+use jiff::civil::Date;
 use tokenx_engine::{
     pricing::PricingStatus, ClientId, ClientSelection, ClientUniverse, Generation, UsageQuery,
 };
@@ -56,7 +56,7 @@ pub struct TuiConfig {
     pub no_spinner: bool,
     pub client_universe: ClientUniverse,
     pub initial_tab: Option<Tab>,
-    pub effective_date: NaiveDate,
+    pub effective_date: Date,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,7 +321,7 @@ pub struct TuiModel {
     pub sort_direction: SortDirection,
     tab_sort_state: HashMap<Tab, (SortField, SortDirection)>,
     list_interactions: HashMap<ListContext, ListInteraction>,
-    pub selected_daily_detail_date: Option<NaiveDate>,
+    pub selected_daily_detail_date: Option<Date>,
     pub selected_period_detail: Option<PeriodDetailSelection>,
     pub selected_model_detail: Option<ModelDetailSelection>,
     model_detail_models: Option<Vec<UsageModelEntry>>,
@@ -595,20 +595,20 @@ impl TuiModel {
             })
     }
 
-    pub(crate) fn effective_date(&self) -> NaiveDate {
+    pub(crate) fn effective_date(&self) -> Date {
         self.local_usage.query().effective_date
     }
 
-    pub(crate) fn current_calendar_hour(&self) -> chrono::NaiveDateTime {
+    pub(crate) fn current_calendar_hour(&self) -> jiff::civil::DateTime {
         self.calendar_context().current_hour()
     }
 
     pub(crate) fn calendar_context(&self) -> tokenx_engine::CalendarContext {
-        *self
-            .require_installed_generation()
+        self.require_installed_generation()
             .generation()
             .acquisition_config()
             .calendar()
+            .clone()
     }
 
     pub fn has_enabled_subscription_providers(&self) -> bool {
@@ -904,7 +904,7 @@ impl TuiModel {
         crate::acquisition::trim_allocator();
     }
 
-    fn graph_cell_for_date(&self, date: NaiveDate) -> Option<(usize, usize)> {
+    fn graph_cell_for_date(&self, date: Date) -> Option<(usize, usize)> {
         self.installed_generation()?
             .view()
             .graph
@@ -918,7 +918,7 @@ impl TuiModel {
             })
     }
 
-    fn graph_date_for_cell(&self, (week_idx, day_idx): (usize, usize)) -> Option<NaiveDate> {
+    fn graph_date_for_cell(&self, (week_idx, day_idx): (usize, usize)) -> Option<Date> {
         self.installed_generation()?
             .view()
             .graph
@@ -960,7 +960,7 @@ impl TuiModel {
         crate::acquisition::trim_allocator();
     }
 
-    fn capture_usage_selection(&mut self, mark_refresh: bool) -> (bool, Option<NaiveDate>) {
+    fn capture_usage_selection(&mut self, mark_refresh: bool) -> (bool, Option<Date>) {
         if mark_refresh {
             self.clear_model_detail_state(true);
         }
@@ -974,7 +974,7 @@ impl TuiModel {
     fn reconcile_usage_selection(
         &mut self,
         had_graph_selection: bool,
-        selected_graph_date: Option<NaiveDate>,
+        selected_graph_date: Option<Date>,
     ) {
         if had_graph_selection {
             self.selected_graph_cell =
@@ -1230,7 +1230,7 @@ impl TuiModel {
         self.on_tick_for_date(self.effective_date());
     }
 
-    pub(super) fn on_tick_for_date(&mut self, current_date: NaiveDate) {
+    pub(super) fn on_tick_for_date(&mut self, current_date: Date) {
         self.spinner_frame = (self.spinner_frame + 1) % 20;
         self.ticker_tick = self.ticker_tick.wrapping_add(1);
         self.advance_effective_date(current_date);
@@ -1275,7 +1275,7 @@ impl TuiModel {
         }
     }
 
-    pub(super) fn advance_effective_date(&mut self, current_date: NaiveDate) {
+    pub(super) fn advance_effective_date(&mut self, current_date: Date) {
         let previous_date = self.effective_date();
         if previous_date == current_date {
             return;

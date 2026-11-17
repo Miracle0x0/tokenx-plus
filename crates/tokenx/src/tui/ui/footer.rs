@@ -1273,7 +1273,7 @@ mod tests {
     use crate::subscription::{ProviderId, SubscriptionOutput, UsageMetric};
     use crate::tui::data::{DailyUsage, UsageModelEntry, UsageTokenBreakdown};
     use crate::tui::model::TuiConfig;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
 
     #[test]
     fn elapsed_timer_unit_uses_the_requested_locale() {
@@ -1289,7 +1289,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: Some(tab),
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut settings = Settings::default();
         settings.subscription.enabled = true;
@@ -1415,7 +1415,7 @@ mod tests {
         let mut app = installed_app_on(tab);
         app.usage_mut_for_test().daily.push(DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
+            date: Date::new(2026, 7, 22).unwrap(),
             tokens: UsageTokenBreakdown::default(),
             cost: 0.0,
             client_breakdown: BTreeMap::new(),

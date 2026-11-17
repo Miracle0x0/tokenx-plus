@@ -204,7 +204,7 @@ fn favorite_family(entries: BTreeMap<ModelFamily, Aggregate>) -> Option<RankedFa
 mod tests {
     use super::*;
     use crate::tui::data::{DailyClientInfo, DailyModelInfo, DailyUsage};
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
 
     type TestModel<'a> = (&'a str, UsageTokenBreakdown, f64);
     type TestClient<'a> = (&'a str, Vec<TestModel<'a>>);
@@ -269,7 +269,7 @@ mod tests {
 
         DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            date: Date::strptime("%Y-%m-%d", date).unwrap(),
             tokens: day_tokens,
             cost: day_cost,
             client_breakdown,

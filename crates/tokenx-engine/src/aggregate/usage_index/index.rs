@@ -3,7 +3,8 @@ use std::{
     sync::Arc,
 };
 
-use chrono::{NaiveDate, NaiveDateTime};
+use jiff::civil::Date;
+use jiff::civil::DateTime;
 use serde::{Deserialize, Serialize};
 
 use super::queries::{
@@ -88,7 +89,7 @@ fn record_count_u32(value: i32, field: &'static str) -> Result<u32, UsageAggrega
 }
 
 #[cfg(test)]
-pub(super) fn test_calendar_fields(timestamp_ms: i64) -> Option<(NaiveDate, NaiveDateTime)> {
+pub(super) fn test_calendar_fields(timestamp_ms: i64) -> Option<(Date, DateTime)> {
     crate::CalendarContext::explicit("UTC")
         .expect("UTC is a valid test calendar")
         .local_date_and_hour(timestamp_ms)
@@ -96,7 +97,7 @@ pub(super) fn test_calendar_fields(timestamp_ms: i64) -> Option<(NaiveDate, Naiv
 
 #[cfg(test)]
 /// Test-only explicit UTC conversion for direct builder fixtures.
-pub(super) fn timestamp_to_hour(timestamp_ms: i64) -> Option<NaiveDateTime> {
+pub(super) fn timestamp_to_hour(timestamp_ms: i64) -> Option<DateTime> {
     test_calendar_fields(timestamp_ms).map(|(_, hour)| hour)
 }
 
@@ -133,9 +134,9 @@ pub struct FrozenUsageIndex {
     #[serde(with = "super::wire::map_as_vec")]
     pub(super) agent_map: HashMap<AgentKey, AgentBucket>,
     #[serde(with = "super::wire::map_as_vec")]
-    pub(super) daily_map: HashMap<NaiveDate, DailyBucket>,
+    pub(super) daily_map: HashMap<Date, DailyBucket>,
     #[serde(with = "super::wire::map_as_vec")]
-    pub(super) hourly_map: HashMap<NaiveDateTime, HourlyBucket>,
+    pub(super) hourly_map: HashMap<DateTime, HourlyBucket>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -267,7 +268,7 @@ pub(super) struct AgentBucket {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct DailyBucket {
-    pub(super) date: NaiveDate,
+    pub(super) date: Date,
     pub(super) clients: HashMap<ClientId, DailyClientBucket>,
 }
 
@@ -308,7 +309,7 @@ struct DailyModelBucket {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct HourlyBucket {
-    pub(super) datetime: NaiveDateTime,
+    pub(super) datetime: DateTime,
     pub(super) clients: HashMap<ClientId, HourlyClientBucket>,
 }
 
@@ -610,8 +611,8 @@ impl UsageIndexBuilder {
     pub(crate) fn check_push_local(
         &self,
         msg: &AttributedUsageRecord,
-        local_date: Option<NaiveDate>,
-        local_hour: Option<NaiveDateTime>,
+        local_date: Option<Date>,
+        local_hour: Option<DateTime>,
     ) -> Result<(), UsageAggregationError> {
         self.next_sequence
             .checked_add(1)
@@ -739,8 +740,8 @@ impl UsageIndexBuilder {
     pub(crate) fn push_local(
         &mut self,
         msg: &AttributedUsageRecord,
-        local_date: Option<NaiveDate>,
-        local_hour: Option<NaiveDateTime>,
+        local_date: Option<Date>,
+        local_hour: Option<DateTime>,
     ) -> Result<(), UsageAggregationError> {
         let sequence = self.next_sequence;
         self.next_sequence = self
@@ -1272,7 +1273,7 @@ impl FrozenUsageIndex {
     pub fn project_usage(
         &self,
         group_by: &GroupBy,
-        effective_date: NaiveDate,
+        effective_date: Date,
     ) -> Result<UsageProjection, UsageProjectionError> {
         self.project_usage_selected(group_by, None, effective_date)
     }
@@ -1284,7 +1285,7 @@ impl FrozenUsageIndex {
         &self,
         group_by: &GroupBy,
         selected: &HashSet<ClientId>,
-        effective_date: NaiveDate,
+        effective_date: Date,
     ) -> Result<UsageProjection, UsageProjectionError> {
         self.project_usage_selected(group_by, Some(selected), effective_date)
     }
@@ -1293,7 +1294,7 @@ impl FrozenUsageIndex {
         &self,
         group_by: &GroupBy,
         selected: Option<&HashSet<ClientId>>,
-        effective_date: NaiveDate,
+        effective_date: Date,
     ) -> Result<UsageProjection, UsageProjectionError> {
         let ModelProjection {
             cost_provenance,

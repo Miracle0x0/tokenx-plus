@@ -1,5 +1,4 @@
 use anyhow::Result;
-use chrono::{TimeZone, Utc};
 use serde::Deserialize;
 
 use super::{SubscriptionIssue, SubscriptionIssueCode, SubscriptionPayload, UsageMetric};
@@ -56,9 +55,9 @@ fn epoch_ms_to_rfc3339(ts: i64) -> Option<String> {
     } else {
         ts.saturating_mul(1000)
     };
-    Utc.timestamp_millis_opt(ms)
-        .single()
-        .map(|dt| dt.to_rfc3339())
+    jiff::Timestamp::from_millisecond(ms)
+        .ok()
+        .map(|dt| dt.to_string())
 }
 
 fn is_auth_error(resp: &ApiResponse) -> bool {

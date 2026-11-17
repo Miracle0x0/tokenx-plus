@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use tokenx_engine::{ClientId, Generation, GroupBy, UsageQuery};
 
 use super::data::{
@@ -52,13 +52,13 @@ pub(crate) struct DetailRow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeriodDetailSelection {
     pub kind: PeriodKind,
-    pub start_date: NaiveDate,
-    pub end_date: NaiveDate,
+    pub start_date: Date,
+    pub end_date: Date,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct DetailSelections {
-    pub(crate) daily: Option<NaiveDate>,
+    pub(crate) daily: Option<Date>,
     pub(crate) period: Option<PeriodDetailSelection>,
 }
 
@@ -96,7 +96,7 @@ struct ClientContributionOrder {
 
 #[derive(Default)]
 struct DetailProjectionCache {
-    daily: Option<(NaiveDate, Arc<[DetailRow]>)>,
+    daily: Option<(Date, Arc<[DetailRow]>)>,
     period: Option<(PeriodDetailSelection, Arc<[DetailRow]>)>,
 }
 
@@ -116,7 +116,7 @@ impl DetailProjectionCache {
         Ok(cache)
     }
 
-    fn materialize_daily(&mut self, view: &UsageProjection, date: NaiveDate) -> Result<()> {
+    fn materialize_daily(&mut self, view: &UsageProjection, date: Date) -> Result<()> {
         if self
             .daily
             .as_ref()
@@ -167,7 +167,7 @@ impl DetailProjectionCache {
         Ok(())
     }
 
-    fn daily(&self, date: NaiveDate) -> &[DetailRow] {
+    fn daily(&self, date: Date) -> &[DetailRow] {
         self.daily
             .as_ref()
             .filter(|(cached_date, _)| *cached_date == date)
@@ -468,7 +468,7 @@ impl InstalledGeneration {
         self.overview = projection.overview;
     }
 
-    fn materialize_daily_detail(&mut self, date: NaiveDate) -> Result<()> {
+    fn materialize_daily_detail(&mut self, date: Date) -> Result<()> {
         self.details.materialize_daily(&self.view, date)
     }
 
@@ -510,7 +510,7 @@ impl InstalledGeneration {
         self.periods.get(kind)
     }
 
-    pub(crate) fn daily_detail(&self, date: NaiveDate) -> &[DetailRow] {
+    pub(crate) fn daily_detail(&self, date: Date) -> &[DetailRow] {
         self.details.daily(date)
     }
 
@@ -644,7 +644,7 @@ impl LocalUsageState {
             .install_projection(projection);
     }
 
-    pub(crate) fn materialize_daily_detail(&mut self, date: NaiveDate) -> Result<()> {
+    pub(crate) fn materialize_daily_detail(&mut self, date: Date) -> Result<()> {
         self.installed_mut()
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -800,7 +800,7 @@ mod tests {
         UsageQuery {
             clients: ClientSelection::new([client]).unwrap(),
             group_by: GroupBy::Model,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         }
     }
 
@@ -814,7 +814,7 @@ mod tests {
         )
     }
 
-    fn daily_usage(date: chrono::NaiveDate, tokens: UsageTokenBreakdown) -> DailyUsage {
+    fn daily_usage(date: jiff::civil::Date, tokens: UsageTokenBreakdown) -> DailyUsage {
         DailyUsage {
             cost_provenance: Default::default(),
             date,
@@ -899,7 +899,7 @@ mod tests {
         let mut state = LocalUsageState::new(UsageQuery::full(
             &universe,
             GroupBy::Model,
-            chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            jiff::civil::Date::new(2026, 7, 26).unwrap(),
         ));
         assert!(state
             .install_generation(generation(ClientId::Codex), DetailSelections::default())
@@ -915,7 +915,7 @@ mod tests {
             .install_generation(generation(ClientId::Codex), DetailSelections::default())
             .unwrap();
         state.view_mut().daily = vec![daily_usage(
-            chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            jiff::civil::Date::new(2026, 7, 26).unwrap(),
             UsageTokenBreakdown {
                 input: 42,
                 ..UsageTokenBreakdown::default()
@@ -937,7 +937,7 @@ mod tests {
 
     #[test]
     fn detail_cache_reuses_same_key_and_interned_model_identity() {
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let date = jiff::civil::Date::new(2026, 7, 26).unwrap();
         let model_id: Arc<str> = "gpt-5".into();
         let view = UsageProjection {
             group_by: GroupBy::Model,
@@ -995,7 +995,7 @@ mod tests {
     fn period_cache_creation_returns_projection_errors_before_install() {
         let view = UsageProjection {
             daily: vec![daily_usage(
-                chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+                jiff::civil::Date::new(2026, 7, 26).unwrap(),
                 UsageTokenBreakdown {
                     input: u64::MAX,
                     output: 1,

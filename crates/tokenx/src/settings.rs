@@ -695,7 +695,12 @@ mod tests {
         let parsed: Settings = serde_json::from_str(r#"{"timeZone":"Asia/Shanghai"}"#).unwrap();
 
         assert_eq!(
-            parsed.time_zone.unwrap().timezone().to_string(),
+            parsed
+                .time_zone
+                .as_ref()
+                .unwrap()
+                .timezone_name()
+                .to_string(),
             "Asia/Shanghai"
         );
         assert_eq!(

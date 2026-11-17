@@ -251,7 +251,7 @@ impl GenerationController {
         &mut self,
         app: &mut TuiModel,
         now: Instant,
-        effective_date: chrono::NaiveDate,
+        effective_date: jiff::civil::Date,
     ) {
         let date_changed = app.effective_date() != effective_date;
         app.advance_effective_date(effective_date);
@@ -328,7 +328,7 @@ impl GenerationController {
 
     fn refresh_acquisition_context(
         &mut self,
-        effective_date: chrono::NaiveDate,
+        effective_date: jiff::civil::Date,
         order: tokenx_engine::pricing::SourceOrder,
     ) -> Result<bool> {
         let current = self.acquisition.config();
@@ -347,7 +347,7 @@ impl GenerationController {
             current.universe().clone(),
             date_range,
             current.scanner().clone(),
-            *current.calendar(),
+            current.calendar().clone(),
             pricing,
             current.client_roots().clone(),
             current.model_mappings().clone(),
@@ -410,7 +410,7 @@ impl GenerationController {
             current.universe().clone(),
             current.date_range().clone(),
             current.scanner().clone(),
-            *current.calendar(),
+            current.calendar().clone(),
             pricing,
             current.client_roots().clone(),
             current.model_mappings().clone(),
@@ -758,7 +758,7 @@ mod tests {
             no_spinner: false,
             client_universe: universe.clone(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut app = TuiModel::new_for_test(config).unwrap();
         let status = RefreshStatus::new(automatic, Duration::from_secs(30), Duration::ZERO);
@@ -852,10 +852,10 @@ mod tests {
         let (_, controller) = harness(false);
         let mut controller =
             controller.with_relative_date_range(Some(RelativeDateRange::LastSevenDays));
-        let calendar = *controller.acquisition.config().calendar();
+        let calendar = controller.acquisition.config().calendar().clone();
         let pricing = controller.acquisition.config().pricing().clone();
         let pricing_snapshot = controller.acquisition.pricing_snapshot();
-        let next_day = chrono::NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let next_day = jiff::civil::Date::new(2026, 7, 27).unwrap();
 
         assert!(controller
             .refresh_acquisition_context(next_day, tokenx_engine::pricing::SourceOrder::default())
@@ -983,7 +983,7 @@ mod tests {
     #[test]
     fn midnight_projection_change_does_not_queue_an_input_rescan() {
         let (mut app, mut controller) = harness(false);
-        let next_day = chrono::NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let next_day = jiff::civil::Date::new(2026, 7, 27).unwrap();
 
         controller.on_tick_for_date(&mut app, Instant::now(), next_day);
 
@@ -997,7 +997,7 @@ mod tests {
         let (mut app, controller) = harness(false);
         let mut controller =
             controller.with_relative_date_range(Some(RelativeDateRange::LastSevenDays));
-        let next_day = chrono::NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let next_day = jiff::civil::Date::new(2026, 7, 27).unwrap();
 
         controller.on_tick_for_date(&mut app, Instant::now(), next_day);
 

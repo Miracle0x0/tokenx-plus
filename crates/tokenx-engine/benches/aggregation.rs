@@ -10,8 +10,8 @@ use tokenx_engine::{
 
 const MESSAGE_COUNT: usize = 100_000;
 
-fn effective_date() -> chrono::NaiveDate {
-    chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap()
+fn effective_date() -> jiff::civil::Date {
+    jiff::civil::Date::new(2026, 7, 26).unwrap()
 }
 
 fn calendar() -> CalendarContext {
@@ -310,8 +310,8 @@ fn bench_frozen_usage_index_build(c: &mut Criterion) {
 
     let messages = production_shaped_messages();
     let january = DateRange::bounded(
-        Some(chrono::NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()),
-        Some(chrono::NaiveDate::from_ymd_opt(2025, 1, 31).unwrap()),
+        Some(jiff::civil::Date::new(2025, 1, 1).unwrap()),
+        Some(jiff::civil::Date::new(2025, 1, 31).unwrap()),
     )
     .unwrap();
     group.bench_function("production_shaped_typed_date_filter_100k", |b| {

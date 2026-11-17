@@ -169,8 +169,8 @@ pub(crate) fn parse_pi_file(path: &Path) -> SessionParseResult<ScannedInput> {
                 .record(RecordRejectionReason::MissingTimestamp);
             continue;
         };
-        let timestamp = match chrono::DateTime::parse_from_rfc3339(&timestamp_text) {
-            Ok(timestamp) => timestamp.timestamp_millis(),
+        let timestamp = match str::parse::<jiff::Timestamp>(&timestamp_text) {
+            Ok(timestamp) => timestamp.as_millisecond(),
             Err(_) => {
                 scanned
                     .rejections

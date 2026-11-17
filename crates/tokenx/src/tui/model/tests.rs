@@ -4,7 +4,7 @@ use super::*;
 use crate::acquisition::{acquisition_engine, build_generation};
 use crate::tui::data::{AgentEntry, DailyUsage, HourlyUsage};
 use crate::tui::data::{DailyClientInfo, DailyModelInfo, UsageModelEntry, UsageTokenBreakdown};
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use serial_test::serial;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -19,7 +19,7 @@ fn config_with_theme(theme: Option<&str>) -> TuiConfig {
         no_spinner: false,
         client_universe: tokenx_engine::ClientUniverse::all(),
         initial_tab: None,
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     }
 }
 
@@ -101,7 +101,7 @@ fn render_order_cache_reuses_matching_keys_and_invalidates_semantic_changes() {
 #[test]
 fn daily_and_hourly_orders_share_only_an_identical_revision_and_sort_key() {
     let mut app = TuiModel::new_for_test(config_with_theme(None)).unwrap();
-    let date = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+    let date = Date::new(2026, 7, 26).unwrap();
     app.usage_mut_for_test().daily = vec![DailyUsage {
         cost_provenance: Default::default(),
         date,
@@ -112,7 +112,7 @@ fn daily_and_hourly_orders_share_only_an_identical_revision_and_sort_key() {
         turn_count: 0,
     }];
     app.usage_mut_for_test().hourly = vec![HourlyUsage {
-        datetime: date.and_hms_opt(10, 0, 0).unwrap(),
+        datetime: date.at(10, 0, 0, 0),
         tokens: UsageTokenBreakdown::default(),
         cost: 1.0,
         clients: BTreeSet::new(),
@@ -369,7 +369,7 @@ fn make_app() -> TuiModel {
         no_spinner: false,
         client_universe: tokenx_engine::ClientUniverse::all(),
         initial_tab: None,
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
     TuiModel::new_for_test_with_settings(config, test_settings()).unwrap()
 }
@@ -400,7 +400,7 @@ fn make_app_with_settings(settings: Settings) -> TuiModel {
         no_spinner: false,
         client_universe: tokenx_engine::ClientUniverse::all(),
         initial_tab: None,
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
     TuiModel::new_for_test_with_settings(config, settings).unwrap()
 }
@@ -427,7 +427,7 @@ fn explicit_clients_define_an_immutable_client_universe() {
         no_spinner: false,
         client_universe: ClientUniverse::new([ClientId::Claude, ClientId::Codex]).unwrap(),
         initial_tab: None,
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
     let app = TuiModel::new_for_test_with_settings(config, test_settings()).unwrap();
     let expected = HashSet::from([ClientId::Claude, ClientId::Codex]);
@@ -448,7 +448,7 @@ fn installed_generation_has_one_input_footprint_for_overview_and_sessions() {
         no_spinner: false,
         client_universe: ClientUniverse::new([ClientId::Claude, ClientId::Codex]).unwrap(),
         initial_tab: None,
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
     let mut app = TuiModel::new_for_test_with_settings(config, test_settings()).unwrap();
     let footprint = tokenx_engine::InputFootprint::from_client_bytes([
@@ -611,7 +611,7 @@ fn daily_usage_by_client(date: &str, cost: f64, clients: ClientModelCosts<'_>) -
 
     DailyUsage {
         cost_provenance: Default::default(),
-        date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+        date: Date::strptime("%Y-%m-%d", date).unwrap(),
         tokens: total_tokens,
         cost: if cost > 0.0 { cost } else { total_cost },
         client_breakdown,
@@ -620,12 +620,9 @@ fn daily_usage_by_client(date: &str, cost: f64, clients: ClientModelCosts<'_>) -
     }
 }
 
-fn usage_data_with_graph_for_today(
-    graph_today: NaiveDate,
-    activity_date: NaiveDate,
-) -> UsageProjection {
+fn usage_data_with_graph_for_today(graph_today: Date, activity_date: Date) -> UsageProjection {
     let daily = vec![daily_usage(
-        &activity_date.format("%Y-%m-%d").to_string(),
+        &activity_date.strftime("%Y-%m-%d").to_string(),
         1.0,
         vec![("gpt-5.4", "openai", 1.0)],
     )];
@@ -776,7 +773,7 @@ fn cli_no_refresh_overrides_enabled_setting_for_this_run() {
         no_spinner: false,
         client_universe: tokenx_engine::ClientUniverse::all(),
         initial_tab: None,
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
     let settings = Settings {
         auto_refresh_enabled: true,
@@ -798,7 +795,7 @@ fn test_initial_subscription_tab_fails_when_flag_off() {
         no_spinner: false,
         client_universe: tokenx_engine::ClientUniverse::all(),
         initial_tab: Some(Tab::Subscription),
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
     let result = TuiModel::new_for_test_with_settings(config, Settings::default());
     let error = match result {
@@ -1256,7 +1253,7 @@ fn test_daily_detail_updates_rows_after_group_by_reload() {
     assert!(app.is_daily_detail_active());
     assert_eq!(
         app.daily_detail_date(),
-        Some(NaiveDate::from_ymd_opt(2026, 5, 17).unwrap())
+        Some(Date::new(2026, 5, 17).unwrap())
     );
     assert_eq!(rows.len(), 1);
     assert_eq!(
@@ -1495,7 +1492,7 @@ fn test_initial_models_tab_uses_token_sort_default() {
         no_spinner: false,
         client_universe: tokenx_engine::ClientUniverse::all(),
         initial_tab: Some(Tab::Models),
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
 
     let app = TuiModel::new_for_test_with_settings(config, Settings::default()).unwrap();
@@ -1568,7 +1565,7 @@ fn test_initial_hourly_tab_uses_hourly_sort_default() {
         no_spinner: false,
         client_universe: tokenx_engine::ClientUniverse::all(),
         initial_tab: Some(Tab::Hourly),
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
 
     let app = TuiModel::new_for_test(config).unwrap();
@@ -1611,9 +1608,9 @@ fn test_daily_default_sort_shows_latest_date_first() {
     assert_eq!(
         dates,
         vec![
-            NaiveDate::from_ymd_opt(2026, 5, 26).unwrap(),
-            NaiveDate::from_ymd_opt(2026, 5, 25).unwrap(),
-            NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+            Date::new(2026, 5, 26).unwrap(),
+            Date::new(2026, 5, 25).unwrap(),
+            Date::new(2026, 5, 24).unwrap(),
         ]
     );
 }
@@ -2398,7 +2395,7 @@ fn test_client_picker_is_unavailable_during_cold_load() {
 fn test_entering_stats_selects_today_instead_of_latest_subscription_day() {
     let mut app = make_app();
     let today = app.effective_date();
-    let activity_date = today - chrono::Duration::days(1);
+    let activity_date = today - jiff::Span::new().days(1);
     app.update_data(usage_data_with_graph_for_today(today, activity_date));
     let today_cell = app.graph_cell_for_date(today).unwrap();
     let activity_cell = app.graph_cell_for_date(activity_date).unwrap();
@@ -2413,8 +2410,8 @@ fn test_entering_stats_selects_today_instead_of_latest_subscription_day() {
 
 #[test]
 fn test_initial_stats_tab_selects_today_from_cached_graph() {
-    let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
-    let activity_date = today - chrono::Duration::days(2);
+    let today = jiff::civil::Date::new(2026, 7, 26).unwrap();
+    let activity_date = today - jiff::Span::new().days(2);
     let config = TuiConfig {
         theme: Some(ThemeName::Blue),
         refresh: 0,
@@ -2422,7 +2419,7 @@ fn test_initial_stats_tab_selects_today_from_cached_graph() {
         no_spinner: false,
         client_universe: tokenx_engine::ClientUniverse::all(),
         initial_tab: Some(Tab::Stats),
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
     };
 
     let mut app = TuiModel::new_for_test_with_settings(config, test_settings()).unwrap();
@@ -2445,7 +2442,7 @@ fn test_stats_selects_today_when_graph_arrives_after_entry() {
 
     app.update_data(usage_data_with_graph_for_today(
         today,
-        today - chrono::Duration::days(1),
+        today - jiff::Span::new().days(1),
     ));
 
     assert_eq!(
@@ -2459,7 +2456,7 @@ fn test_stats_selects_today_when_graph_arrives_after_entry() {
 fn test_stats_tab_reclick_keeps_manual_day_selection() {
     let mut app = make_app();
     let today = app.effective_date();
-    let activity_date = today - chrono::Duration::days(3);
+    let activity_date = today - jiff::Span::new().days(3);
     app.update_data(usage_data_with_graph_for_today(today, activity_date));
     app.switch_tab(Tab::Stats);
     let activity_cell = app.graph_cell_for_date(activity_date).unwrap();
@@ -2476,7 +2473,7 @@ fn test_stats_tab_reclick_keeps_manual_day_selection() {
 fn test_stats_escape_prevents_refresh_from_reselecting_today() {
     let mut app = make_app();
     let today = app.effective_date();
-    let activity_date = today - chrono::Duration::days(1);
+    let activity_date = today - jiff::Span::new().days(1);
     app.update_data(usage_data_with_graph_for_today(today, activity_date));
     app.switch_tab(Tab::Stats);
     assert!(app.selected_graph_cell.is_some());
@@ -2492,14 +2489,14 @@ fn test_stats_escape_prevents_refresh_from_reselecting_today() {
 fn test_stats_selection_is_remapped_by_date_after_graph_rebuild() {
     let mut app = make_app();
     let today = app.effective_date();
-    let selected_date = today - chrono::Duration::days(10);
+    let selected_date = today - jiff::Span::new().days(10);
     app.update_data(usage_data_with_graph_for_today(today, selected_date));
     app.switch_tab(Tab::Stats);
     let old_cell = app.graph_cell_for_date(selected_date).unwrap();
     app.selected_graph_cell = Some(old_cell);
 
     app.update_data(usage_data_with_graph_for_today(
-        today + chrono::Duration::days(7),
+        today + jiff::Span::new().days(7),
         selected_date,
     ));
 
@@ -2896,7 +2893,7 @@ fn test_on_tick_increments_frame() {
 #[test]
 fn tick_advances_effective_date_without_an_installed_generation() {
     let mut app = make_app();
-    let next_day = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+    let next_day = Date::new(2026, 7, 27).unwrap();
 
     app.on_tick_for_date(next_day);
 
@@ -2912,7 +2909,7 @@ fn tick_reprojects_an_installed_generation_at_local_midnight() {
         Vec::new(),
         tokenx_engine::InputFootprint::default(),
     );
-    let next_day = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+    let next_day = Date::new(2026, 7, 27).unwrap();
 
     app.on_tick_for_date(next_day);
 

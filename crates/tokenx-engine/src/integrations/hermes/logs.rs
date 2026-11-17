@@ -8,7 +8,6 @@ use std::sync::Arc;
 use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
 use crate::records::UsageRecord;
 use crate::{CalendarContext, TokenBreakdown};
-use chrono::TimeZone;
 
 pub(super) type GroupKey = (Arc<str>, Arc<str>, Option<Arc<str>>);
 
@@ -80,7 +79,7 @@ struct Call {
 
 const MARKER: &str = " agent.conversation_loop: API call #";
 
-fn parse_call(line: &str, calendar: CalendarContext) -> Result<Option<Call>, ()> {
+fn parse_call(line: &str, calendar: &CalendarContext) -> Result<Option<Call>, ()> {
     let Some((prefix, rest)) = line.split_once(MARKER) else {
         return Ok(None);
     };
@@ -97,15 +96,14 @@ fn parse_call(line: &str, calendar: CalendarContext) -> Result<Option<Call>, ()>
         .strip_suffix(']')
         .filter(|value| !value.is_empty())
         .ok_or(())?;
-    let stamp =
-        chrono::NaiveDateTime::parse_from_str(&stamp.replace(',', "."), "%Y-%m-%d %H:%M:%S%.f")
-            .map_err(|_| ())?;
+    let stamp = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S%.f", stamp.replace(',', "."))
+        .map_err(|_| ())?;
     let timestamp = calendar
         .timezone()
-        .from_local_datetime(&stamp)
-        .single()
-        .ok_or(())?
-        .timestamp_millis();
+        .to_ambiguous_timestamp(stamp)
+        .unambiguous()
+        .map_err(|_| ())?
+        .as_millisecond();
     let mut model = None;
     let mut provider = None;
     let mut input = None;
@@ -162,7 +160,7 @@ fn parse_call(line: &str, calendar: CalendarContext) -> Result<Option<Call>, ()>
     }))
 }
 
-pub(super) fn allocate(scanned: &mut ScannedInput, inputs: &LogInputs, calendar: CalendarContext) {
+pub(super) fn allocate(scanned: &mut ScannedInput, inputs: &LogInputs, calendar: &CalendarContext) {
     if let Some(failure) = &inputs.failure {
         scanned.interrupted = Some(InputFailure::new("discover Hermes call logs", failure));
         return;

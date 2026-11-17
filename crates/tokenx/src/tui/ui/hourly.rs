@@ -1,4 +1,5 @@
-use chrono::{NaiveDate, NaiveDateTime};
+use jiff::civil::Date;
+use jiff::civil::DateTime;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, Table};
 use std::borrow::Cow;
@@ -214,11 +215,11 @@ fn hourly_column_sort_field(column: HourlyColumn) -> Option<SortField> {
     }
 }
 
-fn format_hour_label(datetime: NaiveDateTime) -> String {
-    datetime.format("%H:00").to_string()
+fn format_hour_label(datetime: DateTime) -> String {
+    datetime.strftime("%H:00").to_string()
 }
 
-fn format_date_separator(date: NaiveDate) -> String {
+fn format_date_separator(date: Date) -> String {
     format_numeric_month_day(date)
 }
 
@@ -347,7 +348,7 @@ fn render_table(
 
     let mut rows: Vec<Row> = Vec::with_capacity(visible_height.saturating_add(1));
     let mut lines_used = 0usize;
-    let mut prev_date: Option<NaiveDate> = None;
+    let mut prev_date: Option<Date> = None;
     let mut data_idx = start;
 
     while data_idx < hourly_len && lines_used < visible_height {
@@ -513,11 +514,11 @@ mod tests {
         }
     }
 
-    fn hour(date: NaiveDate, h: u32) -> HourlyUsage {
+    fn hour(date: Date, h: u32) -> HourlyUsage {
         let mut clients = BTreeSet::new();
         clients.insert(ClientId::Claude);
         HourlyUsage {
-            datetime: date.and_hms_opt(h, 0, 0).unwrap(),
+            datetime: date.at(i8::try_from(h).unwrap(), 0, 0, 0),
             tokens: UsageTokenBreakdown::default(),
             cost: 1.0,
             clients,
@@ -535,15 +536,15 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut app = TuiModel::new_for_test(config).unwrap();
         app.terminal_width = width;
         app.current_tab = Tab::Hourly;
         app.sort_field = SortField::Date;
         app.sort_direction = SortDirection::Descending;
-        let newer = NaiveDate::from_ymd_opt(2026, 5, 29).unwrap();
-        let older = NaiveDate::from_ymd_opt(2026, 5, 28).unwrap();
+        let newer = Date::new(2026, 5, 29).unwrap();
+        let older = Date::new(2026, 5, 28).unwrap();
         app.usage_mut_for_test().hourly = vec![
             hour(newer, 14),
             hour(newer, 13),
@@ -661,8 +662,7 @@ mod tests {
 
     #[test]
     fn hourly_label_omits_year() {
-        let datetime =
-            NaiveDateTime::parse_from_str("2026-03-02 18:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let datetime = DateTime::strptime("%Y-%m-%d %H:%M:%S", "2026-03-02 18:00:00").unwrap();
 
         assert_eq!(format_hour_label(datetime), "18:00");
     }
@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn date_separator_uses_month_slash_day() {
-        let date = NaiveDate::from_ymd_opt(2026, 3, 2).unwrap();
+        let date = Date::new(2026, 3, 2).unwrap();
 
         assert_eq!(format_date_separator(date), "03/02");
     }
@@ -812,7 +812,7 @@ mod tests {
     }
 
     fn grouped_hour(models: Vec<(&str, HourlyModelInfo)>) -> HourlyUsage {
-        let mut entry = hour(NaiveDate::from_ymd_opt(2026, 5, 29).unwrap(), 14);
+        let mut entry = hour(Date::new(2026, 5, 29).unwrap(), 14);
         entry.tokens = UsageTokenBreakdown {
             input: 100,
             ..UsageTokenBreakdown::default()

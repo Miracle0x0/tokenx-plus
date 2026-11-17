@@ -116,11 +116,11 @@ pub(crate) struct ParseContext {
 
 impl ParseContext {
     pub(crate) fn new(
-        calendar: crate::CalendarContext,
+        calendar: &crate::CalendarContext,
         cancellation: &crate::engine::AcquisitionCancellation,
     ) -> Self {
         Self {
-            calendar,
+            calendar: calendar.clone(),
             cancellation: cancellation.clone(),
         }
     }
@@ -134,8 +134,8 @@ impl ParseContext {
         }
     }
 
-    pub(crate) fn calendar(&self) -> crate::CalendarContext {
-        self.calendar
+    pub(crate) fn calendar(&self) -> &crate::CalendarContext {
+        &self.calendar
     }
 
     pub(crate) fn cancellation(&self) -> &crate::engine::AcquisitionCancellation {
@@ -1008,7 +1008,7 @@ pub(crate) fn run_prepared_integrations(
             binding,
             input_cache,
             pricing,
-            calendar,
+            calendar.clone(),
             cancellation.clone(),
             model_mappings.clone(),
         );

@@ -137,7 +137,7 @@ pub(crate) fn build_usage_report_json(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use std::collections::BTreeMap;
     use tokenx_engine::projection::{AgentEntry, DailyUsage, UsageTokenBreakdown};
 
@@ -281,7 +281,7 @@ mod tests {
             }],
             daily: vec![DailyUsage {
                 cost_provenance: Default::default(),
-                date: NaiveDate::from_ymd_opt(2026, 7, 23).unwrap(),
+                date: Date::new(2026, 7, 23).unwrap(),
                 tokens,
                 cost: 0.0,
                 client_breakdown: BTreeMap::new(),

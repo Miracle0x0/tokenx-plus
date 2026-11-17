@@ -183,7 +183,7 @@ mod tests {
         let projection = usage_index
             .project_usage(
                 &crate::GroupBy::Model,
-                chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+                jiff::civil::Date::new(2026, 7, 26).unwrap(),
             )
             .unwrap();
         assert_eq!(projection.total_tokens, u64::MAX);

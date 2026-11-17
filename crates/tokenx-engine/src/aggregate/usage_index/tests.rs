@@ -103,7 +103,7 @@ use std::{
     sync::Arc,
 };
 
-use chrono::{Datelike, NaiveDate};
+use jiff::civil::Date;
 
 use super::index::{AgentInstanceKey, DailyBucket, DailyClientBucket};
 use super::*;
@@ -117,8 +117,8 @@ use crate::{ClientId, ClientUniverse, GroupBy};
 
 struct TuiUsageHarness;
 
-fn projection_date() -> NaiveDate {
-    NaiveDate::from_ymd_opt(2026, 7, 26).unwrap()
+fn projection_date() -> Date {
+    Date::new(2026, 7, 26).unwrap()
 }
 
 impl TuiUsageHarness {
@@ -199,7 +199,7 @@ fn make_message_with_tokens(
     )
 }
 
-fn daily_usage(date: NaiveDate, tokens: u64, cost: f64) -> DailyUsage {
+fn daily_usage(date: Date, tokens: u64, cost: f64) -> DailyUsage {
     DailyUsage {
         cost_provenance: Default::default(),
         date,
@@ -214,7 +214,7 @@ fn daily_usage(date: NaiveDate, tokens: u64, cost: f64) -> DailyUsage {
     }
 }
 
-fn contribution_day(graph: &UsageGraphData, date: NaiveDate) -> &ContributionDay {
+fn contribution_day(graph: &UsageGraphData, date: Date) -> &ContributionDay {
     graph
         .weeks
         .iter()
@@ -231,29 +231,29 @@ fn extreme_calendar_dates_return_typed_projection_errors() {
         ..UsageProjection::default()
     };
 
-    let monthly = build_period_usage(&projection(NaiveDate::MAX), PeriodKind::Monthly)
-        .expect_err("the month after NaiveDate::MAX is not representable");
+    let monthly = build_period_usage(&projection(Date::MAX), PeriodKind::Monthly)
+        .expect_err("the month after Date::MAX is not representable");
     assert_eq!(monthly.field(), "monthly period end date");
 
-    let weekly = build_period_usage(&projection(NaiveDate::MAX), PeriodKind::Weekly)
-        .expect_err("the week containing NaiveDate::MAX cannot extend past the date domain");
+    let weekly = build_period_usage(&projection(Date::MAX), PeriodKind::Weekly)
+        .expect_err("the week containing Date::MAX cannot extend past the date domain");
     assert!(matches!(
         weekly.field(),
         "weekly period start date" | "weekly period end date"
     ));
 
-    let minimum_day = [daily_usage(NaiveDate::MIN, 1, 0.0)];
-    let graph = build_contribution_graph_for_today(&minimum_day, NaiveDate::MIN)
-        .expect_err("the visible graph window cannot precede NaiveDate::MIN");
+    let minimum_day = [daily_usage(Date::MIN, 1, 0.0)];
+    let graph = build_contribution_graph_for_today(&minimum_day, Date::MIN)
+        .expect_err("the visible graph window cannot precede Date::MIN");
     assert_eq!(graph.field(), "contribution graph start date");
 
-    let streak = calculate_streaks_for_today(&minimum_day, NaiveDate::MIN)
-        .expect_err("walking backward from NaiveDate::MIN must be fallible");
+    let streak = calculate_streaks_for_today(&minimum_day, Date::MIN)
+        .expect_err("walking backward from Date::MIN must be fallible");
     assert_eq!(streak.field(), "current streak date traversal");
 
-    let maximum_day = [daily_usage(NaiveDate::MAX, 1, 0.0)];
-    let graph = build_contribution_graph_for_today(&maximum_day, NaiveDate::MAX)
-        .expect("the graph loop must stop before advancing past NaiveDate::MAX");
+    let maximum_day = [daily_usage(Date::MAX, 1, 0.0)];
+    let graph = build_contribution_graph_for_today(&maximum_day, Date::MAX)
+        .expect("the graph loop must stop before advancing past Date::MAX");
     assert_eq!(
         graph
             .weeks
@@ -261,13 +261,13 @@ fn extreme_calendar_dates_return_typed_projection_errors() {
             .and_then(|week| week.last())
             .and_then(Option::as_ref)
             .map(|day| day.date),
-        Some(NaiveDate::MAX)
+        Some(Date::MAX)
     );
 }
 
 #[test]
 fn contribution_graph_rejects_overflowing_public_daily_usage() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+    let today = Date::new(2026, 7, 26).unwrap();
     let mut usage = daily_usage(today, u64::MAX, 0.0);
     usage.tokens.output = 1;
 
@@ -278,7 +278,7 @@ fn contribution_graph_rejects_overflowing_public_daily_usage() {
 
 #[test]
 fn projection_uses_the_explicit_effective_date() {
-    let activity_date = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
+    let activity_date = Date::new(2026, 7, 24).unwrap();
     let tokens = UsageTokenBreakdown {
         input: 10,
         ..UsageTokenBreakdown::default()
@@ -304,10 +304,7 @@ fn projection_uses_the_explicit_effective_date() {
 
     let on_activity_date = index.project_usage(&GroupBy::Model, activity_date).unwrap();
     let two_days_later = index
-        .project_usage(
-            &GroupBy::Model,
-            NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-        )
+        .project_usage(&GroupBy::Model, Date::new(2026, 7, 26).unwrap())
         .unwrap();
 
     assert_eq!(on_activity_date.current_streak, 1);
@@ -336,14 +333,14 @@ fn projection_uses_the_explicit_effective_date() {
             .as_ref()
             .unwrap()
             .date,
-        NaiveDate::from_ymd_opt(2026, 7, 26).unwrap()
+        Date::new(2026, 7, 26).unwrap()
     );
 }
 
 #[test]
 fn contribution_graph_colors_unpriced_activity_by_tokens() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
-    let lower_date = today.pred_opt().unwrap();
+    let today = Date::new(2026, 7, 24).unwrap();
+    let lower_date = today.yesterday().unwrap();
     let daily = [
         daily_usage(lower_date, 25, 0.0),
         daily_usage(today, 100, 0.0),
@@ -363,13 +360,13 @@ fn contribution_graph_colors_unpriced_activity_by_tokens() {
 
 #[test]
 fn contribution_graph_ignores_off_window_history_when_assigning_grades() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
-    let days_to_sunday = today.weekday().num_days_from_sunday();
-    let start_date = today - chrono::Duration::days(364 + days_to_sunday as i64);
-    let off_window_date = start_date.pred_opt().unwrap();
+    let today = Date::new(2026, 7, 24).unwrap();
+    let days_to_sunday = today.weekday().to_sunday_zero_offset();
+    let start_date = today - jiff::Span::new().days(364 + days_to_sunday as i64);
+    let off_window_date = start_date.yesterday().unwrap();
     let visible_daily = [
-        daily_usage(today - chrono::Duration::days(2), 10, 0.1),
-        daily_usage(today - chrono::Duration::days(1), 100, 1.0),
+        daily_usage(today - jiff::Span::new().days(2), 10, 0.1),
+        daily_usage(today - jiff::Span::new().days(1), 100, 1.0),
         daily_usage(today, 1_000, 10.0),
     ];
     let mut daily = visible_daily.to_vec();
@@ -393,11 +390,11 @@ fn contribution_graph_ignores_off_window_history_when_assigning_grades() {
 
 #[test]
 fn contribution_graph_cost_does_not_influence_equal_token_grades() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
-    let expensive_date = today.pred_opt().unwrap();
-    let free_date = expensive_date.pred_opt().unwrap();
+    let today = Date::new(2026, 7, 24).unwrap();
+    let expensive_date = today.yesterday().unwrap();
+    let free_date = expensive_date.yesterday().unwrap();
     let daily = [
-        daily_usage(free_date.pred_opt().unwrap(), 25, 0.01),
+        daily_usage(free_date.yesterday().unwrap(), 25, 0.01),
         daily_usage(free_date, 50, 0.0),
         daily_usage(expensive_date, 50, 10_000.0),
         daily_usage(today, 100, 1.0),
@@ -416,7 +413,7 @@ fn contribution_graph_cost_does_not_influence_equal_token_grades() {
 
 #[test]
 fn contribution_graph_log_mad_assigns_all_four_active_grades() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
+    let today = Date::new(2026, 7, 24).unwrap();
     let tokens = [1, 2, 4, 16, 256, 1_024, 8_192, 131_072];
     let expected_grades = [
         ContributionGrade::Low,
@@ -433,7 +430,7 @@ fn contribution_graph_log_mad_assigns_all_four_active_grades() {
         .enumerate()
         .map(|(index, token_total)| {
             daily_usage(
-                today - chrono::Duration::days((tokens.len() - 1 - index) as i64),
+                today - jiff::Span::new().days((tokens.len() - 1 - index) as i64),
                 *token_total,
                 0.0,
             )
@@ -448,7 +445,7 @@ fn contribution_graph_log_mad_assigns_all_four_active_grades() {
 
 #[test]
 fn contribution_graph_log_mad_resists_one_large_visible_outlier() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
+    let today = Date::new(2026, 7, 24).unwrap();
     let tokens = [1, 2, 4, 8, 16, 32, 64, 1_u64 << 60];
     let expected_grades = [
         ContributionGrade::Low,
@@ -465,7 +462,7 @@ fn contribution_graph_log_mad_resists_one_large_visible_outlier() {
         .enumerate()
         .map(|(index, token_total)| {
             daily_usage(
-                today - chrono::Duration::days((tokens.len() - 1 - index) as i64),
+                today - jiff::Span::new().days((tokens.len() - 1 - index) as i64),
                 *token_total,
                 0.0,
             )
@@ -480,7 +477,7 @@ fn contribution_graph_log_mad_resists_one_large_visible_outlier() {
 
 #[test]
 fn contribution_graph_handles_zero_mad_degeneracies() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
+    let today = Date::new(2026, 7, 24).unwrap();
     let one_day = [daily_usage(today, 7, 0.0)];
     let one_day_graph = build_contribution_graph_for_today(&one_day, today).unwrap();
     assert_eq!(
@@ -489,8 +486,8 @@ fn contribution_graph_handles_zero_mad_degeneracies() {
     );
 
     let all_equal = [
-        daily_usage(today - chrono::Duration::days(2), 42, 1.0),
-        daily_usage(today - chrono::Duration::days(1), 42, 2.0),
+        daily_usage(today - jiff::Span::new().days(2), 42, 1.0),
+        daily_usage(today - jiff::Span::new().days(1), 42, 2.0),
         daily_usage(today, 42, 3.0),
     ];
     let all_equal_graph = build_contribution_graph_for_today(&all_equal, today).unwrap();
@@ -499,9 +496,9 @@ fn contribution_graph_handles_zero_mad_degeneracies() {
     }));
 
     let fallback_daily = [
-        daily_usage(today - chrono::Duration::days(3), 8, 0.0),
-        daily_usage(today - chrono::Duration::days(2), 8, 1.0),
-        daily_usage(today - chrono::Duration::days(1), 8, 2.0),
+        daily_usage(today - jiff::Span::new().days(3), 8, 0.0),
+        daily_usage(today - jiff::Span::new().days(2), 8, 1.0),
+        daily_usage(today - jiff::Span::new().days(1), 8, 2.0),
         daily_usage(today, 64, 3.0),
     ];
     let fallback_graph = build_contribution_graph_for_today(&fallback_daily, today).unwrap();
@@ -519,8 +516,8 @@ fn contribution_graph_handles_zero_mad_degeneracies() {
 
 #[test]
 fn contribution_graph_reserves_grade_zero_for_zero_tokens() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
-    let zero_date = today.pred_opt().unwrap();
+    let today = Date::new(2026, 7, 24).unwrap();
+    let zero_date = today.yesterday().unwrap();
     let daily = [
         daily_usage(zero_date, 0, 1_000_000.0),
         daily_usage(today, 1, 0.0),
@@ -540,7 +537,7 @@ fn contribution_graph_reserves_grade_zero_for_zero_tokens() {
 
 #[test]
 fn contribution_graph_retains_visible_token_and_cost_fields() {
-    let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
+    let today = Date::new(2026, 7, 24).unwrap();
     let daily = [daily_usage(today, 100, 1.25)];
 
     let graph = build_contribution_graph_for_today(&daily, today).unwrap();
@@ -628,7 +625,7 @@ fn projection_identity_clones_canonical_arcs_without_copying_payloads() {
 
 #[test]
 fn period_projection_uses_explicit_grouping_identity() {
-    fn day(date: NaiveDate, provider: &str) -> DailyUsage {
+    fn day(date: Date, provider: &str) -> DailyUsage {
         DailyUsage {
             cost_provenance: Default::default(),
             date,
@@ -667,8 +664,8 @@ fn period_projection_uses_explicit_grouping_identity() {
     }
 
     let daily = [
-        day(NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(), "openai"),
-        day(NaiveDate::from_ymd_opt(2026, 7, 2).unwrap(), "azure"),
+        day(Date::new(2026, 7, 1).unwrap(), "openai"),
+        day(Date::new(2026, 7, 2).unwrap(), "azure"),
     ];
     let merged = build_period_usage(
         &UsageProjection {
@@ -3251,10 +3248,9 @@ fn reprojection_derives_each_grouping_from_one_frozen_index() {
 
 fn hourly(hour: u32, input_tokens: u64, cost: f64) -> HourlyUsage {
     HourlyUsage {
-        datetime: NaiveDate::from_ymd_opt(2024, 6, 10)
+        datetime: Date::new(2024, 6, 10)
             .unwrap()
-            .and_hms_opt(hour, 0, 0)
-            .unwrap(),
+            .at(i8::try_from(hour).unwrap(), 0, 0, 0),
         tokens: UsageTokenBreakdown {
             input: input_tokens,
             ..UsageTokenBreakdown::default()
@@ -3293,7 +3289,7 @@ fn period_helpers_return_typed_overflow_errors() {
         .into_iter()
         .map(|(day, input)| DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::from_ymd_opt(2024, 6, day).unwrap(),
+            date: Date::new(2024, 6, day).unwrap(),
             tokens: UsageTokenBreakdown {
                 input,
                 ..UsageTokenBreakdown::default()

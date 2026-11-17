@@ -123,9 +123,7 @@ pub(crate) fn record_finalization(record: &records::UsageRecord) -> RecordFinali
     if record.session_id.trim().is_empty() {
         return RecordFinalization::Reject(RecordRejectionReason::MissingSession);
     }
-    if record.timestamp <= 0
-        || chrono::DateTime::<chrono::Utc>::from_timestamp_millis(record.timestamp).is_none()
-    {
+    if record.timestamp <= 0 || jiff::Timestamp::from_millisecond(record.timestamp).is_err() {
         return RecordFinalization::Reject(RecordRejectionReason::MissingTimestamp);
     }
     if [

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use chrono::{Datelike, Timelike, Weekday};
+use jiff::civil::Weekday;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -68,13 +68,13 @@ const PIE_BODY_WIDTH_NUMERATOR: u16 = 5;
 const PIE_BODY_WIDTH_DENOMINATOR: u16 = 4;
 const LEFT_COL_W: u16 = 44;
 const WEEKDAYS: [Weekday; 7] = [
-    Weekday::Sun,
-    Weekday::Mon,
-    Weekday::Tue,
-    Weekday::Wed,
-    Weekday::Thu,
-    Weekday::Fri,
-    Weekday::Sat,
+    Weekday::Sunday,
+    Weekday::Monday,
+    Weekday::Tuesday,
+    Weekday::Wednesday,
+    Weekday::Thursday,
+    Weekday::Friday,
+    Weekday::Saturday,
 ];
 const MONTH_COUNT: usize = 12;
 
@@ -227,7 +227,8 @@ fn render_graph(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifac
             .and_then(|day| day.as_ref())
             .map(|day| day.date)
     });
-    let selected_weekday = selected_date.map(|date| date.weekday().num_days_from_sunday() as usize);
+    let selected_weekday =
+        selected_date.map(|date| date.weekday().to_sunday_zero_offset() as usize);
     let is_narrow = app.is_narrow();
     let label_width = if is_narrow { 2u16 } else { 4u16 };
     let graph_start_x = content.x.saturating_add(label_width);
@@ -307,13 +308,13 @@ fn render_graph(frame: &mut Frame, app: &TuiModel, artifacts: &mut RenderArtifac
         }
     }
 
-    let selected_month = selected_date.map(|date| (date.year(), date.month0() as usize));
+    let selected_month = selected_date.map(|date| (date.year(), (date.month() - 1) as usize));
     let mut current_month = None;
     let mut last_label_end = None;
     for (week_idx, week) in graph.weeks.iter().skip(start_week).enumerate() {
         let mut label_month = None;
         for day in week.iter().filter_map(Option::as_ref) {
-            let month = (day.date.year(), day.date.month0() as usize);
+            let month = (day.date.year(), (day.date.month() - 1) as usize);
             if current_month == Some(month) || label_month == Some(month) {
                 continue;
             }
@@ -524,7 +525,7 @@ fn selected_graph_day(app: &TuiModel) -> Option<&ContributionDay> {
 }
 
 /// Per-hour token intensity for a day, normalized to its busiest hour (0..=1).
-fn hour_intensities_for_day(app: &TuiModel, date: chrono::NaiveDate) -> [f64; HOUR_STRIP_LEN] {
+fn hour_intensities_for_day(app: &TuiModel, date: jiff::civil::Date) -> [f64; HOUR_STRIP_LEN] {
     let mut tokens = [0u64; HOUR_STRIP_LEN];
     for entry in &app.usage().hourly {
         if entry.datetime.date() == date {
@@ -915,7 +916,7 @@ mod tests {
     };
     use crate::tui::model::TuiConfig;
     use crate::tui::themes::{Theme, ThemeName};
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use ratatui::{backend::TestBackend, Terminal};
     use std::collections::BTreeSet;
 
@@ -1030,7 +1031,7 @@ mod tests {
     #[test]
     fn pie_render_shows_model_family_legend() {
         let mut app = make_app(120);
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         app.usage_mut_for_test().daily = vec![day_usage(
             date,
             100,
@@ -1070,7 +1071,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: Some(crate::tui::model::Tab::Stats),
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         })
         .unwrap();
         app.handle_resize(width, 40);
@@ -1078,12 +1079,12 @@ mod tests {
     }
 
     fn sample_week_graph() -> UsageGraphData {
-        let sunday = NaiveDate::from_ymd_opt(2026, 7, 12).unwrap();
+        let sunday = Date::new(2026, 7, 12).unwrap();
         UsageGraphData {
             weeks: vec![(0..7usize)
                 .map(|day_idx| {
                     Some(ContributionDay {
-                        date: sunday + chrono::Duration::days(day_idx as i64),
+                        date: sunday + jiff::Span::new().days(day_idx as i64),
                         tokens: if day_idx == 4 { 42 } else { 0 },
                         cost: if day_idx == 4 { 0.5 } else { 0.0 },
                         grade: if day_idx == 4 {
@@ -1133,7 +1134,7 @@ mod tests {
     }
 
     fn day_usage(
-        date: NaiveDate,
+        date: Date,
         tokens: u64,
         cost: f64,
         clients: Vec<(&str, DailyClientInfo)>,
@@ -1157,9 +1158,9 @@ mod tests {
         }
     }
 
-    fn hourly_entry(date: NaiveDate, hour: u32, tokens: u64) -> HourlyUsage {
+    fn hourly_entry(date: Date, hour: u32, tokens: u64) -> HourlyUsage {
         HourlyUsage {
-            datetime: date.and_hms_opt(hour, 0, 0).unwrap(),
+            datetime: date.at(i8::try_from(hour).unwrap(), 0, 0, 0),
             tokens: token_breakdown(tokens),
             cost: 0.0,
             clients: BTreeSet::new(),
@@ -1169,14 +1170,14 @@ mod tests {
         }
     }
 
-    fn select_day(app: &mut TuiModel, date: NaiveDate, tokens: u64, cost: f64) {
-        let sunday = date - chrono::Duration::days(date.weekday().num_days_from_sunday() as i64);
-        let selected_day = date.weekday().num_days_from_sunday() as usize;
+    fn select_day(app: &mut TuiModel, date: Date, tokens: u64, cost: f64) {
+        let sunday = date - jiff::Span::new().days(date.weekday().to_sunday_zero_offset() as i64);
+        let selected_day = date.weekday().to_sunday_zero_offset() as usize;
         app.usage_mut_for_test().graph = UsageGraphData {
             weeks: vec![(0..7usize)
                 .map(|day_idx| {
                     Some(ContributionDay {
-                        date: sunday + chrono::Duration::days(day_idx as i64),
+                        date: sunday + jiff::Span::new().days(day_idx as i64),
                         tokens: if day_idx == selected_day { tokens } else { 0 },
                         cost: if day_idx == selected_day { cost } else { 0.0 },
                         grade: if day_idx == selected_day {
@@ -1234,7 +1235,7 @@ mod tests {
         ActionSet::for_view(app, &state, presentation)
     }
 
-    fn four_model_day(date: NaiveDate) -> DailyUsage {
+    fn four_model_day(date: Date) -> DailyUsage {
         day_usage(
             date,
             11_000,
@@ -1297,7 +1298,7 @@ mod tests {
             weeks: vec![vec![
                 None,
                 Some(ContributionDay {
-                    date: NaiveDate::from_ymd_opt(2026, 7, 17).unwrap(),
+                    date: Date::new(2026, 7, 17).unwrap(),
                     tokens: 42,
                     cost: 0.5,
                     grade: ContributionGrade::Peak,
@@ -1356,7 +1357,7 @@ mod tests {
 
     #[test]
     fn selected_month_starting_midweek_remains_visible_at_the_right_edge() {
-        let today = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+        let today = Date::new(2026, 5, 1).unwrap();
         let daily = vec![day_usage(today, 42, 0.5, vec![])];
         let graph = tokenx_engine::build_contribution_graph_for_today(&daily, today).unwrap();
         let selected_cell = graph
@@ -1443,7 +1444,7 @@ mod tests {
             weeks: vec![vec![
                 None,
                 Some(ContributionDay {
-                    date: NaiveDate::from_ymd_opt(2026, 7, 13).unwrap(),
+                    date: Date::new(2026, 7, 13).unwrap(),
                     tokens: 42,
                     cost: 0.5,
                     grade: ContributionGrade::Peak,
@@ -1475,7 +1476,7 @@ mod tests {
     #[test]
     fn grid_cells_paint_pairs_with_grade_colors() {
         let mut app = make_app(120);
-        let sunday = NaiveDate::from_ymd_opt(2026, 7, 12).unwrap();
+        let sunday = Date::new(2026, 7, 12).unwrap();
         let grades = [
             ContributionGrade::Empty,
             ContributionGrade::Low,
@@ -1489,7 +1490,7 @@ mod tests {
             weeks: vec![(0..7usize)
                 .map(|day_idx| {
                     Some(ContributionDay {
-                        date: sunday + chrono::Duration::days(day_idx as i64),
+                        date: sunday + jiff::Span::new().days(day_idx as i64),
                         tokens: if grades[day_idx] == ContributionGrade::Empty {
                             0
                         } else {
@@ -1531,12 +1532,7 @@ mod tests {
                         .map(|day_idx| {
                             if day_idx == 3 {
                                 Some(ContributionDay {
-                                    date: NaiveDate::from_ymd_opt(
-                                        2026,
-                                        (week_idx % 12) as u32 + 1,
-                                        15,
-                                    )
-                                    .unwrap(),
+                                    date: Date::new(2026, (week_idx % 12) as i8 + 1, 15).unwrap(),
                                     tokens: 10,
                                     cost: 0.1,
                                     grade: ContributionGrade::High,
@@ -1656,7 +1652,7 @@ mod tests {
 
     #[test]
     fn canonical_ranking_merges_provider_client_and_workspace_projections() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         let daily = day_usage(
             date,
             160,
@@ -1731,7 +1727,7 @@ mod tests {
 
     #[test]
     fn canonical_ranking_uses_model_id_instead_of_display_name() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         let daily = day_usage(
             date,
             30,
@@ -1763,7 +1759,7 @@ mod tests {
 
     #[test]
     fn model_and_workspace_projection_rankings_are_identical() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         let model_projection = day_usage(
             date,
             100,
@@ -1811,7 +1807,7 @@ mod tests {
 
     #[test]
     fn model_and_client_provider_projection_rankings_are_identical() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         let model_projection = day_usage(
             date,
             100,
@@ -1867,7 +1863,7 @@ mod tests {
     #[test]
     fn graph_usage_without_daily_detail_uses_the_english_message() {
         let mut app = make_app(120);
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         select_day(&mut app, date, 42_000, 1.5);
 
         let rendered = render_text(&mut app, 120, 30);
@@ -1879,7 +1875,7 @@ mod tests {
     #[test]
     fn day_insights_show_canonical_top_model_client_and_active_hours() {
         let mut app = make_app(120);
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         select_day(&mut app, date, 12_000, 2.5);
         app.usage_mut_for_test().daily = vec![day_usage(
             date,
@@ -1934,7 +1930,7 @@ mod tests {
     #[test]
     fn hour_strip_shades_active_hours_by_theme_grades() {
         let mut app = make_app(120);
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         select_day(&mut app, date, 12_000, 2.5);
         app.usage_mut_for_test().daily = vec![day_usage(date, 12_000, 2.5, vec![])];
         app.usage_mut_for_test().hourly = vec![
@@ -2008,7 +2004,7 @@ mod tests {
 
     #[test]
     fn day_insights_top_model_uses_app_model_color() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         let mut app = make_app(120);
         app.theme = Theme::from_name(ThemeName::Blue);
         app.usage_mut_for_test().daily = vec![day_usage(
@@ -2061,7 +2057,7 @@ mod tests {
 
     #[test]
     fn day_insights_top_client_uses_app_client_color() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         let mut app = make_app(120);
         app.theme = Theme::from_name(ThemeName::Blue);
         app.usage_mut_for_test().daily = vec![day_usage(
@@ -2174,7 +2170,7 @@ mod tests {
 
     #[test]
     fn radar_stays_hidden_at_79_columns_and_appears_at_80() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         let mut app = make_app(79);
         select_day(&mut app, date, 11_000, 2.0);
         app.usage_mut_for_test().daily = vec![four_model_day(date)];
@@ -2188,7 +2184,7 @@ mod tests {
 
     #[test]
     fn radar_visibility_is_monotonic_with_terminal_height() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let date = Date::new(2026, 7, 16).unwrap();
         let mut app = make_app(120);
         select_day(&mut app, date, 11_000, 2.0);
         app.usage_mut_for_test().daily = vec![four_model_day(date)];

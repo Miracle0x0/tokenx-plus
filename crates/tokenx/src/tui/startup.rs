@@ -89,7 +89,7 @@ mod tests {
         UsageQuery::full(
             &ClientUniverse::new([client]).unwrap(),
             GroupBy::default(),
-            chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            jiff::civil::Date::new(2026, 7, 26).unwrap(),
         )
     }
 

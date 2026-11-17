@@ -191,7 +191,7 @@ mod tests {
             no_spinner: false,
             client_universe,
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         })
         .expect("test app initializes");
         app.install_generation_fixture(FrozenUsageIndex::default(), Vec::new(), Default::default());
