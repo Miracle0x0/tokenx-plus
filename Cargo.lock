@@ -3219,7 +3219,7 @@ dependencies = [
 
 [[package]]
 name = "tokenx"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3257,7 +3257,7 @@ dependencies = [
 
 [[package]]
 name = "tokenx-engine"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "bincode",
  "codspeed-criterion-compat",
