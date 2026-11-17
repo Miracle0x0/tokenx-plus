@@ -1079,7 +1079,7 @@ mod tests {
         {
             conn.execute(
                 "INSERT INTO gen_metadata (idx, data, size) VALUES (?1, ?2, 0)",
-                params![idx, blob],
+                params![i64::try_from(idx).unwrap(), blob],
             )
             .unwrap();
         }
