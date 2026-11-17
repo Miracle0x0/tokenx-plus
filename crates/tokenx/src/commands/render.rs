@@ -25,22 +25,32 @@ impl LightSpinner {
     /// Persistent terminal state belongs to the TUI `TerminalSession`; this
     /// renderer may run before that session exists or in an ordinary CLI.
     pub(crate) fn start(message: impl Into<String>) -> Self {
+        Self::start_with_ready(message.into(), None)
+    }
+
+    fn start_with_ready(message: String, ready: Option<std::sync::mpsc::Sender<()>>) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let running_thread = Arc::clone(&running);
-        let message = message.into();
 
         let handle = thread::spawn(move || {
             let mut frame = 0usize;
-            let mut stderr = io::stderr().lock();
+            let mut ready = ready;
 
             while running_thread.load(Ordering::Relaxed) {
                 let spinner = Self::frame(frame);
-                let _ = write!(stderr, "\r\x1b[K  {} {}", spinner, message);
-                let _ = stderr.flush();
+                {
+                    let mut stderr = io::stderr().lock();
+                    let _ = write!(stderr, "\r\x1b[K  {} {}", spinner, message);
+                    let _ = stderr.flush();
+                }
+                if let Some(ready) = ready.take() {
+                    let _ = ready.send(());
+                }
                 frame = frame.wrapping_add(1);
                 thread::sleep(Duration::from_millis(Self::FRAME_MS));
             }
 
+            let mut stderr = io::stderr().lock();
             let _ = write!(stderr, "\r\x1b[K");
             let _ = stderr.flush();
         });
@@ -114,6 +124,28 @@ impl LightSpinner {
 impl Drop for LightSpinner {
     fn drop(&mut self) {
         self.stop_inner();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spinner_releases_stderr_between_frames() {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let spinner =
+            LightSpinner::start_with_ready("Testing stderr locking".into(), Some(ready_tx));
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let writer = thread::spawn(move || {
+            let _stderr = io::stderr().lock();
+            tx.send(()).unwrap();
+        });
+        let acquired = rx.recv_timeout(Duration::from_secs(2)).is_ok();
+        spinner.stop();
+        writer.join().unwrap();
+        assert!(acquired, "spinner kept stderr locked between frames");
     }
 }
 

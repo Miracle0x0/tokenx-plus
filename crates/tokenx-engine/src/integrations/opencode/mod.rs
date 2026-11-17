@@ -1,3 +1,4 @@
+pub(crate) mod claude_claims;
 pub(crate) mod decode;
 mod discover;
 mod schema;
@@ -25,7 +26,8 @@ impl IntegrationDriver for Driver {
         ctx: &DiscoveryContext<'_>,
     ) -> Result<Vec<DiscoveredInput>, InputDiscoveryError> {
         let data_dir = ctx
-            .root_override
+            .client_roots
+            .for_client(ctx.client)
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| discover::data_dir(ctx.home_dir));
         let mut db_paths = discover::databases(&data_dir).map_err(|source| {
@@ -198,7 +200,7 @@ mod tests {
         let ctx = DiscoveryContext {
             client: ClientId::OpenCode,
             home_dir: home.path(),
-            root_override: None,
+            client_roots: crate::ClientRootOverrides::default(),
             scanner_settings: &settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         };

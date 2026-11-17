@@ -196,6 +196,9 @@ mod tests {
     fn configured_defaults_preserve_human_display_aliases() {
         for (observed, expected) in [
             ("Kimi K2.5 Thinking", "kimi-k2-thinking"),
+            ("k3.1-pro", "kimi-k3.1-pro"),
+            ("kimi-code/K3.1-PRO", "kimi-k3.1-pro"),
+            ("k3.1-pro-highspeed", "kimi-k3.1-pro-highspeed"),
             ("Grok Composer 2.5 Fast", "composer-2.5-fast"),
             ("GLM 4.7 High", "glm-4.7"),
             ("LongCat Flash 3B All Quant 0203 Eagle3", "longcat-flash-3b"),

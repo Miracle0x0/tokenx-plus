@@ -48,13 +48,17 @@ pub(crate) fn inventory_input_footprint(
         let client = group.binding.client;
         let mut seen = HashSet::new();
         for unit in &group.units {
-            unit.snapshot().visit_present_files(|identity, size| {
+            let mut visit = |identity, size| {
                 if seen.insert(identity) {
                     footprint
                         .add_bytes(client, size)
                         .expect("input data size must fit in u64");
                 }
-            });
+            };
+            unit.snapshot().visit_present_files(&mut visit);
+            if let Some(ownership) = &unit.claude_ownership {
+                ownership.visit_present_files(&mut visit);
+            }
         }
     }
     footprint
@@ -195,12 +199,21 @@ pub(crate) fn prepare_inventory(
             .map_err(AcquisitionError::invalid_environment)?,
     );
     let selected_integrations = integrations::selected_integrations(&clients);
-    let prepared = prepare_selected_integrations(selected_integrations, |binding| {
+    let mut prepared = prepare_selected_integrations(selected_integrations, |binding| {
         prepare_integration(
             binding,
             home_dir,
             scanner_settings,
-            client_roots.for_client(binding.client),
+            client_roots,
+            cancellation,
+        )
+    })?;
+    attach_claude_ownership(&mut prepared, || {
+        prepare_integration(
+            integrations::integration_for(crate::ClientId::OpenCode),
+            home_dir,
+            scanner_settings,
+            client_roots,
             cancellation,
         )
     })?;
@@ -231,6 +244,40 @@ pub(crate) struct PreparedIntegrationOutcome {
     pub(crate) health: DataHealth,
 }
 
+/// Ownership and emitted OpenCode usage must use the same prepared database
+/// inventory. A Claude-only acquisition prepares that inventory as a dependency.
+pub(crate) fn attach_claude_ownership(
+    prepared: &mut [PreparedIntegrationOutcome],
+    prepare_opencode: impl FnOnce() -> Result<PreparedIntegrationOutcome, AcquisitionError>,
+) -> Result<(), AcquisitionError> {
+    let Some(claude_index) = prepared.iter().position(|outcome| {
+        outcome.group.binding.client == crate::ClientId::Claude && !outcome.group.units.is_empty()
+    }) else {
+        return Ok(());
+    };
+    let ownership = match prepared
+        .iter()
+        .find(|outcome| outcome.group.binding.client == crate::ClientId::OpenCode)
+    {
+        Some(opencode) => integrations::claude::ownership::OpenCodeOwnership::from_prepared(
+            &opencode.group.units,
+            &opencode.health,
+        ),
+        None => {
+            let opencode = prepare_opencode()?;
+            integrations::claude::ownership::OpenCodeOwnership::from_prepared(
+                &opencode.group.units,
+                &opencode.health,
+            )
+        }
+    };
+    let ownership = Arc::new(ownership);
+    for unit in &mut prepared[claude_index].group.units {
+        unit.set_claude_ownership(Arc::clone(&ownership));
+    }
+    Ok(())
+}
+
 pub(crate) fn prepare_selected_integrations<Prepare>(
     selected: Vec<integrations::IntegrationBinding>,
     prepare: Prepare,
@@ -247,7 +294,7 @@ fn prepare_integration(
     binding: integrations::IntegrationBinding,
     home_dir: &Path,
     scanner_settings: &scanner::ScannerSettings,
-    root_override: Option<&Path>,
+    client_roots: &ClientRootOverrides,
     cancellation: &AcquisitionCancellation,
 ) -> Result<PreparedIntegrationOutcome, AcquisitionError> {
     cancellation
@@ -256,7 +303,7 @@ fn prepare_integration(
     let scan_ctx = integrations::DiscoveryContext {
         client: binding.client,
         home_dir,
-        root_override,
+        client_roots: client_roots.clone(),
         scanner_settings,
         cancellation: cancellation.clone(),
     };

@@ -30,7 +30,10 @@ Each rule sees the raw observation, the terminal component after route/custom
 prefix cleanup, the syntax-normalized spelling, and a human display label
 converted to hyphen-separated words. Existing syntax rules for
 dates, free-channel tags, reasoning tiers, version spelling, and Claude's `[1m]`
-context-window suffix remain engine mechanisms. Explicit user self-maps can
+context-window suffix remain engine mechanisms. The Kimi `k3.1-pro` and
+`k3.1-pro-highspeed` defaults target their corresponding `kimi-k3.1-pro*`
+API model IDs so coding-plan aliases do not select zero-priced subscription
+rows as token tariffs. Explicit user self-maps can
 preserve a source spelling. A target is final: there is no mapping chain and no
 second normalization in pricing.
 

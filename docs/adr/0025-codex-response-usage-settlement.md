@@ -28,6 +28,12 @@ failures remain explicit record errors. No filesystem timestamp or invented
 model substitutes for them. Existing strict counter shape and token validation
 remain unchanged.
 
+A `world_state` snapshot's `payload.state.model` supplies the initial model
+when no model has been established. It may resolve pending adjacent token-count
+rows, but never replaces a model already recorded by a turn or usage event.
+The existing fork replay boundary excludes inherited snapshots. This model
+state survives verified append parsing with the rest of the parser checkpoint.
+
 Response IDs identify repeated response records; records without an ID use
 their timestamp and full token signature within the upstream session scope.
 Foreign-thread usage and inherited fork history remain excluded. Settled

@@ -103,9 +103,8 @@ pub(crate) trait IntegrationDriver: Sync {
 pub(crate) struct DiscoveryContext<'a> {
     pub client: ClientId,
     pub home_dir: &'a Path,
-    /// Effective root for this client, captured at command startup. `None`
-    /// selects the home-relative default without consulting the environment.
-    pub root_override: Option<&'a Path>,
+    /// Roots captured once at startup, including ownership dependencies.
+    pub client_roots: crate::ClientRootOverrides,
     pub scanner_settings: &'a scanner::ScannerSettings,
     pub cancellation: crate::engine::AcquisitionCancellation,
 }
@@ -174,6 +173,7 @@ pub(crate) struct DiscoveredInput {
     // deliberately travels with the input but is excluded from persisted
     // inventory identity and record-cache payloads.
     claude_project_resolver: Option<Arc<claude::decode::ClaudeProjectResolver>>,
+    pub(crate) claude_ownership: Option<Arc<claude::ownership::OpenCodeOwnership>>,
 }
 
 impl DiscoveredInput {
@@ -183,6 +183,7 @@ impl DiscoveredInput {
             fingerprint_policy: FingerprintPolicy::PlainFile,
             decoder,
             claude_project_resolver: None,
+            claude_ownership: None,
         }
     }
 
@@ -192,6 +193,7 @@ impl DiscoveredInput {
             fingerprint_policy: FingerprintPolicy::SqliteWithWal,
             decoder,
             claude_project_resolver: None,
+            claude_ownership: None,
         }
     }
 
@@ -201,6 +203,7 @@ impl DiscoveredInput {
             fingerprint_policy: FingerprintPolicy::NoRecordCache,
             decoder,
             claude_project_resolver: None,
+            claude_ownership: None,
         }
     }
 
@@ -213,6 +216,7 @@ impl DiscoveredInput {
             },
             decoder,
             claude_project_resolver: None,
+            claude_ownership: None,
         }
     }
 
@@ -315,6 +319,11 @@ impl DiscoveredInput {
         self.update_policy_inventory_signature(hasher);
         self.input_policy()
             .update_inventory_signature(snapshot, hasher);
+        // Ownership is applied at fold time. It changes the generation but
+        // never the raw Claude shard or its verified-append checkpoint.
+        if let Some(ownership) = &self.claude_ownership {
+            hasher.update(ownership.signature());
+        }
     }
 
     fn update_decoder_inventory_signature(&self, hasher: &mut sha2::Sha256) {
@@ -445,6 +454,13 @@ pub(crate) struct PreparedInput {
 }
 
 impl PreparedInput {
+    pub(crate) fn set_claude_ownership(
+        &mut self,
+        ownership: Arc<claude::ownership::OpenCodeOwnership>,
+    ) {
+        self.input.claude_ownership = Some(ownership);
+    }
+
     pub(crate) fn snapshot(&self) -> &input_record_cache::InputSnapshot {
         &self.snapshot
     }

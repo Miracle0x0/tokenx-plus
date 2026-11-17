@@ -369,14 +369,14 @@ fn decode_opencode_assistant(
     }
 }
 
-struct DecodedRow {
+pub(super) struct DecodedRow {
     message: UsageRecord,
     message_id: Option<String>,
     fingerprint: OpenCodeSqliteFingerprint,
     workspace_root: Option<String>,
 }
 
-fn decode_row(
+pub(super) fn decode_row(
     row: &Row<'_>,
     format: MessageFormat,
 ) -> Result<Option<DecodedRow>, RecordRejectionReason> {

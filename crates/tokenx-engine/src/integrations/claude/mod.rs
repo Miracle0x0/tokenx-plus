@@ -2,6 +2,9 @@ mod cost_state;
 pub(crate) mod decode;
 pub(crate) mod incremental;
 mod merge;
+pub(crate) mod ownership;
+#[cfg(test)]
+mod ownership_tests;
 
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -208,6 +211,7 @@ fn resolve_flat_parent_dependency(path: &std::path::Path) -> FlatParentResolutio
 struct ClaudeFold {
     merged: merge::ClaudeMerge,
     cost_states: cost_state::CostStateReconciliation,
+    ownership_health: std::collections::HashSet<PathBuf>,
     health: Vec<(
         PathBuf,
         crate::input_health::InputStatus,
@@ -221,6 +225,7 @@ impl ClaudeFold {
             merged: merge::ClaudeMerge::new()
                 .map_err(crate::integrations::InputPipelineError::ClaudeReconciliation)?,
             cost_states: cost_state::CostStateReconciliation::default(),
+            ownership_health: std::collections::HashSet::new(),
             health: Vec::new(),
         })
     }
@@ -247,9 +252,30 @@ impl ClaudeFold {
             let cache_write =
                 cache_write.map(|plan| Box::new(plan.with_rejections(rejections.clone())));
             let cache_write_outcome = pipeline_cache::write_cache(cache_write, ctx, &messages);
+            let claims = unit
+                .claude_ownership
+                .as_ref()
+                .map(|ownership| ownership.claims(ctx.cancellation()));
+            if let Some(claims) = claims {
+                for (path, status, rejections) in &claims.health {
+                    if self.ownership_health.insert(path.clone()) {
+                        ctx.record_health(path.clone(), status.clone(), rejections.clone());
+                    }
+                }
+            }
+            let owned_transcript = claims.is_some_and(|claims| {
+                ownership::transcript_session_id(&path)
+                    .is_some_and(|session| claims.sessions.contains(session))
+            });
             for message in messages {
                 ctx.cancellation()
                     .check(crate::engine::AcquisitionPhase::Folding)?;
+                if owned_transcript
+                    || claims
+                        .is_some_and(|claims| claims.sessions.contains(message.session_id.as_ref()))
+                {
+                    continue;
+                }
                 if message.claude_is_cost_snapshot {
                     self.cost_states.push(self.health.len(), message);
                     continue;
@@ -358,7 +384,7 @@ mod tests {
         DiscoveryContext {
             client: ClientId::Claude,
             home_dir,
-            root_override: None,
+            client_roots: crate::ClientRootOverrides::default(),
             scanner_settings: settings,
             cancellation: crate::engine::AcquisitionCancellation::default(),
         }

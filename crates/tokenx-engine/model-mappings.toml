@@ -23,6 +23,14 @@ pattern = "kimi-k2p6"
 model = "kimi-k2.6"
 
 [[rules]]
+pattern = "k3.1-pro"
+model = "kimi-k3.1-pro"
+
+[[rules]]
+pattern = "k3.1-pro-highspeed"
+model = "kimi-k3.1-pro-highspeed"
+
+[[rules]]
 pattern = "kimi-for-coding"
 model = "kimi-k2.5"
 

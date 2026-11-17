@@ -23,11 +23,13 @@
 //!
 //! - `gen_metadata.data #1`: chat model message
 //!   - `#4`: usage message
-//!     - `#1`: fixed system-prompt input tokens
+//!     - `#1`: model enum (not a token count)
 //!     - `#2`: newly processed input tokens
+//!     - `#3`: total generated tokens, including reasoning
+//!     - `#4`: cache-write tokens
 //!     - `#5`: cache-read tokens
-//!     - `#9`: output text tokens
-//!     - `#10`: reasoning tokens
+//!     - `#9`: reasoning tokens
+//!     - `#10`: output text tokens
 //!     - `#11`: response id used for deduplication
 //!   - `#19`: backend model label
 //!   - `#21`: user-visible model label, for example `Gemini 3.5 Flash (Medium)`
@@ -166,25 +168,30 @@ fn parse_gen_metadata(
             )
         })
     };
-    let input = to_i64("input", varint_field(usage, 1).unwrap_or(0))?
-        .checked_add(to_i64(
-            "input-attributed cache",
-            varint_field(usage, 2).unwrap_or(0),
-        )?)
-        .ok_or_else(|| {
-            SessionParseError::invalid(
-                "decode Antigravity CLI usage protobuf",
-                "input token total exceeds i64::MAX",
-            )
-        })?;
+    let input = to_i64("input", varint_field(usage, 2).unwrap_or(0))?;
+    let cache_write = to_i64("cache write", varint_field(usage, 4).unwrap_or(0))?;
     let cache_read = to_i64("cache read", varint_field(usage, 5).unwrap_or(0))?;
-    let output = to_i64("output", varint_field(usage, 9).unwrap_or(0))?;
-    let reasoning = to_i64("reasoning", varint_field(usage, 10).unwrap_or(0))?;
+    let reasoning = to_i64("reasoning", varint_field(usage, 9).unwrap_or(0))?;
+    let response_output = to_i64("output", varint_field(usage, 10).unwrap_or(0))?;
+    // Protobuf scalar defaults may omit the response-output component. The
+    // recorded inclusive total then establishes it without estimating tokens.
+    let output = match (response_output, varint_field(usage, 3)) {
+        (0, Some(total)) if total > 0 => to_i64("total output", total)?
+            .checked_sub(reasoning)
+            .filter(|output| *output >= 0)
+            .ok_or_else(|| {
+                SessionParseError::invalid(
+                    "decode Antigravity CLI usage protobuf",
+                    "reasoning tokens exceed the recorded output total",
+                )
+            })?,
+        _ => response_output,
+    };
     let tokens = TokenBreakdown {
         input,
         output,
         cache_read,
-        cache_write: 0,
+        cache_write,
         cache_write_1h: 0,
         reasoning,
     };
@@ -634,9 +641,11 @@ mod tests {
         let mut usage = Vec::new();
         usage.extend(enc_varint(1, 1132));
         usage.extend(enc_varint(2, 500));
+        usage.extend(enc_varint(3, 340));
+        usage.extend(enc_varint(4, 125));
         usage.extend(enc_varint(5, 16000));
-        usage.extend(enc_varint(9, 300));
-        usage.extend(enc_varint(10, 40));
+        usage.extend(enc_varint(9, 40));
+        usage.extend(enc_varint(10, 300));
         usage.extend(enc_len(11, response_id));
 
         let mut chat_model = Vec::new();
@@ -704,10 +713,12 @@ mod tests {
         let message = &messages[0];
         assert_eq!(message.model_id.as_ref(), "gemini-3.5-flash");
         assert_eq!(message.provider_id.as_ref(), "google");
-        assert_eq!(message.tokens.input, 1632);
+        assert_eq!(message.tokens.input, 500);
+        assert_eq!(message.tokens.cache_write, 125);
         assert_eq!(message.tokens.cache_read, 16000);
         assert_eq!(message.tokens.output, 300);
         assert_eq!(message.tokens.reasoning, 40);
+        assert_eq!(message.tokens.total(), 16965);
         assert_eq!(message.timestamp, 1_781_502_653_000);
         assert_eq!(
             message.workspace_key.as_deref(),
@@ -820,7 +831,7 @@ mod tests {
     #[test]
     fn overflowing_bucket_total_fails_explicitly() {
         let mut usage = Vec::new();
-        usage.extend(enc_varint(1, i64::MAX as u64));
+        usage.extend(enc_varint(2, i64::MAX as u64));
         usage.extend(enc_varint(9, 1));
         usage.extend(enc_len(11, b"resp-total-overflow"));
 
@@ -844,7 +855,7 @@ mod tests {
         );
 
         let mut usage = Vec::new();
-        usage.extend(enc_varint(1, u64::MAX));
+        usage.extend(enc_varint(2, u64::MAX));
         usage.extend(enc_len(11, b"resp-overflow"));
         let mut chat_model = Vec::new();
         chat_model.extend(enc_len(4, &usage));
@@ -857,6 +868,7 @@ mod tests {
     #[test]
     fn zero_usage_row_does_not_reserve_response_id() {
         let mut usage = Vec::new();
+        usage.extend(enc_varint(1, 1132));
         usage.extend(enc_len(11, b"resp-retried"));
         let mut chat_model = Vec::new();
         chat_model.extend(enc_len(4, &usage));
@@ -869,6 +881,43 @@ mod tests {
             parse_gen_metadata(&gen_metadata(b"resp-retried"), "session", 1_000, &mut seen,)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn recorded_output_total_and_cache_write_only_usage_are_counted() {
+        for (fields, expected) in [
+            (vec![(1, 1132)], None),
+            (vec![(1, 1132), (4, 125)], Some((0, 0, 125))),
+            (vec![(3, 340)], Some((340, 0, 0))),
+            (vec![(3, 340), (9, 40)], Some((300, 40, 0))),
+            (vec![(3, 340), (9, 40), (10, 0)], Some((300, 40, 0))),
+        ] {
+            let usage: Vec<_> = fields
+                .into_iter()
+                .flat_map(|(field, value)| enc_varint(field, value))
+                .collect();
+            let chat = [enc_len(4, &usage), enc_len(19, b"gemini-3.5-flash")].concat();
+            let message =
+                parse_gen_metadata(&enc_len(1, &chat), "session", 1000, &mut HashSet::new());
+            assert_eq!(
+                message.map(|message| (
+                    message.tokens.output,
+                    message.tokens.reasoning,
+                    message.tokens.cache_write
+                )),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn reasoning_cannot_exceed_the_total_used_to_derive_output() {
+        let usage = [enc_varint(3, 30), enc_varint(9, 40)].concat();
+        let chat = [enc_len(4, &usage), enc_len(19, b"gemini-3.5-flash")].concat();
+        let error =
+            super::parse_gen_metadata(&enc_len(1, &chat), "session", 1000, &mut HashSet::new())
+                .unwrap_err();
+        assert!(error.to_string().contains("reasoning tokens exceed"));
     }
 
     #[test]
