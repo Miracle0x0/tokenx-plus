@@ -1,6 +1,6 @@
 //! Typed date filtering for canonical accumulation.
 
-use chrono::{Datelike, NaiveDate};
+use jiff::civil::Date;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Date filter evaluated from each finalized client-attributed usage record.
@@ -11,15 +11,15 @@ use serde::{Deserialize, Deserializer, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DateRange {
-    since: Option<NaiveDate>,
-    until: Option<NaiveDate>,
+    since: Option<Date>,
+    until: Option<Date>,
     year: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DateRangeError {
     #[error("date range start ({since}) must not be later than end ({until})")]
-    ReversedBounds { since: NaiveDate, until: NaiveDate },
+    ReversedBounds { since: Date, until: Date },
     #[error("invalid date range year ({year})")]
     InvalidYear { year: i32 },
 }
@@ -27,8 +27,8 @@ pub enum DateRangeError {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SerializedDateRange {
-    since: Option<NaiveDate>,
-    until: Option<NaiveDate>,
+    since: Option<Date>,
+    until: Option<Date>,
     year: Option<i32>,
 }
 
@@ -50,10 +50,7 @@ impl DateRange {
     }
 
     /// An inclusive date interval. Either bound may be omitted.
-    pub fn bounded(
-        since: Option<NaiveDate>,
-        until: Option<NaiveDate>,
-    ) -> Result<Self, DateRangeError> {
+    pub fn bounded(since: Option<Date>, until: Option<Date>) -> Result<Self, DateRangeError> {
         Self::from_parts(since, until, None)
     }
 
@@ -62,11 +59,11 @@ impl DateRange {
         Self::from_parts(None, None, Some(year))
     }
 
-    pub fn since(&self) -> Option<NaiveDate> {
+    pub fn since(&self) -> Option<Date> {
         self.since
     }
 
-    pub fn until(&self) -> Option<NaiveDate> {
+    pub fn until(&self) -> Option<Date> {
         self.until
     }
 
@@ -75,8 +72,8 @@ impl DateRange {
     }
 
     fn from_parts(
-        since: Option<NaiveDate>,
-        until: Option<NaiveDate>,
+        since: Option<Date>,
+        until: Option<Date>,
         year: Option<i32>,
     ) -> Result<Self, DateRangeError> {
         if let (Some(since), Some(until)) = (since, until) {
@@ -85,7 +82,11 @@ impl DateRange {
             }
         }
         if let Some(year) = year {
-            if NaiveDate::from_ymd_opt(year, 1, 1).is_none() {
+            if i16::try_from(year)
+                .ok()
+                .and_then(|year| Date::new(year, 1, 1).ok())
+                .is_none()
+            {
                 return Err(DateRangeError::InvalidYear { year });
             }
         }
@@ -97,11 +98,11 @@ impl DateRange {
     }
 
     /// Whether one local calendar date passes this filter.
-    pub fn contains(&self, date: NaiveDate) -> bool {
+    pub fn contains(&self, date: Date) -> bool {
         if self.is_unfiltered() {
             return true;
         }
-        let year_ok = self.year.is_none_or(|year| date.year() == year);
+        let year_ok = self.year.is_none_or(|year| i32::from(date.year()) == year);
         let since_ok = self.since.is_none_or(|since| date >= since);
         let until_ok = self.until.is_none_or(|until| date <= until);
         year_ok && since_ok && until_ok
@@ -112,8 +113,8 @@ impl DateRange {
 mod date_range_tests {
     use super::*;
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    fn date(year: i16, month: i8, day: i8) -> Date {
+        Date::new(year, month, day).unwrap()
     }
 
     #[test]

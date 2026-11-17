@@ -1324,8 +1324,8 @@ fn codex_uuid_v7_order_key(id: &str) -> Option<String> {
 fn parse_codex_entry_timestamp(timestamp: Option<&str>) -> SessionParseResult<Option<i64>> {
     timestamp
         .map(|timestamp| {
-            chrono::DateTime::parse_from_rfc3339(timestamp)
-                .map(|date_time| date_time.timestamp_millis())
+            str::parse::<jiff::Timestamp>(timestamp)
+                .map(|date_time| date_time.as_millisecond())
                 .map_err(|source| SessionParseError::new("parse Codex event timestamp", source))
         })
         .transpose()

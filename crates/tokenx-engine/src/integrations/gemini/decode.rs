@@ -298,8 +298,8 @@ fn parse_gemini_session(session: GeminiSessionEnvelope) -> SessionParseResult<Sc
 
         let timestamp = match msg.timestamp {
             Some(timestamp) => {
-                let timestamp = match chrono::DateTime::parse_from_rfc3339(&timestamp) {
-                    Ok(timestamp) => timestamp.timestamp_millis(),
+                let timestamp = match str::parse::<jiff::Timestamp>(&timestamp) {
+                    Ok(timestamp) => timestamp.as_millisecond(),
                     Err(_error) => {
                         scanned
                             .rejections

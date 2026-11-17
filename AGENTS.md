@@ -57,6 +57,8 @@ Use conventional commit and PR titles: `<type>(<scope>): <what changed and why>`
 
 Before committing, inspect the effective Git identity and remotes. Do not set repository-local identity to another contributor or commit under a worker/test identity. Use squash merge for pull requests unless the user explicitly requests another strategy.
 
+Before every push, run `bun run check:ci` against the final committed tree, including any version-only commit. The suite must finish successfully and refresh the RustSec database; an earlier audit result or a check from before the final change is not sufficient. Report platform or hosted checks that cannot run locally instead of claiming they passed. Do not push without user authorization.
+
 ## Release Safety
 
 Releases distribute native archives and checksums through GitHub Releases; npm publishing is not part of the release workflow. Do not run the release workflow, create tags, or create GitHub Releases unless the user explicitly requests that release operation.

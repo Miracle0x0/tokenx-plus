@@ -64,7 +64,7 @@ fn read_credentials() -> Result<Credentials> {
     let path = credentials_path();
     read_credentials_from_sources(
         cfg!(target_os = "macos"),
-        chrono::Utc::now().timestamp_millis(),
+        jiff::Timestamp::now().as_millisecond(),
         || {
             let content = read_keychain().map_err(|error| {
                 if path.is_none() {

@@ -41,11 +41,14 @@ fn resolved_provider(provider_name: Option<String>, model_id: &str) -> String {
 }
 
 fn parse_created_at(s: &str) -> Option<i64> {
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-        return (dt.timestamp_millis() > 0).then_some(dt.timestamp_millis());
+    if let Ok(dt) = str::parse::<jiff::Timestamp>(s) {
+        return (dt.as_millisecond() > 0).then_some(dt.as_millisecond());
     }
-    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        let timestamp = dt.and_utc().timestamp_millis();
+    if let Ok(dt) = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", s) {
+        let timestamp = jiff::tz::Offset::UTC
+            .to_timestamp(dt)
+            .ok()?
+            .as_millisecond();
         return (timestamp > 0).then_some(timestamp);
     }
     None
@@ -276,11 +279,12 @@ mod tests {
     fn test_parse_created_at_sqlite_timestamp() {
         let ts = parse_created_at("2026-04-14 16:18:53");
         assert!(ts.is_some());
-        let expected =
-            chrono::NaiveDateTime::parse_from_str("2026-04-14 16:18:53", "%Y-%m-%d %H:%M:%S")
-                .unwrap()
-                .and_utc()
-                .timestamp_millis();
+        let expected = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", "2026-04-14 16:18:53")
+            .unwrap()
+            .to_zoned_datetime(jiff::tz::TimeZone::UTC)
+            .unwrap()
+            .timestamp()
+            .as_millisecond();
         assert_eq!(ts, Some(expected));
     }
 

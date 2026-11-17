@@ -246,7 +246,7 @@ fn timestamp_seconds(timestamp: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
 
     use super::*;
     use crate::{ClientId, DateRange, GroupBy, TokenBreakdown};
@@ -349,10 +349,7 @@ mod tests {
         assert_eq!(sessions[0].session_id.as_ref(), "kept");
         assert_eq!(
             usage
-                .project_usage(
-                    &GroupBy::default(),
-                    NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-                )
+                .project_usage(&GroupBy::default(), Date::new(2026, 7, 26).unwrap(),)
                 .unwrap()
                 .total_tokens,
             18

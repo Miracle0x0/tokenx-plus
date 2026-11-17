@@ -503,7 +503,7 @@ mod tests {
                 no_spinner: false,
                 client_universe: tokenx_engine::ClientUniverse::all(),
                 initial_tab: Some(tab),
-                effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+                effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
             },
             crate::settings::Settings::default(),
         )
@@ -519,7 +519,7 @@ mod tests {
                 no_spinner: false,
                 client_universe: ClientUniverse::new([client]).unwrap(),
                 initial_tab: Some(tab),
-                effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+                effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
             },
             crate::settings::Settings::default(),
         )
@@ -644,7 +644,7 @@ mod tests {
             .daily
             .push(crate::tui::data::DailyUsage {
                 cost_provenance: Default::default(),
-                date: chrono::NaiveDate::from_ymd_opt(2026, 7, 22).unwrap(),
+                date: jiff::civil::Date::new(2026, 7, 22).unwrap(),
                 tokens: tokens.clone(),
                 cost: 0.0,
                 client_breakdown: std::collections::BTreeMap::from([(
@@ -905,7 +905,7 @@ mod tests {
         let query = tokenx_engine::UsageQuery::full(
             generation.universe(),
             tokenx_engine::GroupBy::default(),
-            chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            jiff::civil::Date::new(2026, 7, 26).unwrap(),
         );
         BackgroundLoad::Loaded {
             generation: Box::new(
@@ -1093,7 +1093,7 @@ mod tests {
                     .project_usage(&tokenx_engine::UsageQuery::full(
                         generation.universe(),
                         tokenx_engine::GroupBy::Model,
-                        chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+                        jiff::civil::Date::new(2026, 7, 26).unwrap(),
                     ))
                     .unwrap();
                 assert_eq!(data.total_tokens, 1002);
@@ -1143,7 +1143,7 @@ mod tests {
             .project_usage(&tokenx_engine::UsageQuery::full(
                 app.generation_for_test().unwrap().universe(),
                 tokenx_engine::GroupBy::Model,
-                chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+                jiff::civil::Date::new(2026, 7, 26).unwrap(),
             ))
             .unwrap();
         assert_eq!(model_projection.models[0].model_id.as_ref(), "new-model");

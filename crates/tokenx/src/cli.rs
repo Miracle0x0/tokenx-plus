@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::{Datelike, Duration, NaiveDate};
+
 use clap::{
     error::ErrorKind, Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
 };
+use jiff::civil::Date;
 use tokenx_engine::{CalendarContext, ClientId, ClientUniverse, DateRange, GroupBy};
 
 use crate::commands::shared::{parse_client_id_arg, resolve_client_universe};
@@ -374,14 +375,14 @@ pub(crate) struct DateRangeFlags {
         conflicts_with_all = ["today", "week", "month", "year"],
         help = rust_i18n::t!("cli.help.since")
     )]
-    pub(crate) since: Option<NaiveDate>,
+    pub(crate) since: Option<Date>,
     #[arg(
         long,
         value_parser = parse_date_arg,
         conflicts_with_all = ["today", "week", "month", "year"],
         help = rust_i18n::t!("cli.help.until")
     )]
-    pub(crate) until: Option<NaiveDate>,
+    pub(crate) until: Option<Date>,
     #[arg(
         long,
         value_parser = parse_year_arg,
@@ -502,7 +503,7 @@ pub(crate) struct ResolvedDateRange {
     pub(crate) range: DateRange,
     pub(crate) label: Option<String>,
     pub(crate) relative: Option<RelativeDateRange>,
-    pub(crate) effective_date: NaiveDate,
+    pub(crate) effective_date: Date,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -513,23 +514,19 @@ pub(crate) enum RelativeDateRange {
 }
 
 impl RelativeDateRange {
-    pub(crate) fn resolve(self, current_date: NaiveDate) -> DateRange {
+    pub(crate) fn resolve(self, current_date: Date) -> DateRange {
         match self {
             Self::Today => DateRange::bounded(Some(current_date), Some(current_date))
                 .expect("a single-day range must be valid"),
-            Self::LastSevenDays => {
-                DateRange::bounded(Some(current_date - Duration::days(6)), Some(current_date))
-                    .expect("the last-seven-days range must be valid")
-            }
-            Self::CurrentMonth => DateRange::bounded(
-                Some(
-                    current_date
-                        .with_day(1)
-                        .expect("every valid date has a first day of its month"),
-                ),
+            Self::LastSevenDays => DateRange::bounded(
+                Some(current_date - jiff::Span::new().days(6)),
                 Some(current_date),
             )
-            .expect("a current-month range must be valid"),
+            .expect("the last-seven-days range must be valid"),
+            Self::CurrentMonth => {
+                DateRange::bounded(Some(current_date.first_of_month()), Some(current_date))
+                    .expect("a current-month range must be valid")
+            }
         }
     }
 }
@@ -711,7 +708,7 @@ fn resolve_tui(
     }
 
     let startup = resolve_startup(args.input, offline)?;
-    let date = resolve_date(args.date, startup.calendar)?;
+    let date = resolve_date(args.date, &startup.calendar)?;
     let initial_tab = args.tab;
     if initial_tab == Some(Tab::Subscription) && !startup.settings.subscription.enabled {
         return Err(CliFailure::invalid_message(rust_i18n::t!(
@@ -736,7 +733,7 @@ fn resolve_models(
     offline: bool,
 ) -> Result<ModelsPlan<PendingPricing>, CliFailure> {
     let startup = resolve_startup(args.input, offline)?;
-    let date = resolve_date(args.date, startup.calendar)?;
+    let date = resolve_date(args.date, &startup.calendar)?;
     Ok(ModelsPlan {
         json: args.json,
         startup,
@@ -756,7 +753,7 @@ fn resolve_startup(
     // only the home used to derive built-in client input paths.
     let paths = ProductPaths::resolve()?;
     let settings = Settings::load(&paths)?;
-    let calendar = match settings.time_zone {
+    let calendar = match settings.time_zone.clone() {
         Some(calendar) => calendar,
         None => CalendarContext::system().map_err(anyhow::Error::new)?,
     };
@@ -798,14 +795,14 @@ fn resolve_dsh_home() -> Option<PathBuf> {
 
 fn resolve_date(
     date: DateRangeFlags,
-    calendar: CalendarContext,
+    calendar: &CalendarContext,
 ) -> Result<ResolvedDateRange, CliFailure> {
     resolve_date_for_date(date, calendar.current_date())
 }
 
 pub(crate) fn resolve_date_for_date(
     date: DateRangeFlags,
-    current_date: NaiveDate,
+    current_date: Date,
 ) -> Result<ResolvedDateRange, CliFailure> {
     if let (Some(since), Some(until)) = (date.since, date.until) {
         if since > until {
@@ -884,8 +881,8 @@ fn parse_home_arg(raw: &str) -> Result<PathBuf, String> {
     })
 }
 
-fn parse_date_arg(raw: &str) -> Result<NaiveDate, String> {
-    NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+fn parse_date_arg(raw: &str) -> Result<Date, String> {
+    Date::strptime("%Y-%m-%d", raw)
         .map_err(|_| rust_i18n::t!("cli.error.invalid_date", raw = raw).into_owned())
 }
 
@@ -896,8 +893,8 @@ fn parse_year_arg(raw: &str) -> Result<i32, String> {
     let year = raw
         .parse::<i32>()
         .map_err(|_| rust_i18n::t!("cli.error.invalid_year", raw = raw).into_owned())?;
-    NaiveDate::from_ymd_opt(year, 1, 1)
-        .ok_or_else(|| rust_i18n::t!("cli.error.invalid_year", raw = raw).into_owned())?;
+    DateRange::for_year(year)
+        .map_err(|_| rust_i18n::t!("cli.error.invalid_year", raw = raw).into_owned())?;
     Ok(year)
 }
 

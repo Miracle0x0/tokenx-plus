@@ -1,7 +1,7 @@
 use super::litellm::{ModelPricing, TimePeriodPrice};
 use super::{CatalogSource, SourceOrder};
 use crate::{model_aliases, provider_identity, TokenBreakdown};
-use chrono::{Datelike, Timelike, Utc, Weekday};
+use jiff::civil::Weekday;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -449,17 +449,17 @@ fn has_time_period_pricing(pricing: &ModelPricing) -> bool {
 
 fn utc_weekday_name(weekday: Weekday) -> &'static str {
     match weekday {
-        Weekday::Mon => "monday",
-        Weekday::Tue => "tuesday",
-        Weekday::Wed => "wednesday",
-        Weekday::Thu => "thursday",
-        Weekday::Fri => "friday",
-        Weekday::Sat => "saturday",
-        Weekday::Sun => "sunday",
+        Weekday::Monday => "monday",
+        Weekday::Tuesday => "tuesday",
+        Weekday::Wednesday => "wednesday",
+        Weekday::Thursday => "thursday",
+        Weekday::Friday => "friday",
+        Weekday::Saturday => "saturday",
+        Weekday::Sunday => "sunday",
     }
 }
 
-fn time_period_matches(period: &TimePeriodPrice, timestamp: &chrono::DateTime<Utc>) -> bool {
+fn time_period_matches(period: &TimePeriodPrice, timestamp: &jiff::civil::DateTime) -> bool {
     if let Some(days) = period.utc_days.as_ref() {
         let weekday = utc_weekday_name(timestamp.weekday());
         if !days.iter().any(|day| day.eq_ignore_ascii_case(weekday)) {
@@ -470,11 +470,13 @@ fn time_period_matches(period: &TimePeriodPrice, timestamp: &chrono::DateTime<Ut
     match (period.utc_start, period.utc_end) {
         (None, None) => true,
         (Some(start), Some(end)) if start < end => {
-            let hhmm = timestamp.hour() * 100 + timestamp.minute();
+            let hhmm =
+                u32::from(timestamp.hour() as u8) * 100 + u32::from(timestamp.minute() as u8);
             hhmm >= start && hhmm < end
         }
         (Some(start), Some(end)) if start > end => {
-            let hhmm = timestamp.hour() * 100 + timestamp.minute();
+            let hhmm =
+                u32::from(timestamp.hour() as u8) * 100 + u32::from(timestamp.minute() as u8);
             hhmm >= start || hhmm < end
         }
         _ => false,
@@ -491,14 +493,14 @@ pub(super) fn effective_pricing_at(
     let Some(timestamp_ms) = timestamp_ms else {
         return Ok(Cow::Borrowed(pricing));
     };
-    let timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp_ms)
+    let timestamp = jiff::Timestamp::from_millisecond(timestamp_ms)
+        .ok()
         .ok_or(PricingComputationError::InvalidTimestamp { timestamp_ms })?;
 
     let mut effective = None;
-    for period in periods
-        .iter()
-        .filter(|period| time_period_matches(period, &timestamp))
-    {
+    for period in periods.iter().filter(|period| {
+        time_period_matches(period, &jiff::tz::TimeZone::UTC.to_datetime(timestamp))
+    }) {
         let effective = effective.get_or_insert_with(|| pricing.clone());
         if let Some(price) = period.input_cost_per_token {
             effective.input_cost_per_token = Some(price);

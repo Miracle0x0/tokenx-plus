@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Weekday};
+use jiff::civil::Date;
+use jiff::civil::DateTime;
+use jiff::civil::Weekday;
 use tokenx_engine::projection::PeriodKind;
 
 pub(crate) fn month_name(month: u32, short: bool) -> Cow<'static, str> {
@@ -35,26 +37,26 @@ pub(crate) fn month_name(month: u32, short: bool) -> Cow<'static, str> {
 
 pub(crate) fn weekday_name(weekday: Weekday) -> Cow<'static, str> {
     match weekday {
-        Weekday::Mon => rust_i18n::t!("tui.date.weekday_short.mon"),
-        Weekday::Tue => rust_i18n::t!("tui.date.weekday_short.tue"),
-        Weekday::Wed => rust_i18n::t!("tui.date.weekday_short.wed"),
-        Weekday::Thu => rust_i18n::t!("tui.date.weekday_short.thu"),
-        Weekday::Fri => rust_i18n::t!("tui.date.weekday_short.fri"),
-        Weekday::Sat => rust_i18n::t!("tui.date.weekday_short.sat"),
-        Weekday::Sun => rust_i18n::t!("tui.date.weekday_short.sun"),
+        Weekday::Monday => rust_i18n::t!("tui.date.weekday_short.mon"),
+        Weekday::Tuesday => rust_i18n::t!("tui.date.weekday_short.tue"),
+        Weekday::Wednesday => rust_i18n::t!("tui.date.weekday_short.wed"),
+        Weekday::Thursday => rust_i18n::t!("tui.date.weekday_short.thu"),
+        Weekday::Friday => rust_i18n::t!("tui.date.weekday_short.fri"),
+        Weekday::Saturday => rust_i18n::t!("tui.date.weekday_short.sat"),
+        Weekday::Sunday => rust_i18n::t!("tui.date.weekday_short.sun"),
     }
 }
 
-pub(crate) fn format_month_day(date: NaiveDate) -> String {
+pub(crate) fn format_month_day(date: Date) -> String {
     rust_i18n::t!(
         "tui.date.month_day",
-        month = month_name(date.month(), true),
+        month = month_name(date.month() as u32, true),
         day = date.day()
     )
     .into_owned()
 }
 
-pub(crate) fn format_numeric_month_day(date: NaiveDate) -> String {
+pub(crate) fn format_numeric_month_day(date: Date) -> String {
     rust_i18n::t!(
         "tui.date.month_day_numeric",
         month = format!("{:02}", date.month()),
@@ -63,20 +65,20 @@ pub(crate) fn format_numeric_month_day(date: NaiveDate) -> String {
     .into_owned()
 }
 
-pub(crate) fn format_month_year(date: NaiveDate) -> String {
+pub(crate) fn format_month_year(date: Date) -> String {
     rust_i18n::t!(
         "tui.date.month_year",
-        month = month_name(date.month(), false),
+        month = month_name(date.month() as u32, false),
         year = date.year()
     )
     .into_owned()
 }
 
-pub(crate) fn format_month_separator(date: NaiveDate) -> String {
+pub(crate) fn format_month_separator(date: Date) -> String {
     format_month_separator_for_locale(date, &rust_i18n::locale())
 }
 
-pub(crate) fn format_month_separator_for_locale(date: NaiveDate, locale: &str) -> String {
+pub(crate) fn format_month_separator_for_locale(date: Date, locale: &str) -> String {
     rust_i18n::t!(
         "tui.date.month_separator",
         locale = locale,
@@ -86,7 +88,7 @@ pub(crate) fn format_month_separator_for_locale(date: NaiveDate, locale: &str) -
     .into_owned()
 }
 
-pub(crate) fn format_day_weekday(date: NaiveDate) -> String {
+pub(crate) fn format_day_weekday(date: Date) -> String {
     rust_i18n::t!(
         "tui.date.day_weekday",
         day = format!("{:02}", date.day()),
@@ -95,18 +97,18 @@ pub(crate) fn format_day_weekday(date: NaiveDate) -> String {
     .into_owned()
 }
 
-pub(crate) fn format_full_date(date: NaiveDate) -> String {
+pub(crate) fn format_full_date(date: Date) -> String {
     rust_i18n::t!(
         "tui.date.full_date",
         weekday = weekday_name(date.weekday()),
-        month = month_name(date.month(), true),
+        month = month_name(date.month() as u32, true),
         day = format!("{:02}", date.day()),
         year = date.year()
     )
     .into_owned()
 }
 
-pub(crate) fn format_year_month_day(date: NaiveDate) -> String {
+pub(crate) fn format_year_month_day(date: Date) -> String {
     rust_i18n::t!(
         "tui.date.year_month_day",
         year = date.year(),
@@ -116,11 +118,11 @@ pub(crate) fn format_year_month_day(date: NaiveDate) -> String {
     .into_owned()
 }
 
-pub(crate) fn format_timestamp(datetime: NaiveDateTime) -> String {
+pub(crate) fn format_timestamp(datetime: DateTime) -> String {
     format_timestamp_for_locale(datetime, &rust_i18n::locale())
 }
 
-fn format_timestamp_for_locale(datetime: NaiveDateTime, locale: &str) -> String {
+fn format_timestamp_for_locale(datetime: DateTime, locale: &str) -> String {
     rust_i18n::t!(
         "tui.date.timestamp",
         locale = locale,
@@ -131,7 +133,7 @@ fn format_timestamp_for_locale(datetime: NaiveDateTime, locale: &str) -> String 
     )
     .into_owned()
 }
-pub(crate) fn format_clock_time(datetime: NaiveDateTime) -> String {
+pub(crate) fn format_clock_time(datetime: DateTime) -> String {
     let hour = match datetime.hour() % 12 {
         0 => 12,
         hour => hour,
@@ -144,14 +146,9 @@ pub(crate) fn format_clock_time(datetime: NaiveDateTime) -> String {
     rust_i18n::t!("tui.date.time.format", hour = hour, period = period).into_owned()
 }
 
-pub(crate) fn format_period_label(
-    kind: PeriodKind,
-    start: NaiveDate,
-    end: NaiveDate,
-    short: bool,
-) -> String {
+pub(crate) fn format_period_label(kind: PeriodKind, start: Date, end: Date, short: bool) -> String {
     match kind {
-        PeriodKind::Monthly => month_name(start.month(), short).into_owned(),
+        PeriodKind::Monthly => month_name(start.month() as u32, short).into_owned(),
         PeriodKind::Weekly => {
             format_weekly_period_label_for_locale(start, end, short, &rust_i18n::locale())
         }
@@ -159,17 +156,17 @@ pub(crate) fn format_period_label(
 }
 
 fn format_weekly_period_label_for_locale(
-    start: NaiveDate,
-    end: NaiveDate,
+    start: Date,
+    end: Date,
     _short: bool,
     locale: &str,
 ) -> String {
-    let compact_month_day = |date: NaiveDate| format!("{:02}/{:02}", date.month(), date.day());
+    let compact_month_day = |date: Date| format!("{:02}/{:02}", date.month(), date.day());
 
     rust_i18n::t!(
         "tui.date.week_range",
         locale = locale,
-        week = format!("{:02}", start.iso_week().week()),
+        week = format!("{:02}", start.iso_week_date().week()),
         start = compact_month_day(start),
         end = compact_month_day(end)
     )
@@ -208,8 +205,8 @@ mod tests {
 
     #[test]
     fn weekly_period_labels_share_one_compact_numeric_contract() {
-        let start = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
-        let end = NaiveDate::from_ymd_opt(2026, 8, 2).unwrap();
+        let start = Date::new(2026, 7, 27).unwrap();
+        let end = Date::new(2026, 8, 2).unwrap();
 
         for short in [false, true] {
             assert_eq!(
@@ -225,10 +222,7 @@ mod tests {
 
     #[test]
     fn timestamps_share_one_compact_numeric_contract() {
-        let datetime = NaiveDate::from_ymd_opt(2026, 7, 29)
-            .unwrap()
-            .and_hms_opt(20, 35, 0)
-            .unwrap();
+        let datetime = Date::new(2026, 7, 29).unwrap().at(20, 35, 0, 0);
 
         for locale in ["en", "zh-CN"] {
             let rendered = format_timestamp_for_locale(datetime, locale);
@@ -239,7 +233,7 @@ mod tests {
 
     #[test]
     fn chinese_month_separator_width_includes_both_suffixes() {
-        let date = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let date = Date::new(2026, 7, 27).unwrap();
         let rendered = format_month_separator_for_locale(date, "zh-CN");
 
         assert_eq!(rendered, "2026年07月");

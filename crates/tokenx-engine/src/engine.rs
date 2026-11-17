@@ -211,7 +211,7 @@ impl AcquisitionEngine {
             inputs,
             executor.as_ref(),
             &self.pricing,
-            *config.calendar(),
+            config.calendar().clone(),
             config.model_mappings(),
             cancellation,
         )
@@ -310,7 +310,8 @@ fn fold_generation_data(
         .check(AcquisitionPhase::Folding)
         .map_err(AcquisitionError::cancelled)?;
     let date_range = prepared.date_range.clone();
-    let mut accumulator = crate::aggregate::GenerationAccumulator::new(date_range, calendar);
+    let mut accumulator =
+        crate::aggregate::GenerationAccumulator::new(date_range, calendar.clone());
     let FoldOutcome {
         source_fingerprint,
         input_footprint,
@@ -405,7 +406,7 @@ impl GenerationBuildError {
 mod tests {
     use super::*;
     use crate::{scanner::ScannerSettings, ClientId, ClientUniverse, DateRange};
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
 
     fn test_calendar() -> crate::CalendarContext {
         crate::CalendarContext::explicit("UTC").unwrap()
@@ -624,8 +625,8 @@ mod tests {
     #[test]
     fn engine_binds_one_typed_acquisition_config() {
         let date_range = DateRange::bounded(
-            Some(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),
-            Some(NaiveDate::from_ymd_opt(2026, 1, 31).unwrap()),
+            Some(Date::new(2026, 1, 1).unwrap()),
+            Some(Date::new(2026, 1, 31).unwrap()),
         )
         .unwrap();
         let pricing = test_pricing();

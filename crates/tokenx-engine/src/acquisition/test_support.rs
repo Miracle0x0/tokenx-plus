@@ -203,7 +203,7 @@ pub(crate) fn load_prepared_test_usage_with_health(
         }
     };
     let effective_date =
-        chrono::NaiveDate::from_ymd_opt(2026, 7, 26).expect("test projection date is valid");
+        jiff::civil::Date::new(2026, 7, 26).expect("test projection date is valid");
     let usage_index = accumulator
         .into_usage_index()
         .map_err(AcquisitionError::operational)?;

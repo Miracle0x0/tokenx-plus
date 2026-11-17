@@ -129,9 +129,9 @@ fn parse_amp_timestamp(timestamp: Option<String>) -> SessionParseResult<Option<i
     let Some(timestamp) = timestamp else {
         return Ok(None);
     };
-    let parsed = chrono::DateTime::parse_from_rfc3339(&timestamp)
+    let parsed = str::parse::<jiff::Timestamp>(&timestamp)
         .map_err(|error| SessionParseError::new("decode usage timestamp", error))?
-        .timestamp_millis();
+        .as_millisecond();
     if parsed == 0 {
         return Err(SessionParseError::invalid(
             "validate usage timestamp",
@@ -411,9 +411,9 @@ mod tests {
     }
 
     fn timestamp_ms(value: &str) -> i64 {
-        chrono::DateTime::parse_from_rfc3339(value)
+        str::parse::<jiff::Timestamp>(value)
             .unwrap()
-            .timestamp_millis()
+            .as_millisecond()
     }
 
     #[test]

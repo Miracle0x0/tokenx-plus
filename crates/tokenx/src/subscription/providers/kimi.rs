@@ -323,7 +323,7 @@ async fn fetch_with_credential(client: &reqwest::Client) -> Result<UsageResponse
         })?;
     if creds
         .expires_at
-        .is_some_and(|expires_at| chrono::Utc::now().timestamp() as f64 >= expires_at)
+        .is_some_and(|expires_at| jiff::Timestamp::now().as_second() as f64 >= expires_at)
     {
         return Err(anyhow::Error::new(SubscriptionIssue::new(
             SubscriptionIssueCode::KimiCredentialExpired,

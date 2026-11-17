@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokenx_engine::{AcquisitionConfig, ClientId, Generation};
 
 const CACHE_MAGIC: [u8; 8] = *b"TOKENXG\0";
-const CACHE_SCHEMA_VERSION: u32 = 19;
+const CACHE_SCHEMA_VERSION: u32 = 20;
 const CACHE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_GENERATION_BODY_BYTES: u64 = 256 * 1024 * 1024;
 const CACHE_STALE_THRESHOLD_MS: u64 = 5 * 60 * 1000;
@@ -1034,7 +1034,7 @@ mod tests {
             .project_usage(&tokenx_engine::UsageQuery::full(
                 loaded.universe(),
                 tokenx_engine::GroupBy::Model,
-                chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+                jiff::civil::Date::new(2026, 7, 26).unwrap(),
             ))
             .unwrap();
         assert_eq!(projection.total_tokens, 13);
@@ -1498,7 +1498,7 @@ mod tests {
             tokenx_engine::DateRange::for_year(2025).unwrap(),
             generation.universe().clone(),
             ScannerSettings::default(),
-            *generation.acquisition_config().calendar(),
+            generation.acquisition_config().calendar().clone(),
             generation.acquisition_config().pricing().clone(),
         )
         .unwrap();
@@ -1515,7 +1515,7 @@ mod tests {
             generation.acquisition_config().date_range().clone(),
             ClientUniverse::new([ClientId::Codex]).unwrap(),
             ScannerSettings::default(),
-            *generation.acquisition_config().calendar(),
+            generation.acquisition_config().calendar().clone(),
             generation.acquisition_config().pricing().clone(),
         )
         .unwrap();
@@ -1544,7 +1544,7 @@ mod tests {
             original.date_range().clone(),
             original.universe().clone(),
             original.scanner().clone(),
-            *original.calendar(),
+            original.calendar().clone(),
             tokenx_engine::PricingContext::explicit_with_catalog(
                 "changed-custom-pricing",
                 original.pricing().catalog_fingerprint(),
@@ -1568,7 +1568,7 @@ mod tests {
                     .into(),
                 ..ScannerSettings::default()
             },
-            *generation.acquisition_config().calendar(),
+            generation.acquisition_config().calendar().clone(),
             generation.acquisition_config().pricing().clone(),
         )
         .unwrap();

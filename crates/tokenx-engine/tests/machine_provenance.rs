@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 use tokenx_engine::pricing::{
@@ -164,7 +164,7 @@ fn machine_and_price_projections_survive_cache_roundtrip_relabeling_and_missing_
                 .project_usage(&UsageQuery {
                     clients: clients.clone(),
                     group_by: grouping,
-                    effective_date: NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(),
+                    effective_date: Date::new(2026, 10, 18).unwrap(),
                 })
                 .unwrap();
             assert_eq!((view.total_tokens, view.total_cost), (67, 50.0));

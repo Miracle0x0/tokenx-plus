@@ -326,8 +326,7 @@ fn resolve_timestamp(
 }
 
 fn valid_timestamp(timestamp: i64) -> Option<i64> {
-    (timestamp > 0 && chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp).is_some())
-        .then_some(timestamp)
+    (timestamp > 0 && jiff::Timestamp::from_millisecond(timestamp).is_ok()).then_some(timestamp)
 }
 
 fn mark_turn_starts(rows: &mut [ParsedZcodeRow]) {

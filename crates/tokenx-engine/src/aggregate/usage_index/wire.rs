@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use chrono::{NaiveDate, NaiveDateTime};
+use jiff::civil::Date;
+use jiff::civil::DateTime;
 use serde::Deserialize;
 
 use super::index::{
@@ -25,9 +26,9 @@ pub(crate) struct FrozenUsageIndexWire {
     #[serde(with = "map_as_vec")]
     agent_map: HashMap<AgentKey, AgentBucket>,
     #[serde(with = "map_as_vec")]
-    daily_map: HashMap<NaiveDate, DailyBucket>,
+    daily_map: HashMap<Date, DailyBucket>,
     #[serde(with = "map_as_vec")]
-    hourly_map: HashMap<NaiveDateTime, HourlyBucket>,
+    hourly_map: HashMap<DateTime, HourlyBucket>,
 }
 
 impl FrozenUsageIndexWire {

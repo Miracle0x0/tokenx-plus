@@ -121,7 +121,7 @@ impl TuiModel {
                     label = format!(
                         "{} {}",
                         format_year_month_day(h.datetime.date()),
-                        h.datetime.format("%H:%M")
+                        h.datetime.strftime("%H:%M")
                     ),
                     tokens = h.tokens.total(),
                     cost = format!("{:.4}", h.cost)
@@ -145,7 +145,7 @@ impl TuiModel {
     pub(super) fn export_to_json(&mut self) {
         let filename = format!(
             "tokenx-export-{}.json",
-            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+            jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S")
         );
         let export_dir = self.product_paths.export_dir();
         let path = export_dir.join(filename);

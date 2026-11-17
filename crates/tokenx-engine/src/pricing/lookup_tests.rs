@@ -1,6 +1,5 @@
 use super::*;
 use crate::pricing::PricingService;
-use chrono::{TimeZone, Utc};
 
 fn pricing(input: f64, output: f64) -> ModelPricing {
     ModelPricing {
@@ -18,11 +17,11 @@ fn lookup_with_all_catalogs(
     PricingLookup::new_with_models_dev(litellm, openrouter, models_dev)
 }
 
-fn timestamp_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> i64 {
-    Utc.with_ymd_and_hms(year, month, day, hour, minute, 0)
-        .single()
+fn timestamp_ms(year: i16, month: i8, day: i8, hour: i8, minute: i8) -> i64 {
+    jiff::tz::Offset::UTC
+        .to_timestamp(jiff::civil::DateTime::new(year, month, day, hour, minute, 0, 0).unwrap())
         .unwrap()
-        .timestamp_millis()
+        .as_millisecond()
 }
 
 #[test]

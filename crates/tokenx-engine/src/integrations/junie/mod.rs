@@ -196,7 +196,7 @@ mod tests {
         let expected = finalized(
             decode::parse_junie_file(
                 &path,
-                crate::CalendarContext::explicit("UTC").expect("UTC is a valid IANA timezone"),
+                &crate::CalendarContext::explicit("UTC").expect("UTC is a valid IANA timezone"),
             )
             .unwrap()
             .messages,

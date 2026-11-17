@@ -10,7 +10,6 @@ use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::open_readonly_sqlite;
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
 use crate::{provider_identity, token_imputation};
-use chrono::TimeZone;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -394,13 +393,18 @@ fn parse_warp_timestamp(value: &str) -> Option<i64> {
         return None;
     }
 
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
-        return Some(dt.timestamp_millis());
+    if let Ok(dt) = str::parse::<jiff::Timestamp>(trimmed) {
+        return Some(dt.as_millisecond());
     }
 
     for format in ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M:%S"] {
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(trimmed, format) {
-            return Some(chrono::Utc.from_utc_datetime(&naive).timestamp_millis());
+        if let Ok(naive) = jiff::civil::DateTime::strptime(format, trimmed) {
+            return Some(
+                jiff::tz::Offset::UTC
+                    .to_timestamp(naive)
+                    .ok()?
+                    .as_millisecond(),
+            );
         }
     }
 

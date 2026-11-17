@@ -37,8 +37,8 @@ pub(crate) fn parse_timestamp_value(value: &Value) -> Option<i64> {
 }
 
 pub(crate) fn parse_timestamp_str(value: &str) -> Option<i64> {
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(value) {
-        return Some(dt.timestamp_millis());
+    if let Ok(dt) = str::parse::<jiff::Timestamp>(value) {
+        return Some(dt.as_millisecond());
     }
 
     if let Ok(numeric) = value.parse::<i64>() {

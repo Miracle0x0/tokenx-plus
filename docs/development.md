@@ -60,6 +60,33 @@ and exit status. Rust optimization, LTO, target CPU and ABI selection are unchan
 
 ## Test
 
+Before pushing the final commit, including a version-only commit, run the local
+CI suite. Install `cargo-audit` 0.22.2, Gitleaks 8.30.1, and `uvx` alongside the
+Rust and Bun toolchains; the suite resolves Zizmor 1.28.0 through `uvx`.
+
+```bash
+bun run check:ci
+```
+
+This runs the Rust checks, development and release builds, release tooling,
+launcher tests, and security checks. RustSec is refreshed at the end; rerun the
+suite after changing the final commit. Coverage instrumentation, hosted CodSpeed
+uploads, and native builds for other platforms remain separate CI jobs.
+
+Enable the repository's pre-commit hook in each checkout:
+
+```bash
+git config --local core.hooksPath .githooks
+```
+
+The hook runs the suite against a temporary worktree populated from the Git
+index and scans the staged files with Gitleaks. It reuses the local Cargo target
+directory, preserves unstaged edits, and blocks the commit on a failed check.
+Run `bun run check:ci` again on the final commit before pushing so the dependency
+audit uses the latest advisory database.
+
+For focused development checks:
+
 ```bash
 cargo test --locked --workspace --all-features
 cargo clippy --locked --workspace --all-features -- -D warnings
@@ -84,10 +111,9 @@ The launcher test builds the TypeScript launcher and native binary, packs every 
 The Security workflow runs RustSec, Gitleaks, and Zizmor. Equivalent local checks are:
 
 ```bash
+gitleaks git --no-banner --redact --log-opts=--all
+uvx --from zizmor==1.28.0 zizmor --pedantic --no-online-audits --min-severity medium .github
 cargo audit --deny warnings
-bun audit
-gitleaks detect --source . --no-banner --redact
-uvx zizmor --pedantic --no-online-audits --min-severity medium .github
 ```
 
 `.cargo/audit.toml` records the single maintenance-only `bincode 1` exception. Bincode defines the current cache wire format, so replacing it requires a deliberate versioned cache migration.

@@ -447,7 +447,7 @@ fn has_parent_session_directory(path: &Path) -> bool {
     };
     let timestamp_shape = ["%Y-%m-%dT%H-%M-%S-%3fZ", "%Y-%m-%dT%H-%M-%SZ"]
         .iter()
-        .any(|format| chrono::NaiveDateTime::parse_from_str(timestamp, format).is_ok());
+        .any(|format| jiff::civil::DateTime::strptime(format, timestamp).is_ok());
     let id_shape = (id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
         || (id.len() == 36
             && id.bytes().enumerate().all(|(index, byte)| {
@@ -961,8 +961,8 @@ fn parse_file(
                 .record(RecordRejectionReason::MissingTimestamp);
             continue;
         };
-        let timestamp = match chrono::DateTime::parse_from_rfc3339(&timestamp_text) {
-            Ok(timestamp) => timestamp.timestamp_millis(),
+        let timestamp = match str::parse::<jiff::Timestamp>(&timestamp_text) {
+            Ok(timestamp) => timestamp.as_millisecond(),
             Err(_source) => {
                 scanned
                     .rejections

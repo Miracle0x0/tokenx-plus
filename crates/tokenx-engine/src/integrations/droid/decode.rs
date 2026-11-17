@@ -459,8 +459,8 @@ pub fn parse_droid_file(path: &Path) -> SessionParseResult<ScannedInput> {
             .record(RecordRejectionReason::MissingTimestamp);
         return Ok(scanned);
     };
-    let timestamp = match chrono::DateTime::parse_from_rfc3339(raw_timestamp) {
-        Ok(timestamp) => timestamp.timestamp_millis(),
+    let timestamp = match str::parse::<jiff::Timestamp>(raw_timestamp) {
+        Ok(timestamp) => timestamp.as_millisecond(),
         Err(_) => {
             scanned
                 .rejections

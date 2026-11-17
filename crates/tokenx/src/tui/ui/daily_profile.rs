@@ -1,4 +1,3 @@
-use chrono::Datelike;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation};
 use std::borrow::Cow;
@@ -43,7 +42,7 @@ fn aggregate_weekdays(daily: &[DailyUsage]) -> [WeekdayUsage; 7] {
     });
 
     for day in daily {
-        let index = day.date.weekday().num_days_from_monday() as usize;
+        let index = day.date.weekday().to_monday_zero_offset() as usize;
         weekdays[index].tokens = weekdays[index]
             .tokens
             .checked_add(day.tokens.total())
@@ -187,7 +186,7 @@ mod tests {
     use crate::tui::intent::Intent;
     use crate::tui::interaction::MoveCommand;
     use crate::tui::model::{Tab, TuiConfig};
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use ratatui::{backend::TestBackend, Terminal};
     use std::collections::BTreeMap;
 
@@ -200,7 +199,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         (TuiModel::new_for_test(config).unwrap(), home_dir)
     }
@@ -208,7 +207,7 @@ mod tests {
     fn day(date: &str, tokens: u64, cost: f64) -> DailyUsage {
         DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            date: Date::strptime("%Y-%m-%d", date).unwrap(),
             tokens: UsageTokenBreakdown {
                 input: tokens,
                 ..UsageTokenBreakdown::default()

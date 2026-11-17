@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use chrono::Days;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
@@ -163,7 +162,7 @@ fn render_chart(frame: &mut Frame, app: &TuiModel, granularity: ChartGranularity
                         date: format!(
                             "{} {}",
                             format_numeric_month_day(hour.datetime.date()),
-                            hour.datetime.format("%H:%M")
+                            hour.datetime.strftime("%H:%M")
                         ),
                         empty_days_before: 0,
                         models: models
@@ -210,15 +209,15 @@ fn daily_chart_data(app: &TuiModel, available_width: u16) -> OverviewChart {
         };
     };
     let initial_oldest = &daily[daily.len().min(60) - 1];
-    let initial_days = usize::try_from((latest.date - initial_oldest.date).num_days() + 1)
+    let initial_days = usize::try_from((latest.date - initial_oldest.date).get_days() + 1)
         .expect("overview daily dates must be ordered newest first");
     let bar_width = (available_width as usize / initial_days).max(1);
-    let history_days = usize::try_from((latest.date - daily[daily.len() - 1].date).num_days() + 1)
+    let history_days = usize::try_from((latest.date - daily[daily.len() - 1].date).get_days() + 1)
         .expect("overview daily dates must be ordered newest first");
     let visible_days = (available_width as usize / bar_width)
         .max(initial_days)
         .min(history_days);
-    let first_date = latest.date - Days::new((visible_days - 1) as u64);
+    let first_date = latest.date - jiff::Span::new().days((visible_days - 1) as i64);
     let selected_count = daily.partition_point(|day| day.date >= first_date);
     let selected = &daily[..selected_count];
     let mut bars = Vec::new();
@@ -237,7 +236,7 @@ fn daily_chart_data(app: &TuiModel, available_width: u16) -> OverviewChart {
 
     for day in selected.iter().rev() {
         let empty_days_before = previous_date.map_or(0, |previous| {
-            usize::try_from((day.date - previous).num_days() - 1)
+            usize::try_from((day.date - previous).get_days() - 1)
                 .expect("overview daily dates must be strictly increasing")
         });
         previous_date = Some(day.date);
@@ -377,7 +376,7 @@ mod tests {
     use super::*;
     use crate::tui::data::{DailyClientInfo, DailyModelInfo, DailyUsage, UsageTokenBreakdown};
     use crate::tui::model::TuiConfig;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use ratatui::{backend::TestBackend, Terminal};
 
     fn make_app(width: u16) -> TuiModel {
@@ -388,7 +387,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut app = TuiModel::new_for_test(config).unwrap();
         app.install_generation_fixture(
@@ -433,7 +432,7 @@ mod tests {
         );
         app.usage_mut_for_test().daily = vec![DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            date: Date::new(2026, 7, 1).unwrap(),
             tokens: UsageTokenBreakdown::default(),
             cost: 1.0,
             client_breakdown,
@@ -457,7 +456,7 @@ mod tests {
             .collect()
     }
 
-    fn app_with_days(dates: &[NaiveDate]) -> TuiModel {
+    fn app_with_days(dates: &[Date]) -> TuiModel {
         let mut app = app_with_models(120, &["test-model"]);
         let mut day = app.usage().daily[0].clone();
         let client = day.client_breakdown.values_mut().next().unwrap();
@@ -484,7 +483,7 @@ mod tests {
             ("2024-02-28", "2024-03-01", "██  ██", 73),
             ("2026-02-28", "2026-03-01", "██████", 110),
         ] {
-            let dates = [first, last].map(|date| date.parse::<NaiveDate>().unwrap());
+            let dates = [first, last].map(|date| date.parse::<Date>().unwrap());
             let app = app_with_days(&dates);
             assert_eq!(daily_chart_data(&app, 6).daily_average, Some(average));
             let mut terminal = Terminal::new(TestBackend::new(6, 6)).unwrap();
@@ -498,9 +497,9 @@ mod tests {
 
     #[test]
     fn daily_chart_keeps_sixty_recorded_dates_when_adding_gaps() {
-        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let first = Date::new(2026, 1, 1).unwrap();
         let dates: Vec<_> = (0..61)
-            .map(|index| first + chrono::Days::new(index * 2))
+            .map(|index| first + jiff::Span::new().days(index * 2))
             .collect();
         let mut app = app_with_days(&dates);
         app.usage_mut_for_test().daily[60].tokens.input = 1_000_000;
@@ -520,8 +519,10 @@ mod tests {
 
     #[test]
     fn daily_chart_adds_older_dates_at_the_initial_bar_width() {
-        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-        let dates: Vec<_> = (0..100).map(|index| first + Days::new(index)).collect();
+        let first = Date::new(2026, 1, 1).unwrap();
+        let dates: Vec<_> = (0..100)
+            .map(|index| first + jiff::Span::new().days(index))
+            .collect();
         let app = app_with_days(&dates);
 
         for (width, expected_bar_width, expected_days, left_margin, right_margin) in [
@@ -560,8 +561,10 @@ mod tests {
 
     #[test]
     fn daily_chart_uses_calendar_days_to_size_and_extend_the_initial_window() {
-        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-        let dates: Vec<_> = (0..70).map(|index| first + Days::new(index * 2)).collect();
+        let first = Date::new(2026, 1, 1).unwrap();
+        let dates: Vec<_> = (0..70)
+            .map(|index| first + jiff::Span::new().days(index * 2))
+            .collect();
         let app = app_with_days(&dates);
         let chart = daily_chart_data(&app, 250);
         assert_eq!(chart.bar_width, 2);
@@ -580,9 +583,9 @@ mod tests {
 
     #[test]
     fn daily_chart_can_extend_into_a_gap_but_not_before_available_history() {
-        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let first = Date::new(2026, 1, 1).unwrap();
         let dates: Vec<_> = std::iter::once(first)
-            .chain((9..69).map(|index| first + Days::new(index)))
+            .chain((9..69).map(|index| first + jiff::Span::new().days(index)))
             .collect();
         let app = app_with_days(&dates);
 
@@ -628,8 +631,10 @@ mod tests {
 
     #[test]
     fn narrow_daily_chart_compresses_gaps_without_removing_recorded_dates() {
-        let first = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-        let dates: Vec<_> = (0..61).map(|index| first + Days::new(index * 2)).collect();
+        let first = Date::new(2026, 1, 1).unwrap();
+        let dates: Vec<_> = (0..61)
+            .map(|index| first + jiff::Span::new().days(index * 2))
+            .collect();
         let app = app_with_days(&dates);
         for width in [60, 100] {
             let chart = daily_chart_data(&app, width);

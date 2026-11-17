@@ -103,7 +103,7 @@ fn hermes_per_model_totals_and_call_log_changes_preserve_exact_usage() {
     let query = tokenx_engine::UsageQuery {
         clients: selected,
         group_by: GroupBy::Model,
-        effective_date: chrono::NaiveDate::from_ymd_opt(2026, 10, 14).unwrap(),
+        effective_date: jiff::civil::Date::new(2026, 10, 14).unwrap(),
     };
     let daily = second.project_usage(&query).unwrap().daily;
     assert_eq!(

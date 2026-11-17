@@ -433,7 +433,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: Some(Tab::Sessions),
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         })
         .unwrap();
         app.replace_session_snapshot_for_test(SessionSnapshot::new(
@@ -488,7 +488,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: Some(Tab::Stats),
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         })
         .unwrap();
         let mut state = PageStates::default();

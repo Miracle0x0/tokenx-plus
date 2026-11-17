@@ -8,3 +8,11 @@ condition = "AND"
 paths = ['''^crates/tokenx-engine/src/pricing/mod\.rs$''']
 regexTarget = "secret"
 regexes = ['''^kimi-k2p6-turbo$''']
+
+[[allowlists]]
+description = "Public Claude model ID asserted by pricing matcher tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^crates/tokenx-engine/src/pricing/lookup_tests\.rs$''']
+regexTarget = "secret"
+regexes = ['''^claude-opus-5\.5$''']

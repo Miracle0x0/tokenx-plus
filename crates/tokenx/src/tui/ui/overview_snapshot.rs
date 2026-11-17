@@ -877,7 +877,7 @@ mod tests {
         DailyClientInfo, DailyModelInfo, DailyUsage, UsageProjection, UsageTokenBreakdown,
     };
     use crate::tui::model::TuiConfig;
-    use chrono::NaiveDate;
+    use jiff::civil::Date;
     use ratatui::{backend::TestBackend, Terminal};
     use tokenx_engine::{ClientId, SessionUsage};
 
@@ -893,7 +893,7 @@ mod tests {
             no_spinner: false,
             client_universe: tokenx_engine::ClientUniverse::all(),
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut app = TuiModel::new_for_test(config).unwrap();
         app.install_generation_fixture(
@@ -928,7 +928,7 @@ mod tests {
         };
         let day = DailyUsage {
             cost_provenance: Default::default(),
-            date: NaiveDate::from_ymd_opt(2026, 7, 16).unwrap(),
+            date: Date::new(2026, 7, 16).unwrap(),
             tokens,
             cost: 1.0,
             client_breakdown: BTreeMap::from([(client, client_usage)]),
@@ -1362,7 +1362,7 @@ mod tests {
             no_spinner: false,
             client_universe: universe,
             initial_tab: None,
-            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: jiff::civil::Date::new(2026, 7, 26).unwrap(),
         };
         let mut app = TuiModel::new_for_test(config).unwrap();
         app.terminal_width = 60;

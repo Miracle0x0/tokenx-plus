@@ -2,7 +2,9 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::{NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
+use jiff::civil::Date;
+use jiff::civil::DateTime;
+
 use serde::{Deserialize, Serialize};
 
 use crate::aggregate::FrozenUsageIndexWire;
@@ -104,11 +106,11 @@ impl ClientSelection {
 pub struct UsageQuery {
     pub clients: ClientSelection,
     pub group_by: GroupBy,
-    pub effective_date: NaiveDate,
+    pub effective_date: Date,
 }
 
 impl UsageQuery {
-    pub fn full(universe: &ClientUniverse, group_by: GroupBy, effective_date: NaiveDate) -> Self {
+    pub fn full(universe: &ClientUniverse, group_by: GroupBy, effective_date: Date) -> Self {
         Self {
             clients: ClientSelection::all(universe),
             group_by,
@@ -122,10 +124,22 @@ impl UsageQuery {
 /// Aggregation converts absolute timestamps into local dates and hours through
 /// this typed IANA timezone. "Today" is deliberately absent: it belongs to a
 /// [`UsageQuery`] and can advance without invalidating an unfiltered generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalendarContext {
-    timezone: chrono_tz::Tz,
+    timezone: jiff::tz::TimeZone,
+}
+
+impl Serialize for CalendarContext {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.timezone_name())
+    }
+}
+
+impl<'de> Deserialize<'de> for CalendarContext {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Self::explicit(name).map_err(serde::de::Error::custom)
+    }
 }
 
 impl CalendarContext {
@@ -136,59 +150,69 @@ impl CalendarContext {
     }
 
     pub fn explicit(timezone: impl AsRef<str>) -> Result<Self, CalendarContextError> {
-        let timezone = timezone.as_ref().trim();
-        let timezone = timezone.parse::<chrono_tz::Tz>().map_err(|error| {
+        let name = timezone.as_ref().trim();
+        let timezone = jiff::tz::TimeZone::get(name).map_err(|error| {
             CalendarContextError::InvalidTimezone {
-                timezone: timezone.to_string(),
+                timezone: name.to_string(),
                 reason: error.to_string(),
             }
         })?;
+        if timezone.iana_name().is_none() {
+            return Err(CalendarContextError::InvalidTimezone {
+                timezone: name.to_string(),
+                reason: "a named IANA timezone is required".to_string(),
+            });
+        }
         Ok(Self { timezone })
     }
 
-    pub fn timezone(self) -> chrono_tz::Tz {
+    pub fn timezone(&self) -> &jiff::tz::TimeZone {
+        &self.timezone
+    }
+
+    pub fn timezone_name(&self) -> &str {
         self.timezone
+            .iana_name()
+            .expect("calendar timezones are named IANA entries")
     }
 
-    pub fn current_date(self) -> NaiveDate {
-        Utc::now().with_timezone(&self.timezone).date_naive()
+    pub fn current_date(&self) -> Date {
+        self.timezone.to_datetime(jiff::Timestamp::now()).date()
     }
 
-    pub fn current_hour(self) -> NaiveDateTime {
-        let local = Utc::now().with_timezone(&self.timezone).naive_local();
-        local
-            .date()
-            .and_hms_opt(local.hour(), 0, 0)
-            .unwrap_or(local)
+    pub fn current_hour(&self) -> DateTime {
+        let local = self.timezone.to_datetime(jiff::Timestamp::now());
+        local.date().at(local.hour(), 0, 0, 0)
     }
 
-    pub fn local_datetime_seconds(self, timestamp: i64) -> Option<NaiveDateTime> {
+    pub fn local_datetime_seconds(&self, timestamp: i64) -> Option<DateTime> {
         if timestamp <= 0 {
             return None;
         }
-        self.timezone
-            .timestamp_opt(timestamp, 0)
-            .single()
-            .map(|datetime| datetime.naive_local())
+        Some(
+            self.timezone
+                .to_datetime(jiff::Timestamp::from_second(timestamp).ok()?),
+        )
     }
 
-    pub(crate) fn local_date_and_hour(
-        self,
-        timestamp_ms: i64,
-    ) -> Option<(NaiveDate, NaiveDateTime)> {
+    pub(crate) fn local_date_and_hour(&self, timestamp_ms: i64) -> Option<(Date, DateTime)> {
         if timestamp_ms <= 0 {
             return None;
         }
-        let datetime = match self.timezone.timestamp_millis_opt(timestamp_ms) {
-            chrono::LocalResult::Single(datetime) => datetime,
-            _ => return None,
-        };
-        let local = datetime.naive_local();
-        let hour = local
-            .date()
-            .and_hms_opt(local.hour(), 0, 0)
-            .unwrap_or(local);
-        Some((local.date(), hour))
+        let local = self
+            .timezone
+            .to_datetime(jiff::Timestamp::from_millisecond(timestamp_ms).ok()?);
+        Some((local.date(), local.date().at(local.hour(), 0, 0, 0)))
+    }
+
+    /// Local log timestamps choose the earlier occurrence of a repeated hour;
+    /// nonexistent wall times remain invalid rather than shifting across a gap.
+    pub(crate) fn local_timestamp_ms(&self, local: DateTime) -> Option<i64> {
+        let timestamp = self.timezone.to_ambiguous_timestamp(local);
+        if matches!(timestamp.offset(), jiff::tz::AmbiguousOffset::Gap { .. }) {
+            return None;
+        }
+        timestamp.earlier().ok().map(|value| value.as_millisecond())
     }
 }
 
@@ -973,7 +997,7 @@ mod tests {
         let outside = UsageQuery {
             clients: ClientSelection::new([ClientId::Claude]).unwrap(),
             group_by: GroupBy::Model,
-            effective_date: NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            effective_date: Date::new(2026, 7, 26).unwrap(),
         };
 
         assert_eq!(
@@ -1001,7 +1025,7 @@ mod tests {
             .project_usage(&UsageQuery {
                 clients: clients.clone(),
                 group_by,
-                effective_date: NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+                effective_date: Date::new(2026, 7, 26).unwrap(),
             })
             .unwrap();
 
@@ -1151,44 +1175,36 @@ mod tests {
 
     #[test]
     fn calendar_uses_iana_offsets_and_dst_for_local_buckets() {
-        use chrono::TimeZone;
-
         let shanghai = CalendarContext::explicit("Asia/Shanghai").unwrap();
         let los_angeles = CalendarContext::explicit("America/Los_Angeles").unwrap();
-        let shared_instant = Utc
-            .with_ymd_and_hms(2026, 7, 25, 16, 30, 0)
+        let shared_instant = jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::DateTime::new(2026, 7, 25, 16, 30, 0, 0).unwrap())
             .unwrap()
-            .timestamp_millis();
+            .as_millisecond();
 
         assert_eq!(
             shanghai.local_date_and_hour(shared_instant),
             Some((
-                NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
-                NaiveDate::from_ymd_opt(2026, 7, 26)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap(),
+                Date::new(2026, 7, 26).unwrap(),
+                Date::new(2026, 7, 26).unwrap().at(0, 0, 0, 0),
             ))
         );
         assert_eq!(
             los_angeles.local_date_and_hour(shared_instant),
             Some((
-                NaiveDate::from_ymd_opt(2026, 7, 25).unwrap(),
-                NaiveDate::from_ymd_opt(2026, 7, 25)
-                    .unwrap()
-                    .and_hms_opt(9, 0, 0)
-                    .unwrap(),
+                Date::new(2026, 7, 25).unwrap(),
+                Date::new(2026, 7, 25).unwrap().at(9, 0, 0, 0),
             ))
         );
 
-        let before_spring_forward = Utc
-            .with_ymd_and_hms(2026, 3, 8, 9, 30, 0)
+        let before_spring_forward = jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::DateTime::new(2026, 3, 8, 9, 30, 0, 0).unwrap())
             .unwrap()
-            .timestamp_millis();
-        let after_spring_forward = Utc
-            .with_ymd_and_hms(2026, 3, 8, 10, 30, 0)
+            .as_millisecond();
+        let after_spring_forward = jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::DateTime::new(2026, 3, 8, 10, 30, 0, 0).unwrap())
             .unwrap()
-            .timestamp_millis();
+            .as_millisecond();
         assert_eq!(
             los_angeles
                 .local_date_and_hour(before_spring_forward)
@@ -1208,6 +1224,46 @@ mod tests {
     }
 
     #[test]
+    fn calendar_serialization_retains_named_zones_and_rejects_unknown_utc_substitutes() {
+        for name in ["UTC", "Asia/Shanghai", "America/Los_Angeles"] {
+            let calendar = CalendarContext::explicit(name).unwrap();
+            let json = serde_json::to_string(&calendar).unwrap();
+            assert_eq!(json, format!("\"{name}\""));
+            assert_eq!(
+                serde_json::from_str::<CalendarContext>(&json).unwrap(),
+                calendar
+            );
+            let bytes = bincode::serialize(&calendar).unwrap();
+            assert_eq!(
+                bincode::deserialize::<CalendarContext>(&bytes).unwrap(),
+                calendar
+            );
+        }
+        for name in ["Etc/Unknown", "etc/UNKNOWN", "not/a-zone"] {
+            assert!(CalendarContext::explicit(name).is_err());
+            assert!(serde_json::from_str::<CalendarContext>(&format!("\"{name}\"")).is_err());
+        }
+    }
+
+    #[test]
+    fn local_log_time_resolution_rejects_gaps_and_selects_the_first_repeated_hour() {
+        let calendar = CalendarContext::explicit("America/Los_Angeles").unwrap();
+        let gap = Date::new(2026, 3, 8).unwrap().at(2, 30, 0, 0);
+        assert_eq!(calendar.local_timestamp_ms(gap), None);
+        let fold = Date::new(2026, 11, 1).unwrap().at(1, 30, 0, 0);
+        let first: jiff::Timestamp = "2026-11-01T08:30:00Z".parse().unwrap();
+        assert_eq!(
+            calendar.local_timestamp_ms(fold),
+            Some(first.as_millisecond())
+        );
+        assert!(calendar
+            .timezone()
+            .to_ambiguous_timestamp(fold)
+            .unambiguous()
+            .is_err());
+    }
+
+    #[test]
     fn effective_date_changes_projection_query_not_acquisition_identity() {
         let acquisition = AcquisitionConfig::new(
             PathBuf::from("/tmp/home"),
@@ -1221,12 +1277,12 @@ mod tests {
         let first = UsageQuery::full(
             acquisition.universe(),
             GroupBy::Model,
-            NaiveDate::from_ymd_opt(2026, 7, 26).unwrap(),
+            Date::new(2026, 7, 26).unwrap(),
         );
         let second = UsageQuery::full(
             acquisition.universe(),
             GroupBy::Model,
-            NaiveDate::from_ymd_opt(2026, 7, 27).unwrap(),
+            Date::new(2026, 7, 27).unwrap(),
         );
 
         assert_ne!(first, second);

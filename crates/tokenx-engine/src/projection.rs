@@ -11,7 +11,8 @@ use std::{
     sync::Arc,
 };
 
-use chrono::{NaiveDate, NaiveDateTime};
+use jiff::civil::Date;
+use jiff::civil::DateTime;
 use serde::{Deserialize, Serialize};
 
 use crate::{ClientId, GroupBy};
@@ -139,7 +140,7 @@ pub struct DailyClientInfo {
 #[derive(Debug, Clone)]
 pub struct DailyUsage {
     pub cost_provenance: crate::pricing::CostProvenance,
-    pub date: NaiveDate,
+    pub date: Date,
     pub tokens: UsageTokenBreakdown,
     pub cost: f64,
     pub client_breakdown: BTreeMap<ClientId, DailyClientInfo>,
@@ -160,7 +161,7 @@ pub struct HourlyModelInfo {
 
 #[derive(Debug, Clone)]
 pub struct HourlyUsage {
-    pub datetime: NaiveDateTime,
+    pub datetime: DateTime,
     pub tokens: UsageTokenBreakdown,
     pub cost: f64,
     pub clients: BTreeSet<ClientId>,
@@ -181,8 +182,8 @@ pub struct PeriodUsage {
     pub section_label: String,
     pub label: String,
     pub short_label: String,
-    pub start_date: NaiveDate,
-    pub end_date: NaiveDate,
+    pub start_date: Date,
+    pub end_date: Date,
     pub tokens: UsageTokenBreakdown,
     pub cost: f64,
     pub client_breakdown: BTreeMap<ClientId, DailyClientInfo>,
@@ -206,7 +207,7 @@ pub enum ContributionGrade {
 
 #[derive(Debug, Clone)]
 pub struct ContributionDay {
-    pub date: NaiveDate,
+    pub date: Date,
     pub tokens: u64,
     pub cost: f64,
     pub grade: ContributionGrade,
