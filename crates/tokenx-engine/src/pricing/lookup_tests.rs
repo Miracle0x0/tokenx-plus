@@ -196,6 +196,53 @@ fn claude_catalog_normalization_does_not_merge_priced_variants_or_infer_native_p
 }
 
 #[test]
+fn native_gpt_rates_respect_reseller_scope_and_catalog_order() {
+    let model = "gpt-6-astra";
+    let reseller = "gmi/openai/gpt-6-astra";
+    let native = ModelPricing {
+        litellm_provider: Some("openai".into()),
+        ..pricing(1.0, 2.0)
+    };
+    let lookup = PricingLookup::new(
+        HashMap::from([
+            (model.into(), native),
+            (reseller.into(), pricing(3.0, 4.0)),
+            ("chatgpt/gpt-6-astra".into(), pricing(5.0, 6.0)),
+        ]),
+        HashMap::from([("openai/gpt-6-astra".into(), pricing(7.0, 8.0))]),
+    );
+    assert_eq!(lookup.lookup(model).unwrap().matched_key, model);
+    for provider in ["gmi", "gmi/openai"] {
+        assert_eq!(
+            lookup
+                .lookup_with_provider(model, Some(provider))
+                .unwrap()
+                .matched_key,
+            reseller
+        );
+    }
+    assert!(lookup
+        .lookup_with_provider(model, Some("unrelated"))
+        .is_none());
+    let mut order = SourceOrder::default();
+    order.swap(0, 1);
+    assert_eq!(
+        lookup
+            .with_order(order)
+            .lookup(model)
+            .unwrap()
+            .pricing_source,
+        "OpenRouter"
+    );
+
+    let reseller_only = PricingLookup::new(
+        HashMap::from([(reseller.into(), pricing(3.0, 4.0))]),
+        HashMap::new(),
+    );
+    assert!(reseller_only.lookup(model).is_none());
+}
+
+#[test]
 fn observed_provider_takes_precedence_over_family_inference() {
     let lookup = PricingLookup::new(
         HashMap::from([

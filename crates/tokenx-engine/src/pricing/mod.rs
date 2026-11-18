@@ -983,7 +983,7 @@ impl ResolvedPublicPricingCatalogs {
 
     fn fingerprint(&self) -> String {
         let mut digest = Sha256::new();
-        digest.update(b"tokenx-pricing-catalog-data-v2\0");
+        digest.update(b"tokenx-pricing-catalog-data-v3\0");
         update_catalog_digest(&mut digest, CACHED_CATALOG_FILES[0], self.litellm.as_ref());
         update_catalog_digest(
             &mut digest,

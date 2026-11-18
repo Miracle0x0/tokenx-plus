@@ -48,6 +48,11 @@ Use `tokenx pricing refresh --no-spinner` to force refresh all public catalogs.
 Each source replaces its cache atomically; failed sources retain their old file,
 and refresh diagnostics produce a nonzero command status.
 
+OpenRouter lists variable-price routes such as `openrouter/auto` with both
+`prompt` and `completion` set to `"-1"`. Tokenx omits these entries from
+the fixed-rate catalog. Explicit zero rates remain valid, and malformed
+prices still produce refresh diagnostics. [OpenRouter Auto Router pricing](https://openrouter.ai/openrouter/auto)
+
 ## Pricing Source authority
 
 Exact custom overrides from `custom-pricing.json` are checked first: a matching
@@ -74,8 +79,12 @@ OpenRouter time-period rule remains ahead of this configurable order.
 A non-empty observed provider, or otherwise shared deterministic model-family
 inference, defines provider scope. Exact rows for a known provider are selected
 before exact unscoped rows across all catalogs; catalog order breaks ties inside
-each class. LiteLLM's unprefixed `claude-*` rows with
-`litellm_provider: "anthropic"` are explicitly Anthropic-scoped. With unknown
+each class. LiteLLM's unprefixed `claude-*` and `gpt-*` rows belong to
+Anthropic and OpenAI respectively when `litellm_provider` declares that
+provider. Within LiteLLM a usable native row takes precedence over routes for
+the same provider. A prefixed LiteLLM GPT row belongs to its outer provider,
+so usage recorded with provider `gmi/openai` selects the GMI tariff in
+`gmi/openai/gpt-6-astra`. With unknown
 provider scope, only an exact unscoped row is eligible.
 Prefix, substring, fuzzy/edit-distance, arbitrary separator, and private alias
 matching are not pricing strategies.

@@ -37,6 +37,9 @@ pub(crate) fn apply_canonical_token_pricing(
     message: &mut records::UsageRecord,
     pricing: Option<&pricing::PricingService>,
 ) -> Result<(), pricing::PricingComputationError> {
+    let route_owner = pricing::lookup::gpt_route_owner(&message.model_id, &message.provider_id)
+        .map(provider_identity::normalize_provider_for_grouping);
+    canonicalize_message_provider(message);
     message.cost = 0.0;
     message.pricing_error = None;
     message.price_origin = None;
@@ -51,7 +54,7 @@ pub(crate) fn apply_canonical_token_pricing(
 
     let estimate = pricing.estimate_canonical_usage(
         &message.model_id,
-        Some(message.provider_id.as_ref()),
+        Some(route_owner.as_deref().unwrap_or(&message.provider_id)),
         &message.tokens,
         pricing::UsagePricingContext {
             timestamp_ms: Some(message.timestamp),
@@ -177,7 +180,6 @@ pub(crate) fn price_source_eligible_messages<M: AsMut<records::UsageRecord>>(
         let message = message.as_mut();
         canonicalize_message_model(message, &mut model_cache, model_mappings);
         refresh_derived_message_fields(message);
-        canonicalize_message_provider(message);
         if let Err(error) = apply_canonical_token_pricing(message, pricing) {
             match error {
                 pricing::PricingComputationError::UnsupportedServiceTier { .. }

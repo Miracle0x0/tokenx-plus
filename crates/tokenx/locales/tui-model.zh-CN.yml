@@ -57,7 +57,8 @@ tui:
         inkstone_qingci: "青瓷"
     unknown_workspace: "未知工作区"
     pricing:
-      available_with_warnings: "价格数据不完整；部分费用可能缺失"
+      available_with_warnings: "计价有警告，部分费用可能缺失"
+      aggregate_request_tier: "部分汇总用量缺少逐请求明细，无法按阶梯费率估价"
       cached_fallback: "定价刷新失败；使用缓存费率"
       unavailable: "定价不可用；费用可能缺失"
     error:

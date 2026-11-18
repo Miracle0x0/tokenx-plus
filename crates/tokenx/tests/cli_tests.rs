@@ -2011,6 +2011,7 @@ fn codex_service_tier_prices_and_warnings_survive_generation_cache() {
         )
         .unwrap();
         let mut rates = serde_json::json!({
+            "litellm_provider":"openai",
             "input_cost_per_token":1.0, "output_cost_per_token":2.0,
             "cache_read_input_token_cost":0.25
         });
@@ -2022,7 +2023,10 @@ fn codex_service_tier_prices_and_warnings_survive_generation_cache() {
         tokenx_engine::pricing::cache::save_cache(
             &tmp.path().join(".tokenx/cache"),
             "pricing-litellm.json",
-            &serde_json::json!({"gpt-4o-mini":rates}),
+            &serde_json::json!({
+                "gpt-4o-mini":rates,
+                "gmi/openai/gpt-4o-mini":{"input_cost_per_token":1.0,"output_cost_per_token":2.0}
+            }),
         )
         .unwrap();
         for _ in 0..2 {
@@ -2061,6 +2065,39 @@ fn codex_service_tier_prices_and_warnings_survive_generation_cache() {
             }
         }
     }
+}
+
+#[test]
+fn codex_compound_provider_keeps_its_reseller_tariff() {
+    let tmp = create_codex_fixture_dir();
+    let session = tmp.path().join(".codex/sessions/session-1.jsonl");
+    let usage = fs::read_to_string(&session).unwrap();
+    let metadata = serde_json::json!({
+        "type": "session_meta", "payload": {"model_provider": "gmi/openai"}
+    });
+    fs::write(session, format!("{metadata}\n{usage}")).unwrap();
+    tokenx_engine::pricing::cache::save_cache(
+        &tmp.path().join(".tokenx/cache"),
+        "pricing-litellm.json",
+        &serde_json::json!({
+            "gpt-4o-mini":{"litellm_provider":"openai","input_cost_per_token":1.0},
+            "gmi/openai/gpt-4o-mini":{
+                "input_cost_per_token":3.0,"output_cost_per_token":4.0,"cache_read_input_token_cost":0.5
+            }
+        }),
+    ).unwrap();
+
+    let result = offline_cmd_with_home(tmp.path())
+        .args(["models", "--json", "--client", "codex", "--no-spinner"])
+        .assert()
+        .success();
+    let document: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    let row = &model_rows(&document)[0];
+    assert_eq!(
+        row["costProvenance"]["sources"][0]["matchedKey"],
+        "gmi/openai/gpt-4o-mini"
+    );
+    assert_eq!(row["cost"], 430.0);
 }
 
 #[test]

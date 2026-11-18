@@ -58,6 +58,7 @@ tui:
     unknown_workspace: "Unknown workspace"
     pricing:
       available_with_warnings: "Pricing warnings; some costs may be missing"
+      aggregate_request_tier: "Some aggregate usage lacks the per-request detail needed for tiered pricing"
       cached_fallback: "Pricing refresh failed; using cached rates"
       unavailable: "Pricing unavailable; costs may be missing"
     error:

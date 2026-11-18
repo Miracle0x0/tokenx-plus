@@ -18,7 +18,8 @@ use anyhow::Result;
 use crossterm::event::{KeyEvent, MouseEvent};
 use jiff::civil::Date;
 use tokenx_engine::{
-    pricing::PricingStatus, ClientId, ClientSelection, ClientUniverse, Generation, UsageQuery,
+    pricing::{PricingDiagnosticKind, PricingStatus},
+    ClientId, ClientSelection, ClientUniverse, Generation, UsageQuery,
 };
 
 use ratatui::{layout::Rect, style::Color};
@@ -236,17 +237,6 @@ pub(crate) enum StatusTone {
     Danger,
 }
 
-fn pricing_warning(status: PricingStatus) -> Option<Cow<'static, str>> {
-    match status {
-        PricingStatus::Available => None,
-        PricingStatus::AvailableWithWarnings => {
-            Some(rust_i18n::t!("tui.model.pricing.available_with_warnings"))
-        }
-        PricingStatus::CachedFallback => Some(rust_i18n::t!("tui.model.pricing.cached_fallback")),
-        PricingStatus::Unavailable => Some(rust_i18n::t!("tui.model.pricing.unavailable")),
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortDirection {
     Ascending,
@@ -342,7 +332,6 @@ pub struct TuiModel {
     status_message_kind: StatusMessageKind,
     status_message_tone: StatusTone,
     generation_cache_warning: Option<String>,
-    pricing_status: PricingStatus,
     pub subscription_status_message: Option<String>,
     pub subscription_status_message_time: Option<Instant>,
     subscription_status_message_tone: StatusTone,
@@ -485,7 +474,6 @@ impl TuiModel {
             status_message_kind: StatusMessageKind::General,
             status_message_tone: StatusTone::Info,
             generation_cache_warning: None,
-            pricing_status: PricingStatus::Available,
             subscription_status_message: None,
             subscription_status_message_time: None,
             subscription_status_message_tone: StatusTone::Info,
@@ -1067,12 +1055,10 @@ impl TuiModel {
             anyhow::bail!("generation client universe does not match TUI acquisition universe");
         }
 
-        let pricing_status = generation.pricing_status();
         let (had_graph_selection, selected_graph_date) = self.capture_usage_selection(true);
         installed.reconcile_projection(self.local_usage.query(), self.detail_selections())?;
         self.local_usage.install_prepared(installed);
         self.bump_usage_revision();
-        self.pricing_status = pricing_status;
         self.reconcile_usage_selection(had_graph_selection, selected_graph_date);
         Ok(())
     }
@@ -1081,10 +1067,7 @@ impl TuiModel {
         &mut self,
         diagnostics: tokenx_engine::pricing::PricingDiagnostics,
     ) {
-        let status = PricingStatus::from_diagnostics(&diagnostics);
-        if self.local_usage.rebind_pricing_diagnostics(diagnostics) {
-            self.pricing_status = status;
-        }
+        self.local_usage.rebind_pricing_diagnostics(diagnostics);
     }
 
     #[cfg(test)]
@@ -1223,7 +1206,24 @@ impl TuiModel {
     }
 
     pub(crate) fn pricing_warning(&self) -> Option<Cow<'static, str>> {
-        pricing_warning(self.pricing_status)
+        let generation = self.installed_generation()?.generation();
+        match generation.pricing_status() {
+            PricingStatus::Available => None,
+            PricingStatus::AvailableWithWarnings
+                if generation.pricing_diagnostics().iter().all(|diagnostic| {
+                    diagnostic.kind() == PricingDiagnosticKind::RequestTierUnavailable
+                }) =>
+            {
+                Some(rust_i18n::t!("tui.model.pricing.aggregate_request_tier"))
+            }
+            PricingStatus::AvailableWithWarnings => {
+                Some(rust_i18n::t!("tui.model.pricing.available_with_warnings"))
+            }
+            PricingStatus::CachedFallback => {
+                Some(rust_i18n::t!("tui.model.pricing.cached_fallback"))
+            }
+            PricingStatus::Unavailable => Some(rust_i18n::t!("tui.model.pricing.unavailable")),
+        }
     }
 
     pub fn on_tick(&mut self) {

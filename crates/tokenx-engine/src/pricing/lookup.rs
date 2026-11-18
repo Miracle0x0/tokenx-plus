@@ -22,7 +22,13 @@ struct CachedResult {
 struct CatalogKey {
     raw: String,
     model_id: String,
-    provider_key: Option<String>,
+    scope: CatalogScope,
+}
+
+enum CatalogScope {
+    Unscoped,
+    Provider(String),
+    Route,
 }
 
 pub struct PricingLookup {
@@ -297,6 +303,15 @@ impl PricingLookup {
     }
 }
 
+/// A qualified GPT route names its tariff owner before the first slash.
+pub(crate) fn gpt_route_owner<'a>(model: &str, route: &'a str) -> Option<&'a str> {
+    let (owner, _) = route.split_once('/')?;
+    model
+        .get(..4)?
+        .eq_ignore_ascii_case("gpt-")
+        .then_some(owner)
+}
+
 fn sorted_catalog_keys(
     dataset: &HashMap<String, ModelPricing>,
     source: CatalogSource,
@@ -304,31 +319,44 @@ fn sorted_catalog_keys(
     let mut keys: Vec<CatalogKey> = dataset
         .iter()
         .map(|(raw, pricing)| {
-            let (model, provider_key) = match raw.rsplit_once('/') {
-                Some((_, model)) => (model, Some(raw.clone())),
-                None => {
-                    // Native Claude rows declare Anthropic explicitly. Bedrock,
-                    // Vertex and other routes must keep their own authority.
-                    let native_claude = source == CatalogSource::Litellm
-                        && raw.to_ascii_lowercase().starts_with("claude-")
-                        && pricing.litellm_provider.as_deref() == Some("anthropic");
-                    (
-                        raw.as_str(),
-                        native_claude.then(|| format!("anthropic/{raw}")),
-                    )
+            let model = raw
+                .rsplit_once('/')
+                .map_or(raw.as_str(), |(_, model)| model);
+            let lower = model.to_ascii_lowercase();
+            let scope = match (
+                source,
+                gpt_route_owner(model, raw),
+                pricing.litellm_provider.as_deref(),
+            ) {
+                (CatalogSource::Litellm, Some(owner), _) => CatalogScope::Provider(
+                    provider_identity::normalize_provider_for_grouping(owner),
+                ),
+                _ if raw.contains('/') => CatalogScope::Route,
+                (CatalogSource::Litellm, _, Some("openai")) if lower.starts_with("gpt-") => {
+                    CatalogScope::Provider("openai".into())
                 }
+                (CatalogSource::Litellm, _, Some("anthropic")) if lower.starts_with("claude-") => {
+                    CatalogScope::Provider("anthropic".into())
+                }
+                _ => CatalogScope::Unscoped,
             };
             CatalogKey {
                 raw: raw.clone(),
                 model_id: model_aliases::normalize_claude_catalog_model(model),
-                provider_key,
+                scope,
             }
         })
         .collect();
     keys.sort_by(|left, right| {
+        // Within one provider and catalog, prefer its declared native row.
         left.raw
-            .to_ascii_lowercase()
-            .cmp(&right.raw.to_ascii_lowercase())
+            .contains('/')
+            .cmp(&right.raw.contains('/'))
+            .then_with(|| {
+                left.raw
+                    .to_ascii_lowercase()
+                    .cmp(&right.raw.to_ascii_lowercase())
+            })
             .then_with(|| left.raw.cmp(&right.raw))
     });
     keys
@@ -339,7 +367,7 @@ fn resolved_provider_scope<'a>(provider_id: Option<&'a str>, model_id: &str) -> 
         .map(str::trim)
         .filter(|provider| !provider.is_empty() && !provider.eq_ignore_ascii_case("unknown"))
     {
-        return Some(observed);
+        return Some(gpt_route_owner(model_id, observed).unwrap_or(observed));
     }
 
     provider_identity::inferred_provider_from_model(model_id)
@@ -369,9 +397,15 @@ fn lookup_provider_scoped_exact(
     keys.iter()
         .filter(|key| {
             key.model_id.eq_ignore_ascii_case(model_id)
-                && key.provider_key.as_deref().is_some_and(|provider_key| {
-                    provider_identity::matches_provider_hint(provider_key, Some(provider_scope))
-                })
+                && match &key.scope {
+                    CatalogScope::Unscoped => false,
+                    CatalogScope::Provider(owner) => {
+                        provider_identity::normalize_provider_for_grouping(provider_scope) == *owner
+                    }
+                    CatalogScope::Route => {
+                        provider_identity::matches_provider_hint(&key.raw, Some(provider_scope))
+                    }
+                }
         })
         .find_map(|key| {
             dataset
@@ -387,7 +421,10 @@ fn lookup_unscoped_exact(
     model_id: &str,
 ) -> Option<LookupResult> {
     keys.iter()
-        .filter(|key| key.provider_key.is_none() && key.model_id.eq_ignore_ascii_case(model_id))
+        .filter(|key| {
+            matches!(key.scope, CatalogScope::Unscoped)
+                && key.model_id.eq_ignore_ascii_case(model_id)
+        })
         .find_map(|key| {
             dataset
                 .get(&key.raw)

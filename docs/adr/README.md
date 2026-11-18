@@ -43,6 +43,7 @@ Architecture decision records (ADRs) document accepted Tokenx contracts and the 
 | [0037](0037-decoder-production-source-contract.md) | Production source ownership for decoder contracts | Accepted |
 | [0038](0038-opencode-claude-session-ownership.md) | OpenCode ownership of native Claude sessions | Accepted |
 | [0039](0039-jiff-calendar-and-time-parsing.md) | Jiff calendar and timestamp semantics | Accepted |
+| [0040](0040-litellm-gpt-provider-scope.md) | LiteLLM GPT provider scope | Accepted |
 
 ## Conventions
 

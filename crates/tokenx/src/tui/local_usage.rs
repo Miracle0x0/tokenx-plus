@@ -589,12 +589,10 @@ impl LocalUsageState {
     pub(crate) fn rebind_pricing_diagnostics(
         &mut self,
         diagnostics: tokenx_engine::pricing::PricingDiagnostics,
-    ) -> bool {
-        let Some(installed) = self.installed_mut() else {
-            return false;
-        };
-        Arc::make_mut(&mut installed.generation).rebind_pricing_diagnostics(diagnostics);
-        true
+    ) {
+        if let Some(installed) = self.installed_mut() {
+            Arc::make_mut(&mut installed.generation).rebind_pricing_diagnostics(diagnostics);
+        }
     }
 
     #[cfg(test)]

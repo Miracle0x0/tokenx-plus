@@ -2982,6 +2982,29 @@ fn installing_generation_restores_typed_pricing_status() {
     assert_eq!(app.pricing_warning(), None);
 }
 
+#[test]
+fn catalog_refresh_preserves_the_warning_for_unpriced_aggregate_usage() {
+    use tokenx_engine::pricing::{PricingDiagnostic, PricingDiagnosticKind};
+
+    let mut app = make_app();
+    app.install_generation_fixture_with_pricing_diagnostics(vec![
+        PricingDiagnostic::warning("catalog warning"),
+        PricingDiagnostic::new(
+            PricingDiagnosticKind::RequestTierUnavailable,
+            "unpriced aggregate",
+        ),
+    ]);
+    assert_eq!(
+        app.pricing_warning().as_deref(),
+        Some("Pricing warnings; some costs may be missing")
+    );
+    app.rebind_pricing_diagnostics(Vec::new());
+    assert_eq!(
+        app.pricing_warning().as_deref(),
+        Some("Some aggregate usage lacks the per-request detail needed for tiered pricing")
+    );
+}
+
 // ── click area management ───────────────────────────────────────
 
 // ── narrow detection ────────────────────────────────────────────

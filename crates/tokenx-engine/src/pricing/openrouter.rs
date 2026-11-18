@@ -54,6 +54,13 @@ struct OpenRouterPricing {
     overrides: Vec<PricingOverride>,
 }
 
+impl OpenRouterPricing {
+    fn is_variable_price(&self) -> bool {
+        // The model list publishes this pair when underlying models determine the price.
+        self.prompt == "-1" && self.completion == "-1"
+    }
+}
+
 #[derive(Deserialize)]
 struct ModelListItem {
     id: String,
@@ -485,7 +492,7 @@ async fn fetch_all_models_with_sink(
     let mut result = HashMap::new();
     let mut model_ids = Vec::with_capacity(model_items.len());
     for model in model_items {
-        if let Some(pricing) = model.pricing {
+        if let Some(pricing) = model.pricing.filter(|rates| !rates.is_variable_price()) {
             match parse_openrouter_pricing(&model.id, pricing) {
                 Ok(pricing) => {
                     result.insert(model.id.clone(), pricing);
@@ -588,18 +595,16 @@ mod tests {
         .is_err());
     }
 
-    fn retryable_status_server() -> String {
+    fn serve_response(response: String, requests: u32) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         thread::spawn(move || {
-            for _ in 0..MAX_RETRIES {
+            for _ in 0..requests {
                 let Ok((mut stream, _)) = listener.accept() else {
                     return;
                 };
                 let mut buffer = [0; 1024];
                 let _ = stream.read(&mut buffer);
-                let response =
-                    "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                 let _ = stream.write_all(response.as_bytes());
             }
         });
@@ -608,7 +613,11 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_propagates_models_list_failure() {
-        let url = retryable_status_server();
+        let url = serve_response(
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .into(),
+            MAX_RETRIES,
+        );
         let cache_dir = tempfile::TempDir::new().unwrap();
         let mut diagnostics = Vec::new();
         let mut sink = Some(&mut diagnostics);
@@ -634,6 +643,41 @@ mod tests {
             get_author_provider_name("xiaomi/mimo-v2.5-pro"),
             Some("Xiaomi")
         );
+    }
+
+    #[tokio::test]
+    async fn model_list_omits_variable_prices_and_reports_malformed_rates() {
+        let body = serde_json::json!({"data": [
+            {"id":"openrouter/auto","pricing":{"prompt":"-1","completion":"-1"}},
+            {"id":"example/free","pricing":{"prompt":"0","completion":"0"}},
+            {"id":"example/mixed","pricing":{"prompt":"-1","completion":"0"}},
+            {"id":"example/invalid","pricing":{"prompt":"-2","completion":"-2"}}
+        ]})
+        .to_string();
+        let url = serve_response(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+            1,
+        );
+        let cache_dir = tempfile::TempDir::new().unwrap();
+        let mut diagnostics = Vec::new();
+        let data = fetch_all_models_with_sink(
+            reqwest::Client::builder().no_proxy(),
+            cache_dir.path(),
+            &url,
+            false,
+            &mut Some(&mut diagnostics),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(data.len(), 1);
+        assert_eq!(data["example/free"].input_cost_per_token, Some(0.0));
+        assert_eq!(diagnostics.len(), 2);
+        assert!(diagnostics[0].message().contains("example/mixed"));
+        assert!(diagnostics[1].message().contains("example/invalid"));
     }
 
     #[test]
