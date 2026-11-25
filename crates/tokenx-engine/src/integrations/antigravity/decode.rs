@@ -1,14 +1,5 @@
-//! Antigravity CLI SQLite decoder.
-//!
-//! The CLI stores conversation databases under
-//! `~/.gemini/antigravity-cli/conversations/*.db`. Usage rows are protobuf
-//! blobs without a checked-in `.proto`; this parser reads only the fields needed
-//! for token accounting.
-//!
-//! Tokenx intentionally supports this provider-owned database directly and
-//! does not bridge Antigravity IDE or Antigravity 2.0 through a running language
-//! server, transient CSRF credentials, private RPCs, or a Tokenx-owned shadow
-//! cache. See ADR 0002.
+//! The Antigravity CLI and IDE extension store generation history in SQLite.
+//! Usage and planner-step metadata are protobuf blobs.
 //!
 //! The field numbers below were reverse-engineered upstream from real
 //! Antigravity CLI conversation databases and ported here as a narrow decoder.
@@ -35,6 +26,8 @@
 //!   - `#21`: user-visible model label, for example `Gemini 3.5 Flash (Medium)`
 //! - `trajectory_metadata_blob.data #1 #1`: workspace file URI
 //! - `trajectory_metadata_blob.data #2`: created timestamp
+//! - `steps.metadata` for planner responses (type 15): `#1` is the step time,
+//!   `#9.#11` the response ID, and `#20.#3` the generation index.
 //!
 //! Boundary behavior: rows with all usage buckets equal to zero are ignored, so
 //! failed generations with no billable usage do not create usage rows. Failed
@@ -42,45 +35,61 @@
 //! bill failed requests. Known display labels are canonicalized. An unknown
 //! non-empty display label, or field `#19` when `#21` is absent, is retained as
 //! the raw model identity instead of discarding otherwise valid usage. Rows
-//! without `response_id` still parse, but only the per-file driver path can
-//! distinguish them; cross-file duplicate protection depends on `response_id`.
+//! without `response_id` use the session and recorded generation index for
+//! deduplication across database copies.
 
-use crate::input_health::{InputFailure, RecordRejectionReason, ScannedInput};
+use crate::input_health::{InputFailure, RecordRejectionReason, RejectionSummary, ScannedInput};
 use crate::records::error::{SessionParseError, SessionParseResult};
 use crate::records::utils::open_readonly_sqlite;
 use crate::records::{normalize_workspace_key, workspace_label_from_key, UsageRecord};
 use crate::{provider_identity, TokenBreakdown};
-use rusqlite::Connection;
-use std::collections::HashSet;
+use rusqlite::{Connection, OptionalExtension};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 pub(crate) fn response_dedup_key(response_id: &str) -> u64 {
     crate::records::dedup_hash_str(&format!("antigravity:{response_id}"))
 }
 
-pub fn parse_antigravity_cli_file(path: &Path) -> SessionParseResult<ScannedInput> {
-    let conn = open_readonly_sqlite(path)?;
+pub fn parse_database(path: &Path) -> SessionParseResult<ScannedInput> {
+    let mut conn = open_readonly_sqlite(path)?;
+    let conn = conn
+        .transaction()
+        .map_err(|error| SessionParseError::new("start Antigravity history snapshot", error))?;
     let session_id = path
         .file_stem()
         .and_then(|stem| stem.to_str())
         .filter(|stem| !stem.trim().is_empty())
         .ok_or_else(|| {
             SessionParseError::invalid(
-                "validate Antigravity CLI database path",
+                "validate Antigravity database path",
                 "database filename must contain a UTF-8 session id",
             )
         })?
         .to_string();
-    let (timestamp, workspace_key, workspace_label) = read_trajectory_meta(&conn)?;
+    let mut scanned = ScannedInput::default();
+    let mut steps = StepTimes::default();
+    if let Err(error) = steps.read(&conn, &mut scanned.rejections) {
+        scanned.interrupted = Some(InputFailure::new(
+            "read Antigravity planner steps",
+            error.to_string(),
+        ));
+    }
+    let meta = read_trajectory_meta(&conn).unwrap_or_else(|error| {
+        scanned.interrupted = Some(InputFailure::new(
+            "read Antigravity trajectory metadata",
+            error.to_string(),
+        ));
+        TrajectoryMeta::default()
+    });
 
     let mut stmt = conn
-        .prepare("SELECT data FROM gen_metadata ORDER BY idx")
-        .map_err(|error| SessionParseError::new("prepare Antigravity CLI usage query", error))?;
+        .prepare("SELECT data, idx FROM gen_metadata ORDER BY idx")
+        .map_err(|error| SessionParseError::new("prepare Antigravity usage query", error))?;
     let mut rows = stmt
         .query([])
-        .map_err(|error| SessionParseError::new("execute Antigravity CLI usage query", error))?;
+        .map_err(|error| SessionParseError::new("execute Antigravity usage query", error))?;
 
-    let mut scanned = ScannedInput::default();
     let mut seen_response_ids = HashSet::new();
     let mut row_index = 0usize;
     loop {
@@ -89,33 +98,41 @@ pub fn parse_antigravity_cli_file(path: &Path) -> SessionParseResult<ScannedInpu
             Ok(None) => break,
             Err(error) => {
                 scanned.interrupted = Some(InputFailure::new(
-                    "step Antigravity CLI usage query",
+                    "step Antigravity usage query",
                     format!("{} after row {row_index}: {error}", path.display()),
                 ));
                 break;
             }
         };
         row_index += 1;
-        let blob = match row.get::<_, Vec<u8>>(0) {
-            Ok(blob) => blob,
-            Err(_error) => {
+        let (blob, idx) = match (row.get::<_, Vec<u8>>(0), row.get::<_, Option<i64>>(1)) {
+            (Ok(blob), Ok(idx)) => (blob, idx),
+            _ => {
                 scanned
                     .rejections
                     .record(RecordRejectionReason::MalformedRecord);
                 continue;
             }
         };
-        match parse_gen_metadata(&blob, &session_id, timestamp, &mut seen_response_ids) {
+        let recorded_time = |id: Option<&str>| steps.lookup(id, idx).or(meta.created);
+        match parse_gen_metadata(&blob, &session_id, recorded_time, &mut seen_response_ids) {
             Ok(Some(mut message)) => {
-                message.set_workspace(workspace_key.clone(), workspace_label.clone());
+                if let Some(idx) = idx {
+                    message.dedup_key.get_or_insert_with(|| {
+                        crate::records::dedup_hash_str(&format!(
+                            "antigravity-generation:{session_id}:{idx}"
+                        ))
+                    });
+                }
+                message.set_workspace(meta.workspace_key.clone(), meta.workspace_label.clone());
                 scanned.messages.push(message);
             }
             Ok(None) => {}
             Err(error) => {
-                let reason = if error.operation() == "validate Antigravity CLI usage row" {
-                    RecordRejectionReason::MissingModel
-                } else {
-                    RecordRejectionReason::MalformedRecord
+                let reason = match error.operation() {
+                    "validate Antigravity usage row" => RecordRejectionReason::MissingModel,
+                    "date Antigravity generation" => RecordRejectionReason::MissingTimestamp,
+                    _ => RecordRejectionReason::MalformedRecord,
                 };
                 scanned.rejections.record(reason);
             }
@@ -127,19 +144,19 @@ pub fn parse_antigravity_cli_file(path: &Path) -> SessionParseResult<ScannedInpu
 fn parse_gen_metadata(
     blob: &[u8],
     session_id: &str,
-    session_timestamp: i64,
+    recorded_time: impl FnOnce(Option<&str>) -> Option<i64>,
     seen_response_ids: &mut HashSet<String>,
 ) -> SessionParseResult<Option<UsageRecord>> {
     let chat_model = message_field(blob, 1).ok_or_else(|| {
         SessionParseError::invalid(
-            "decode Antigravity CLI usage protobuf",
+            "decode Antigravity usage protobuf",
             "gen_metadata row is missing chat model field 1",
         )
     })?;
     let fields = chat_model_fields(chat_model);
     let usage = fields.usage.ok_or_else(|| {
         SessionParseError::invalid(
-            "decode Antigravity CLI usage protobuf",
+            "decode Antigravity usage protobuf",
             "chat model row is missing usage field 4",
         )
     })?;
@@ -153,17 +170,10 @@ fn parse_gen_metadata(
         return Ok(None);
     }
 
-    let timestamp = fields
-        .generation
-        .and_then(|gen| message_field(gen, 4))
-        .and_then(proto_timestamp_ms)
-        .filter(|ms| *ms > 0)
-        .unwrap_or(session_timestamp);
-
     let to_i64 = |field: &str, value: u64| {
         i64::try_from(value).map_err(|_| {
             SessionParseError::invalid(
-                "decode Antigravity CLI usage protobuf",
+                "decode Antigravity usage protobuf",
                 format!("{field} token count exceeds i64::MAX"),
             )
         })
@@ -181,7 +191,7 @@ fn parse_gen_metadata(
             .filter(|output| *output >= 0)
             .ok_or_else(|| {
                 SessionParseError::invalid(
-                    "decode Antigravity CLI usage protobuf",
+                    "decode Antigravity usage protobuf",
                     "reasoning tokens exceed the recorded output total",
                 )
             })?,
@@ -197,13 +207,25 @@ fn parse_gen_metadata(
     };
     let token_total = tokens.checked_total().ok_or_else(|| {
         SessionParseError::invalid(
-            "decode Antigravity CLI usage protobuf",
+            "decode Antigravity usage protobuf",
             "usage token total exceeds i64::MAX",
         )
     })?;
     if token_total == 0 {
         return Ok(None);
     }
+    let timestamp = fields
+        .generation
+        .and_then(|gen| message_field(gen, 4))
+        .and_then(proto_timestamp_ms)
+        .filter(|ms| *ms > 0)
+        .or_else(|| recorded_time(response_id.as_deref()))
+        .ok_or_else(|| {
+            SessionParseError::invalid(
+                "date Antigravity generation",
+                "no recorded generation, step or session timestamp",
+            )
+        })?;
 
     let raw_model = fields
         .display_model
@@ -217,7 +239,7 @@ fn parse_gen_metadata(
         })
         .ok_or_else(|| {
             SessionParseError::invalid(
-                "validate Antigravity CLI usage row",
+                "validate Antigravity usage row",
                 "usage row has no non-empty display or backend model label",
             )
         })?;
@@ -233,7 +255,7 @@ fn parse_gen_metadata(
 
     let dedup_key = response_id.as_deref().map(response_dedup_key);
 
-    Ok(Some(UsageRecord::new_with_dedup(
+    let mut record = UsageRecord::new_with_dedup(
         model_id,
         provider_id,
         session_id,
@@ -241,7 +263,9 @@ fn parse_gen_metadata(
         tokens,
         0.0,
         dedup_key,
-    )))
+    );
+    record.raw_model_id = crate::records::intern::intern(raw_model);
+    Ok(Some(record))
 }
 
 fn canonical_antigravity_display_model(display_model: &str) -> Option<String> {
@@ -393,18 +417,91 @@ fn chat_model_fields(chat_model: &[u8]) -> ChatModelFields<'_> {
     fields
 }
 
-fn read_trajectory_meta(
-    conn: &Connection,
-) -> SessionParseResult<(i64, Option<String>, Option<String>)> {
-    let blob: Vec<u8> = conn
+#[derive(Default)]
+struct StepTimes {
+    by_response: HashMap<String, i64>,
+    by_index: HashMap<i64, (Option<String>, i64)>,
+}
+
+impl StepTimes {
+    fn read(
+        &mut self,
+        conn: &Connection,
+        rejections: &mut RejectionSummary,
+    ) -> rusqlite::Result<()> {
+        if !has_table(conn, "steps")? {
+            return Ok(());
+        }
+        let mut query = conn.prepare(
+            "SELECT metadata FROM steps WHERE step_type = 15 AND metadata IS NOT NULL ORDER BY idx",
+        )?;
+        let mut rows = query.query([])?;
+        while let Some(row) = rows.next()? {
+            let Ok(blob) = row.get_ref(0)?.as_blob() else {
+                rejections.record(RecordRejectionReason::MalformedRecord);
+                continue;
+            };
+            let Some(stamp) = message_field(blob, 1) else {
+                continue;
+            };
+            let Some(time) = proto_timestamp_ms(stamp).filter(|ms| *ms > 0) else {
+                rejections.record(RecordRejectionReason::MalformedRecord);
+                continue;
+            };
+            let id = message_field(blob, 9)
+                .and_then(|usage| string_field(usage, 11))
+                .filter(|id| !id.trim().is_empty());
+            if let Some(id) = id {
+                self.by_response.insert(id.to_owned(), time);
+            }
+            if let Some(index) = message_field(blob, 20)
+                .and_then(|meta| varint_field(meta, 3))
+                .and_then(|i| i64::try_from(i).ok())
+            {
+                self.by_index.insert(index, (id.map(str::to_owned), time));
+            }
+        }
+        Ok(())
+    }
+
+    fn lookup(&self, id: Option<&str>, index: Option<i64>) -> Option<i64> {
+        id.and_then(|id| self.by_response.get(id).copied())
+            .or_else(|| {
+                let (step_id, time) = self.by_index.get(&index?)?;
+                (id.is_none() || step_id.is_none() || step_id.as_deref() == id).then_some(*time)
+            })
+    }
+}
+
+fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+        [name],
+        |row| row.get(0),
+    )
+}
+
+#[derive(Default)]
+struct TrajectoryMeta {
+    created: Option<i64>,
+    workspace_key: Option<String>,
+    workspace_label: Option<String>,
+}
+
+fn read_trajectory_meta(conn: &Connection) -> rusqlite::Result<TrajectoryMeta> {
+    if !has_table(conn, "trajectory_metadata_blob")? {
+        return Ok(TrajectoryMeta::default());
+    }
+    let Some(blob) = conn
         .query_row(
             "SELECT data FROM trajectory_metadata_blob LIMIT 1",
             [],
             |row| row.get::<_, Vec<u8>>(0),
         )
-        .map_err(|error| {
-            SessionParseError::new("read Antigravity CLI trajectory metadata", error)
-        })?;
+        .optional()?
+    else {
+        return Ok(TrajectoryMeta::default());
+    };
 
     let mut workspace_key = None;
     let mut workspace_label = None;
@@ -416,13 +513,11 @@ fn read_trajectory_meta(
         }
     }
 
-    let timestamp = timestamp.ok_or_else(|| {
-        SessionParseError::invalid(
-            "validate Antigravity CLI trajectory metadata",
-            "trajectory metadata is missing a positive created timestamp",
-        )
-    })?;
-    Ok((timestamp, workspace_key, workspace_label))
+    Ok(TrajectoryMeta {
+        created: timestamp,
+        workspace_key,
+        workspace_label,
+    })
 }
 
 fn session_created_ms(blob: &[u8]) -> Option<i64> {
@@ -583,8 +678,8 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
 
-    fn parse_antigravity_cli_file(path: &Path) -> Vec<UsageRecord> {
-        super::parse_antigravity_cli_file(path).unwrap().messages
+    fn parse_database(path: &Path) -> Vec<UsageRecord> {
+        super::parse_database(path).unwrap().messages
     }
 
     fn parse_gen_metadata(
@@ -593,7 +688,13 @@ mod tests {
         session_timestamp: i64,
         seen_response_ids: &mut HashSet<String>,
     ) -> Option<UsageRecord> {
-        super::parse_gen_metadata(blob, session_id, session_timestamp, seen_response_ids).unwrap()
+        super::parse_gen_metadata(
+            blob,
+            session_id,
+            |_| Some(session_timestamp),
+            seen_response_ids,
+        )
+        .unwrap()
     }
 
     fn enc_varint(field: u64, value: u64) -> Vec<u8> {
@@ -707,7 +808,7 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let messages = parse_antigravity_cli_file(&path);
+        let messages = parse_database(&path);
 
         assert_eq!(messages.len(), 1);
         let message = &messages[0];
@@ -759,7 +860,7 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let scanned = super::parse_antigravity_cli_file(&path).unwrap();
+        let scanned = super::parse_database(&path).unwrap();
 
         assert_eq!(scanned.messages.len(), 2);
         assert_eq!(scanned.rejections.total(), 1);
@@ -788,6 +889,57 @@ mod tests {
         )
         .unwrap();
         assert_eq!(fallback_message.timestamp, 111_000);
+    }
+
+    #[test]
+    fn planner_steps_date_generations_by_response_or_recorded_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("steps.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB);
+             CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, metadata BLOB);",
+        )
+        .unwrap();
+        for (index, id) in [(5, "matched"), (9, ""), (11, "different"), (14, "later")] {
+            conn.execute(
+                "INSERT INTO gen_metadata VALUES (?1, ?2)",
+                params![index, gen_metadata(id.as_bytes())],
+            )
+            .unwrap();
+        }
+        for (step, index, id, seconds) in [
+            (1, 55, "matched", 1_800_000_000),
+            (2, 9, "", 1_800_100_000),
+            (3, 11, "other", 1_800_150_000),
+            (5, 14, "later", 1_800_200_000),
+        ] {
+            let meta = [
+                enc_len(1, &timestamp_message(seconds, 123000000)),
+                enc_len(9, &enc_len(11, id.as_bytes())),
+                enc_len(20, &enc_varint(3, index)),
+            ]
+            .concat();
+            conn.execute("INSERT INTO steps VALUES (?1, 15, ?2)", params![step, meta])
+                .unwrap();
+        }
+        conn.execute("INSERT INTO steps VALUES (4, 15, 'broken')", [])
+            .unwrap();
+        let invalid_time = enc_len(1, &timestamp_message(1_800_000_000, 1_000_000_000));
+        conn.execute("INSERT INTO steps VALUES (6, 15, ?1)", [invalid_time])
+            .unwrap();
+
+        let scanned = super::parse_database(&path).unwrap();
+        let times: Vec<_> = scanned.messages.iter().map(|m| m.timestamp).collect();
+        assert_eq!(
+            times,
+            [1_800_000_000_123, 1_800_100_000_123, 1_800_200_000_123]
+        );
+        assert_eq!(scanned.rejections.total(), 3);
+        assert!(scanned
+            .rejections
+            .entries()
+            .any(|issue| issue.key == "missing-timestamp"));
     }
 
     #[test]
@@ -824,8 +976,9 @@ mod tests {
         let blob = enc_len(1, &chat_model);
 
         let mut seen = HashSet::new();
-        let error = super::parse_gen_metadata(&blob, "session", 1_000, &mut seen).unwrap_err();
-        assert_eq!(error.operation(), "decode Antigravity CLI usage protobuf");
+        let error =
+            super::parse_gen_metadata(&blob, "session", |_| Some(1_000), &mut seen).unwrap_err();
+        assert_eq!(error.operation(), "decode Antigravity usage protobuf");
     }
 
     #[test]
@@ -841,8 +994,9 @@ mod tests {
         let blob = enc_len(1, &chat_model);
 
         let mut seen = HashSet::new();
-        let error = super::parse_gen_metadata(&blob, "session", 1_000, &mut seen).unwrap_err();
-        assert_eq!(error.operation(), "decode Antigravity CLI usage protobuf");
+        let error =
+            super::parse_gen_metadata(&blob, "session", |_| Some(1_000), &mut seen).unwrap_err();
+        assert_eq!(error.operation(), "decode Antigravity usage protobuf");
         assert!(error.to_string().contains("total exceeds i64::MAX"));
     }
 
@@ -914,9 +1068,13 @@ mod tests {
     fn reasoning_cannot_exceed_the_total_used_to_derive_output() {
         let usage = [enc_varint(3, 30), enc_varint(9, 40)].concat();
         let chat = [enc_len(4, &usage), enc_len(19, b"gemini-3.5-flash")].concat();
-        let error =
-            super::parse_gen_metadata(&enc_len(1, &chat), "session", 1000, &mut HashSet::new())
-                .unwrap_err();
+        let error = super::parse_gen_metadata(
+            &enc_len(1, &chat),
+            "session",
+            |_| Some(1000),
+            &mut HashSet::new(),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("reasoning tokens exceed"));
     }
 
@@ -973,6 +1131,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(message.model_id.as_ref(), "gemini-3.1-pro");
+        assert_eq!(message.raw_model_id.as_ref(), "Gemini 3.1 Pro (High)");
         assert_eq!(message.dedup_key, Some(response_dedup_key("resp-display")));
     }
 
@@ -982,7 +1141,7 @@ mod tests {
         let missing_display = super::parse_gen_metadata(
             &gen_metadata_with_model(b"resp-missing", None, b"gemini-pro-c", None),
             "session",
-            1_000,
+            |_| Some(1_000),
             &mut seen_without_display,
         )
         .unwrap()
@@ -999,7 +1158,7 @@ mod tests {
                 Some(b"Gemini Pro C"),
             ),
             "session",
-            1_000,
+            |_| Some(1_000),
             &mut seen_unknown_display,
         )
         .unwrap()
@@ -1016,7 +1175,7 @@ mod tests {
                 Some(b"Internal Preview"),
             ),
             "session",
-            1_000,
+            |_| Some(1_000),
             &mut seen_private_display,
         )
         .unwrap()
@@ -1049,7 +1208,7 @@ mod tests {
         }
         drop(conn);
 
-        let messages = parse_antigravity_cli_file(&path);
+        let messages = parse_database(&path);
 
         assert_eq!(messages.len(), 1);
     }
@@ -1085,7 +1244,7 @@ mod tests {
         }
         drop(conn);
 
-        let scanned = super::parse_antigravity_cli_file(&path).unwrap();
+        let scanned = super::parse_database(&path).unwrap();
 
         assert_eq!(scanned.messages.len(), 3);
         assert_eq!(scanned.messages[1].model_id.as_ref(), "gemini-pro-c");
@@ -1097,7 +1256,7 @@ mod tests {
     #[test]
     fn missing_database_remains_a_input_error() {
         let dir = tempfile::tempdir().unwrap();
-        let error = super::parse_antigravity_cli_file(&dir.path().join("missing.db")).unwrap_err();
+        let error = super::parse_database(&dir.path().join("missing.db")).unwrap_err();
 
         assert_eq!(error.operation(), "open SQLite input read-only");
     }

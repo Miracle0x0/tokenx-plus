@@ -130,6 +130,12 @@ pub(crate) const DECODER_CONTRACTS: &[DecoderContractSpec] = &[
         integration: "antigravity",
     },
     DecoderContractSpec {
+        variant: "AntigravityTranscript",
+        stable_name: "antigravity-transcript",
+        plain_kind: true,
+        integration: "antigravity",
+    },
+    DecoderContractSpec {
         variant: "Zed",
         stable_name: "zed",
         plain_kind: true,

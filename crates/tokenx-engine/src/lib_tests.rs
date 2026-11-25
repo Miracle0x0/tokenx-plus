@@ -640,8 +640,7 @@ fn encode_proto_len_field(field: u64, payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
-fn write_single_antigravity_fixture(home: &Path) {
-    let db_path = home.join(".gemini/antigravity-cli/conversations/session.db");
+fn write_single_antigravity_fixture(db_path: &Path) {
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
     let conn = rusqlite::Connection::open(db_path).unwrap();
     conn.execute_batch(
@@ -658,7 +657,7 @@ fn write_single_antigravity_fixture(home: &Path) {
     usage.extend(encode_proto_varint_field(10, 4));
     usage.extend(encode_proto_len_field(11, b"response-1"));
     let mut chat_model = encode_proto_len_field(4, &usage);
-    chat_model.extend(encode_proto_len_field(21, b"Gemini 3.5 Flash (Medium)"));
+    chat_model.extend(encode_proto_len_field(21, b"Gemini 4 Neon (Medium)"));
     let generation = encode_proto_len_field(1, &chat_model);
 
     let created_at = encode_proto_varint_field(1, 1_711_200_000);
@@ -904,7 +903,7 @@ fn test_normalize_model_for_grouping() {
     );
     assert_eq!(
         normalize_model_for_grouping("gemini-3-pro(auto)"),
-        "gemini-3-pro(auto)"
+        "gemini-3-pro"
     );
     assert_eq!(
         normalize_model_for_grouping("gemini-2.5-pro"),
@@ -981,7 +980,7 @@ fn test_normalize_model_for_grouping() {
     );
     assert_eq!(
         normalize_model_for_grouping("gemini-2.5-pro-free-xhigh"),
-        "gemini-2.5-pro-xhigh"
+        "gemini-2.5-pro"
     );
     assert_eq!(
         normalize_model_for_grouping("claude-sonnet-4-free-thinking"),
@@ -5304,27 +5303,60 @@ fn test_local_message_loader_honors_scanner_extra_scan_paths_for_zed_threads_db(
 
 #[test]
 #[serial_test::serial]
-fn test_default_usage_projection_includes_antigravity_database_rows() {
+fn test_default_usage_projection_counts_antigravity_database_and_log_only_sessions_once() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    write_single_antigravity_fixture(temp_dir.path());
+    let root = temp_dir.path().join(".gemini/antigravity");
+    let mut step = serde_json::json!({
+        "type": "PLANNER_RESPONSE", "source": "MODEL", "step_index": 1,
+        "created_at": "2026-07-20T01:00:00Z", "model": "gemini-4-neon-high",
+        "input_tokens": 10, "cache_read_tokens": 3, "output_tokens": 5, "thinking": "detail"
+    });
+    let log = step.to_string();
+    // A distinct index exposes accidental reads of a superseded log or chunk
+    // even when the fold correctly deduplicates mirrored steps.
+    step["step_index"] = 99.into();
+    let stale_log = step.to_string();
+    for session in ["first", "second"] {
+        let logs = root
+            .join("brain")
+            .join(session)
+            .join(".system_generated/logs");
+        std::fs::create_dir_all(logs.join("chunks/transcript")).unwrap();
+        std::fs::write(logs.join("chunks/transcript/00000000.jsonl"), &stale_log).unwrap();
+        if session == "first" {
+            std::fs::write(logs.join("transcript.jsonl"), &stale_log).unwrap();
+            std::fs::write(
+                logs.join("transcript_full.jsonl"),
+                format!("{log}\n{log}\n"),
+            )
+            .unwrap();
+        } else {
+            std::fs::write(logs.join("transcript.jsonl"), &log).unwrap();
+        }
+    }
+    let options = TestAcquisitionRequest {
+        home_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let usage = load_test_usage(options.clone(), GroupBy::default(), None).unwrap();
+    assert_eq!(usage.total_tokens, 36);
+    assert_eq!(usage.models[0].session_count, 2);
 
-    let usage = load_test_usage(
-        TestAcquisitionRequest {
-            home_dir: Some(temp_dir.path().to_path_buf()),
-            clients: None,
-            date_range: DateRange::none(),
-            scanner_settings: scanner::ScannerSettings::default(),
-        },
-        GroupBy::default(),
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(usage.total_tokens, 19);
-    assert_eq!(usage.models.len(), 1);
-    assert_eq!(usage.models[0].clients, [ClientId::Antigravity]);
-    assert_eq!(usage.models[0].model_id.as_ref(), "gemini-3.5-flash");
-    assert_eq!(usage.models[0].display_name.as_ref(), "gemini-3.5-flash");
+    write_single_antigravity_fixture(&root.join("conversations/first.db"));
+    for _ in 0..2 {
+        let usage = load_test_usage(options.clone(), GroupBy::default(), None).unwrap();
+        assert_eq!(usage.total_tokens, 37);
+        assert_eq!(usage.models.len(), 1);
+        let model = &usage.models[0];
+        assert_eq!(model.clients, [ClientId::Antigravity]);
+        assert_eq!(model.model_id.as_ref(), "gemini-4-neon");
+        assert_eq!(model.display_name, model.model_id);
+        assert_eq!(model.session_count, 2);
+        assert_eq!(model.tokens.input, 22);
+        assert_eq!(model.tokens.cache_read, 5);
+        assert_eq!(model.tokens.output, 9);
+        assert_eq!(model.tokens.reasoning, 1);
+    }
 }
 
 #[test]

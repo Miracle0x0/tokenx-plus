@@ -115,6 +115,9 @@ fn strip_custom_model_prefix(model_id: &str) -> &str {
 }
 
 fn normalize_model_family_syntax(model: &str) -> Option<String> {
+    if model.starts_with("gemini-") || model.starts_with("gemini ") {
+        return canonicalize_gemini_observed_model(model);
+    }
     if let Some(display_slug) = normalized_human_display_model_slug(model) {
         if display_slug != model {
             if let Some(canonical) = normalize_model_family_syntax(&display_slug) {
@@ -142,6 +145,48 @@ fn normalize_model_family_syntax(model: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn canonicalize_gemini_observed_model(model: &str) -> Option<String> {
+    const EFFORTS: &[&str] = &[
+        "extra-low",
+        "extra-high",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "auto",
+        "none",
+    ];
+
+    let base = if model.contains(['(', ')']) {
+        let (base, qualifier) = model.strip_suffix(')')?.split_once('(')?;
+        let qualifier = qualifier.trim();
+        let effort = qualifier
+            .strip_suffix(" reasoning")
+            .unwrap_or(qualifier)
+            .replace(' ', "-");
+        if base.contains(')') || !EFFORTS.contains(&effort.as_str()) {
+            return None;
+        }
+        base.trim_end_matches(|ch: char| ch.is_ascii_whitespace() || matches!(ch, '-' | '_'))
+    } else {
+        model
+    };
+    let slug = normalized_human_display_model_slug(base);
+    let name = slug.as_deref().unwrap_or(base);
+    let name = if base == model {
+        EFFORTS
+            .iter()
+            .find_map(|tier| name.strip_suffix(tier)?.strip_suffix('-'))
+            .filter(|base| base.starts_with("gemini-"))
+            .unwrap_or(name)
+    } else {
+        name
+    };
+    (name != model && name.starts_with("gemini-"))
+        .then(|| strip_global_suffixes_to_stable(Cow::Borrowed(name)).into_owned())
 }
 
 pub(crate) fn normalized_human_display_model_slug(model: &str) -> Option<String> {
@@ -618,6 +663,29 @@ mod tests {
             canonicalize_model_id("GPT-5.4 (extra high reasoning)"),
             "gpt-5.4"
         );
+    }
+
+    #[test]
+    fn gemini_effort_suffixes_group_under_the_specific_model() {
+        for (raw, model) in [
+            ("Gemini 4 Neon (Medium)", "gemini-4-neon"),
+            ("google/GEMINI-4-NEON-HIGH", "gemini-4-neon"),
+            ("Gemini 4 Neon", "gemini-4-neon"),
+            ("gemini-3.5-flash-extra-low", "gemini-3.5-flash"),
+            ("gemini-2.5-flash-lite-minimal", "gemini-2.5-flash-lite"),
+            ("gemini-3-pro-preview (Low)", "gemini-3-pro-preview"),
+            ("gemini-4-neon(custom)", "gemini-4-neon(custom)"),
+            ("gemini-4-neon(preview-high)", "gemini-4-neon(preview-high)"),
+            ("gemini-4-neon(high", "gemini-4-neon(high"),
+            ("gemini-auto", "gemini-auto"),
+            (
+                "gemini-2.0-flash-thinking-exp",
+                "gemini-2.0-flash-thinking-exp",
+            ),
+            ("private-neon-high", "private-neon-high"),
+        ] {
+            assert_eq!(canonicalize_model_id(raw), model, "{raw}");
+        }
     }
 
     #[test]

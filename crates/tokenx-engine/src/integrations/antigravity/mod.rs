@@ -1,22 +1,34 @@
 pub(crate) mod decode;
+mod transcript;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::Path;
 
 use rayon::prelude::*;
 
-use crate::clients::ClientId;
+use crate::input_record_cache::DecoderId;
 use crate::integrations::cache as pipeline_cache;
 use crate::integrations::discover as source_discovery;
+use crate::integrations::source_matchers::database;
 use crate::integrations::{
     BoundUsageSink, DecoderKind, DiscoveredInput, DiscoveryContext, FingerprintPolicy, FoldContext,
-    InputDiscoveryError, IntegrationDriver, ParseContext, ParsedBatchInput, ParsedUnit, SourceSpec,
+    InputDiscoveryError, IntegrationDriver, ParseContext, ParsedBatchInput, ParsedUnit,
+    SourceMatcher,
 };
 
-const SOURCE: SourceSpec = SourceSpec::home(
-    ".gemini/antigravity-cli/conversations",
-    crate::integrations::SourceMatcher::new(crate::integrations::source_matchers::database),
-);
+fn is_transcript(path: &Path) -> bool {
+    path.ends_with(".system_generated/logs/transcript.jsonl")
+        || path.ends_with(".system_generated/logs/transcript_full.jsonl")
+}
+
+fn descend_brain(path: &Path, depth: usize) -> bool {
+    match depth {
+        0 | 1 => true,
+        2 => path.ends_with(".system_generated"),
+        3 => path.ends_with("logs"),
+        _ => false,
+    }
+}
 
 pub(crate) struct Driver;
 
@@ -26,15 +38,59 @@ impl IntegrationDriver for Driver {
         ctx: &DiscoveryContext<'_>,
     ) -> Result<Vec<DiscoveredInput>, InputDiscoveryError> {
         let client = ctx.client;
-        let mut roots = vec![SOURCE.resolve(ctx.home_dir)];
-        roots.extend(antigravity_extra_roots(client, ctx)?);
+        let roots =
+            [".gemini/antigravity-cli", ".gemini/antigravity"].map(|root| ctx.home_dir.join(root));
+        let mut databases = source_discovery::scan_roots(
+            ctx,
+            roots.iter().map(|root| root.join("conversations")),
+            SourceMatcher::new(database),
+        )?;
+        let mut transcripts = source_discovery::scan_roots(
+            ctx,
+            roots.iter().map(|root| root.join("brain")),
+            SourceMatcher::with_directory_filter(is_transcript, descend_brain),
+        )?;
+        for path in source_discovery::scan_roots(
+            ctx,
+            source_discovery::extra_roots_for_client(client, ctx)?,
+            SourceMatcher::new(|path| database(path) || is_transcript(path)),
+        )? {
+            if database(&path) {
+                databases.push(path);
+            } else {
+                transcripts.push(path);
+            }
+        }
 
-        source_discovery::input_units_from_paths(
+        let mut units = source_discovery::input_units_from_paths(
             client,
-            source_discovery::scan_roots(ctx, roots, SOURCE.matcher())?,
+            databases,
             FingerprintPolicy::SqliteWithWal,
             DecoderKind::antigravity_cli_sqlite(),
-        )
+        )?;
+        // The transcript mirrors a database's generations without their response IDs.
+        // Select the authoritative source by session before either input is cached.
+        let db_sessions: HashSet<_> = units
+            .iter()
+            .filter_map(|unit| unit.path.file_stem())
+            .collect();
+        let full_logs: HashSet<_> = transcripts
+            .iter()
+            .filter(|path| path.ends_with("transcript_full.jsonl"))
+            .filter_map(|path| path.parent().map(Path::to_owned))
+            .collect();
+        transcripts.retain(|path| {
+            !transcript::session_name(path).is_some_and(|id| db_sessions.contains(id))
+                && (path.ends_with("transcript_full.jsonl")
+                    || !path.parent().is_some_and(|dir| full_logs.contains(dir)))
+        });
+        units.extend(source_discovery::input_units_from_paths(
+            client,
+            transcripts,
+            FingerprintPolicy::PlainFile,
+            DecoderKind::plain(DecoderId::AntigravityTranscript),
+        )?);
+        Ok(units)
     }
 
     fn parse_inputs(
@@ -45,11 +101,12 @@ impl IntegrationDriver for Driver {
         units
             .into_par_iter()
             .map(|unit| match unit.decoder {
-                DecoderKind::AntigravityCliSqlite => pipeline_cache::load_or_scan_unit_with(
-                    unit,
-                    ctx,
-                    decode::parse_antigravity_cli_file,
-                ),
+                DecoderKind::AntigravityCliSqlite => {
+                    pipeline_cache::load_or_scan_unit_with(unit, ctx, decode::parse_database)
+                }
+                DecoderKind::Plain {
+                    decoder_id: DecoderId::AntigravityTranscript,
+                } => pipeline_cache::load_or_scan_unit_with(unit, ctx, transcript::parse),
                 _ => unreachable!("unexpected Antigravity decoder"),
             })
             .collect()
@@ -132,45 +189,10 @@ fn fold_antigravity_units(
 
 pub(crate) static DRIVER: Driver = Driver;
 
-fn antigravity_extra_roots(
-    client: ClientId,
-    ctx: &DiscoveryContext<'_>,
-) -> Result<Vec<PathBuf>, InputDiscoveryError> {
-    let mut roots = Vec::new();
-    let mut seen = HashSet::new();
-
-    for root in source_discovery::extra_roots_for_client(client, ctx)? {
-        push_unique_root(&mut roots, &mut seen, root)?;
-    }
-
-    Ok(roots)
-}
-
-fn push_unique_root(
-    roots: &mut Vec<PathBuf>,
-    seen: &mut HashSet<PathBuf>,
-    root: PathBuf,
-) -> Result<(), InputDiscoveryError> {
-    let key = match std::fs::canonicalize(&root) {
-        Ok(key) => key,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => {
-            return Err(InputDiscoveryError::new(
-                &root,
-                "canonicalize configured scan root",
-                source,
-            ));
-        }
-    };
-    if seen.insert(key) {
-        roots.push(root);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clients::ClientId;
     use crate::input_record_cache::{DecoderId, DecoderVersion};
     use crate::integrations::UnitRecordPayload;
     use crate::records::UsageRecord;
